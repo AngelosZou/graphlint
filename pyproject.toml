@@ -1,0 +1,65 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "graphlint"
+version = "0.1.0"
+description = "A static analysis tool for identifying dead code in a codebase. It provides Python API and CLI for use by agents."
+readme = "README_PYPI.md"
+license = "MIT"
+license-files = ["LICENSE"]
+requires-python = ">=3.9"
+authors = [
+    {name = "Yutong Zou", email = "yutong.zou.24@alumni.ucl.ac.uk"},
+]
+keywords = [
+    "graph",
+    "dependency-graph",
+    "code-analysis",
+    "dead-code",
+    "circular-dependency",
+    "import-checker",
+    "static-analysis",
+    "lint",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Quality Assurance",
+    "Topic :: Software Development :: Documentation",
+]
+
+dependencies = []
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7",
+    "pytest-cov>=4",
+]
+
+[project.urls]
+Homepage = "https://github.com/AngelosZou/graphlint"
+Repository = "https://github.com/AngelosZou/graphlint"
+Issues = "https://github.com/AngelosZou/graphlint/issues"
+
+[project.scripts]
+graphlint = "graphlint.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["graphlint*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    "timeout(max_seconds): marks test with a timeout",
+]
