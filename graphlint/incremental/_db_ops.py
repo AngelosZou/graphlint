@@ -156,8 +156,12 @@ def _insert_nodes(
     fid_map: dict[str, int],
     changed_files: Optional[set[str]] = None,
 ) -> None:
-    """Insert nodes with explicit IDs to stay consistent with in-memory data."""
-    batch: list[tuple[Any, ...]] = []
+    """Insert nodes with explicit IDs to stay consistent with in-memory data.
+
+    Sorts nodes so parents are inserted before children, preventing FK
+    violations on parent_node_id across multiple changed files.
+    """
+    rows: list[tuple[Any, ...]] = []
     for node in build_result.nodes:
         if node.id == 0:
             continue
@@ -168,7 +172,7 @@ def _insert_nodes(
         node_id = node.id or 0
         if not fid or node_id == 0:
             continue
-        batch.append(
+        rows.append(
             (
                 node_id,
                 fid,
@@ -188,17 +192,13 @@ def _insert_nodes(
                 1 if node.is_entry else 0,
             )
         )
-        if len(batch) >= 5000:
-            db.executemany(
-                "INSERT OR REPLACE INTO nodes (id, file_id, name, qualified_name, node_type, "
-                "line_start, line_end, col_offset, parent_node_id, "
-                "is_deprecated, deprecation_msg, type_annotation, is_async, "
-                "decorators, docstring, is_entry) "
-                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                batch,
-            )
-            batch.clear()
-    if batch:
+
+    # Sort: nodes without parent (parent_id=0/None) first, then by parent_id
+    # so parents are always inserted before their children, avoiding FK errors
+    rows.sort(key=lambda r: (0 if r[8] is None else 1, r[8] or 0, r[0]))
+
+    for i in range(0, len(rows), 5000):
+        batch = rows[i:i + 5000]
         db.executemany(
             "INSERT OR REPLACE INTO nodes (id, file_id, name, qualified_name, node_type, "
             "line_start, line_end, col_offset, parent_node_id, "

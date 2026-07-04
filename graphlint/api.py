@@ -270,6 +270,8 @@ def _parse_warn_types(warn_types: Optional[str]) -> Optional[list[str]]:
 
 def _auto_build(root_dir: str, config: dict[str, Any]) -> bool:
     """Run an automatic incremental build. Returns True on success."""
+    import traceback
+
     db = None
     try:
         db = Database(root_dir)
@@ -281,7 +283,34 @@ def _auto_build(root_dir: str, config: dict[str, Any]) -> bool:
     except Exception as exc:
         import sys
 
-        print(f"[graphlint] Auto build failed: {exc}", file=sys.stderr)
+        msg = str(exc)
+        is_fk = "FOREIGN KEY constraint failed" in msg
+        if is_fk:
+            traceback.print_exc(file=sys.stderr)
+        print(f"[graphlint] Auto build failed: {msg}", file=sys.stderr)
+        if is_fk:
+            print("[graphlint] FK constraint — retrying with full rebuild...", file=sys.stderr)
+            try:
+                if db is not None:
+                    try:
+                        db.close()
+                    except Exception:
+                        pass
+                db2 = Database(root_dir)
+                wc2 = WarningCollector()
+                indexer2 = IncrementalIndexer(root_dir, db2, parallel)
+                indexer2.run(force_rebuild=True, warning_collector=wc2)
+                return True
+            except Exception as exc2:
+                print(f"[graphlint] Full rebuild also failed: {exc2}", file=sys.stderr)
+                traceback.print_exc(file=sys.stderr)
+                return False
+            finally:
+                if db2 is not None:
+                    try:
+                        db2.close()
+                    except Exception:
+                        pass
         return False
     finally:
         if db is not None:

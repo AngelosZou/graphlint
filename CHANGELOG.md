@@ -2,6 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.1] - 2026-07-04
+
+### Added
+- Parallel edge building via ThreadPoolExecutor for changed files (`performance.parallel_workers`)
+- Multi-level suffix index for improved symbol resolution beyond single-level short names
+- Auto-build retry with full index rebuild on FOREIGN KEY constraint failure
+
+### Changed
+- Agent injection prompt wording strengthened to "Always use" with fallback instruction when CLI is unavailable
+- Entry detection methods now reuse pre-parsed source (`pr.source`) to reduce redundant file I/O
+- Refactored AST walk functions to module level to enable parallel execution
+
+### Fixed
+- FOREIGN KEY constraint violations in incremental mode by sorting nodes parent-first before DB insert
+- Incremental rebuild no longer rebuilds edges for unchanged files
+
 ## [0.1.0] - 2026-07-01
 
 ### Added

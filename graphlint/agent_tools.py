@@ -8,14 +8,14 @@ available in every project the agent opens.
 from __future__ import annotations
 
 import os
-import sys
 from typing import List, Tuple
 
 AGENT_PROMPT = """# graphlint — Dead Code Detection for Python
 
 ## When to Use It
-- **After code modifications**: Run to check if your edits left behind dead or redundant code — components no longer reachable from any entry point
-- **Before analyzing a codebase**: Run to verify the dependency graph is correctly built and all expected entry points are recognized
+- **After code modifications**: **Always** use graphlint check if your edits left behind dead or redundant code — components no longer reachable from any entry point
+- **Before analyzing a codebase**: **Always** use graphlint to understand whether a feature is well integrated in the codebase.
+- If you are unable to use the CLI, you should declare that you can not use graphlint for dead code detect.
 
 ## Quick Commands
 ```bash

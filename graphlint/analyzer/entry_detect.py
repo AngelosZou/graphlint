@@ -106,7 +106,7 @@ class EntryPointDetector:
         node_id_map: dict[int, NodeInfo],
     ) -> list[EntryInfo]:
         """Detect if __name__ == '__main__' entry."""
-        source = self._read_source(file_path)
+        source = pr.source or self._read_source(file_path)
         if source is None:
             return []
         tree = self._parse_safe(source, file_path)
@@ -165,9 +165,10 @@ class EntryPointDetector:
         node_id_map: dict[int, NodeInfo],
     ) -> list[EntryInfo]:
         """Detect FastAPI application entry."""
-        entries = self._detect_framework_call(file_path, ["FastAPI"])
+        src = pr.source
+        entries = self._detect_framework_call(file_path, ["FastAPI"], source=src)
         entries.extend(
-            self._detect_framework_call(file_path, [], ["uvicorn.run", "uvicorn"])
+            self._detect_framework_call(file_path, [], ["uvicorn.run", "uvicorn"], source=src)
         )
         for e in entries:
             e.rule_name = "fastapi_app"
@@ -181,9 +182,10 @@ class EntryPointDetector:
         node_id_map: dict[int, NodeInfo],
     ) -> list[EntryInfo]:
         """Detect Flask application entry."""
-        entries = self._detect_framework_call(file_path, ["Flask", "flask.Flask"])
+        src = pr.source
+        entries = self._detect_framework_call(file_path, ["Flask", "flask.Flask"], source=src)
         # Also detect .run() calls
-        source = self._read_source(file_path)
+        source = src or self._read_source(file_path)
         if source is None:
             return entries
         tree = self._parse_safe(source, file_path)
@@ -213,7 +215,7 @@ class EntryPointDetector:
         """Detect Django manage.py entry."""
         if file_path.split("/")[-1] != "manage.py":
             return []
-        return self._detect_framework_call(file_path, ["execute_from_command_line"])
+        return self._detect_framework_call(file_path, ["execute_from_command_line"], source=pr.source)
 
     def _detect_click_command(
         self,
@@ -245,7 +247,7 @@ class EntryPointDetector:
         node_id_map: dict[int, NodeInfo],
     ) -> list[EntryInfo]:
         """Detect Typer CLI entry."""
-        entries = self._detect_framework_call(file_path, ["typer.Typer"])
+        entries = self._detect_framework_call(file_path, ["typer.Typer"], source=pr.source)
         for e in entries:
             e.rule_name = "typer_app"
         for node in pr.nodes:
@@ -269,7 +271,7 @@ class EntryPointDetector:
         node_id_map: dict[int, NodeInfo],
     ) -> list[EntryInfo]:
         """Detect Celery application entry."""
-        entries = self._detect_framework_call(file_path, ["Celery", "celery.Celery"])
+        entries = self._detect_framework_call(file_path, ["Celery", "celery.Celery"], source=pr.source)
         for e in entries:
             e.rule_name = "celery_app"
         return entries
@@ -381,7 +383,7 @@ class EntryPointDetector:
         pattern = rule.get("ast_pattern", "")
         if not pattern:
             return []
-        source = self._read_source(file_path)
+        source = pr.source or self._read_source(file_path)
         if source is None:
             return []
         tree = self._parse_safe(source, file_path)
@@ -483,11 +485,13 @@ class EntryPointDetector:
         file_path: str,
         class_names: list[str],
         extra_names: Optional[list[str]] = None,
+        source: Optional[str] = None,
     ) -> list[EntryInfo]:
         """Generic framework call detection."""
-        source = self._read_source(file_path)
         if source is None:
-            return []
+            source = self._read_source(file_path)
+            if source is None:
+                return []
         tree = self._parse_safe(source, file_path)
         if tree is None:
             return []
