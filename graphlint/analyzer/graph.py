@@ -95,6 +95,13 @@ def _resolve_symbol(
     return []
 
 
+def _file_to_module_qname(path: str) -> str:
+    """Convert file path to module qualified name."""
+    if path.endswith(".py"):
+        path = path[:-3]
+    return path.replace("/", ".").replace("\\", ".")
+
+
 def _build_file_edges_worker(
     fp: str,
     pr: ParseResult,
@@ -108,11 +115,15 @@ def _build_file_edges_worker(
     scope_suffix_index: Optional[dict[tuple[str, str], list[int]]] = None,
 ) -> list[EdgeInfo]:
     """Build edges from structured references — no AST walk needed."""
+    module_qname = _file_to_module_qname(fp)
     edges: list[EdgeInfo] = []
     for ref in pr.references:
         source_id = fnodes.get(ref.source_qname, 0)
         if not source_id:
-            continue
+            if ref.source_qname == module_qname and ref.edge_type in ("read", "call"):
+                source_id = 0
+            else:
+                continue
         scope = node_id_map.get(source_id, NodeInfo()).qualified_name if source_id else ""
         target_ids = _resolve_symbol(
             ref.target_name, scope,
@@ -123,6 +134,7 @@ def _build_file_edges_worker(
         for tid in target_ids:
             if tid != source_id:
                 edges.append(EdgeInfo(source_id, tid, ref.edge_type, fid, ref.line))
+
     return edges
 
 
@@ -348,17 +360,6 @@ class GraphBuilder:
                 if _pe.source_id and _pe.target_id:
                     self._edges.append(_pe)
 
-        # Add synthetic module-level edges to connect all top-level nodes
-        # through the module pseudo-node (id=0) for correct connectivity.
-        # Module-level edges (source_id=0) are not stored in the DB, so they
-        # must be recreated in memory each build.
-        for fp in parse_results:
-            _fid = fid_map.get(fp, 0)
-            if _fid:
-                for _n in self._nodes:
-                    if _n.file_id == _fid and _n.parent_node_id == 0:
-                        self.add_edge(0, _n.id, "read", _fid, 0)
-
         entries = self.entry_detector.detect(
             parse_results,
             self._nodes,
@@ -440,8 +441,26 @@ class GraphBuilder:
                 # dunder or a special method overload, skip entirely.
                 if not non_dunder_nids and not special_method_nids:
                     continue
-                # Warn about dead special method overloads (functional completeness)
-                if special_method_nids:
+                # Warn about dead code for non-dunder nodes (classes, functions, etc.)
+                for nid in sorted(non_dunder_nids)[:3]:
+                    node = self._node_id_map.get(nid)
+                    if node:
+                        fp = file_id_to_path.get(node.file_id, "")
+                        self.warning_collector.add(
+                            "dead_code",
+                            "info",
+                            f"Component {comp.component_id}: "
+                            f"unreachable — no CALL path from entry point",
+                            file_path=fp,
+                            line=node.line_start,
+                            node_id=nid,
+                        )
+                # Warn about dead special method overloads ONLY when
+                # the component has no non-dunder nodes (e.g. a lone
+                # dunder with no parent class in this component).
+                # When a parent class is already flagged as dead code,
+                # its special methods are implicitly covered.
+                if special_method_nids and not non_dunder_nids:
                     for nid in sorted(special_method_nids)[:2]:
                         node = self._node_id_map.get(nid)
                         if node:
@@ -456,20 +475,6 @@ class GraphBuilder:
                                 line=node.line_start,
                                 node_id=nid,
                             )
-                # Warn about other dead code nodes
-                for nid in sorted(non_dunder_nids)[:3]:
-                    node = self._node_id_map.get(nid)
-                    if node:
-                        fp = file_id_to_path.get(node.file_id, "")
-                        self.warning_collector.add(
-                            "dead_code",
-                            "info",
-                            f"Component {comp.component_id}: "
-                            f"unreachable — no CALL path from entry point",
-                            file_path=fp,
-                            line=node.line_start,
-                            node_id=nid,
-                        )
         self.warning_collector.deduplicate()
 
     # ------------------------------------------------------------------

@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.4] - 2026-07-04
+
+### Fixed
+- Module-level dead code detection: removed synthetic `read` edges from pseudo-node 0 that masked all top-level symbols as "used", enabling detection of genuinely dead module-level functions and variables
+- Module-level write references no longer create unresolvable edges — variable definitions are not treated as write operations, preventing silent edge drops
+- Module-level read/call references now correctly create edges from pseudo-node 0, fixing a false positive where module-level used variables (e.g., `WARN_TYPE_VALUES` read by `VALID_WARN_TYPES = WARN_TYPE_VALUES`) were flagged as dead code
+- Public API dunders (`__all__`, `__version__`, etc.) no longer appear as isolated components — they stay anchored to their file via synthetic containment edges
+- Python special methods (`__init__`, `__enter__`, `__exit__`, etc.) no longer generate redundant dead-code warnings when their parent class is already flagged as unreachable
+- Unreachable classes with special method overloads now produce only the class-level `dead_code` warning, not per-method duplicates
+
 ## [0.1.3] - 2026-07-04
 
 ### Added

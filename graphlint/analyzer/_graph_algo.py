@@ -10,6 +10,7 @@ from graphlint.analyzer._types import ComponentInfo, EdgeInfo, NodeInfo
 from graphlint.analyzer.entry_detect import EntryInfo
 from graphlint.analyzer.warnings import (
     WarningInfo,
+    _PUBLIC_API_DUNDERS,
     _SPECIAL_METHOD_DUNDERS,
 )
 
@@ -195,6 +196,21 @@ def find_connected_components(
                 adj.setdefault(nid, set()).add(parent)
                 adj.setdefault(parent, set()).add(nid)
 
+    # Connect public API dunders (__all__, __version__, etc.) to their
+    # file's first non-dunder node so they stay in the same component as
+    # other symbols from their module — they are module metadata, not dead code.
+    if node_id_map:
+        _fid_first: dict[int, int] = {}
+        for _ninfo in node_id_map.values():
+            if _ninfo.name not in _PUBLIC_API_DUNDERS and _ninfo.file_id not in _fid_first:
+                _fid_first[_ninfo.file_id] = _ninfo.id
+        for _ninfo in node_id_map.values():
+            if _ninfo.name in _PUBLIC_API_DUNDERS and _ninfo.node_type in ("variable", "field"):
+                _first = _fid_first.get(_ninfo.file_id)
+                if _first is not None:
+                    adj.setdefault(_ninfo.id, set()).add(_first)
+                    adj.setdefault(_first, set()).add(_ninfo.id)
+
     # Pre-build call_graph once to avoid repeated traversal inside compute_entry_reachability
     call_graph: dict[int, list[int]] = {}
     for edge in edges:
@@ -282,6 +298,21 @@ def find_connected_components(
                 if e.edge_type in ("read", "call"):
                     comp_reachable.add(e.source_id)
                     comp_unreachable.discard(e.source_id)
+
+        # Public API dunders (__all__, __version__, etc.) in an unreachable
+        # component that shares its file with a reachable component are merged
+        # into the reachable component — they are module metadata, not dead code.
+        if comp_reachable and comp_unreachable and node_id_map:
+            reachable_fids: set[int] = set()
+            for _nid in comp_reachable:
+                _info = node_id_map.get(_nid)
+                if _info:
+                    reachable_fids.add(_info.file_id)
+            for _nid in list(comp_unreachable):
+                _info = node_id_map.get(_nid)
+                if _info and _info.file_id in reachable_fids and _info.name in _PUBLIC_API_DUNDERS:
+                    comp_reachable.add(_nid)
+                    comp_unreachable.discard(_nid)
 
         if comp_reachable:
             for nid in comp_reachable:

@@ -170,7 +170,7 @@ The `graphlint` package supports lazy imports — modules are loaded only on fir
 import graphlint
 
 # __version__ is a module constant, directly accessible
-print(graphlint.__version__)  # "0.1.0"
+print(graphlint.__version__)  # "0.1.4"
 
 # query / build / configure are lazily imported on first access
 result = graphlint.query()       # Lazy-loaded on first call

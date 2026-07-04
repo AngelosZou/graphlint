@@ -311,7 +311,8 @@ class ASTVisitor(ast.NodeVisitor):
 
         sq = self._current_qname()
         for target in node.targets:
-            self._add_write_ref(target, sq, node.lineno or 0)
+            if parent_id != 0:
+                self._add_write_ref(target, sq, node.lineno or 0)
             self._extract_target(target, node_type, parent_id, node)
 
         self.visit(node.value)
@@ -342,19 +343,21 @@ class ASTVisitor(ast.NodeVisitor):
 
         sq = self._current_qname()
         if isinstance(node.target, ast.Name):
-            self.references.append(ReferenceInfo(
-                source_qname=sq,
-                target_name=node.target.id,
-                edge_type="write",
-                line=node.lineno or 0,
-            ))
+            if parent_id != 0:
+                self.references.append(ReferenceInfo(
+                    source_qname=sq,
+                    target_name=node.target.id,
+                    edge_type="write",
+                    line=node.lineno or 0,
+                ))
         elif isinstance(node.target, ast.Attribute) and not isinstance(node.target.value, ast.Attribute):
-            self.references.append(ReferenceInfo(
-                source_qname=sq,
-                target_name=node.target.attr,
-                edge_type="write",
-                line=node.lineno or 0,
-            ))
+            if parent_id != 0:
+                self.references.append(ReferenceInfo(
+                    source_qname=sq,
+                    target_name=node.target.attr,
+                    edge_type="write",
+                    line=node.lineno or 0,
+                ))
 
         self._extract_annotated_target(
             node.target, node_type, parent_id, node, type_ann
