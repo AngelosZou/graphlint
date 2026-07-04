@@ -8,7 +8,7 @@ available in every project the agent opens.
 from __future__ import annotations
 
 import os
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 
 AGENT_PROMPT = """# graphlint — Dead Code Detection for Python
 
@@ -49,7 +49,11 @@ graphlint query -g 5 -d full
 
 # Scan all warnings sorted by severity
 graphlint query -C --sort-by warnings --json
-```\
+```
+
+## Limitations
+- **Static analysis only** — graphlint cannot detect runtime linkage (`getattr`, `importlib`, etc.). May cause false positives.
+- **Large codebase build time** — a full rebuild on 700+ `.py` files / 1,000+ classes / 14,000+ functions takes ~200s (hardware-dependent). Small codebases (~60 files) complete in ~1s.\
 """
 
 MARKER_START = "<!-- graphlint:start -->"
@@ -156,7 +160,7 @@ def _remove_prompt(filepath: str) -> bool:
         return False
 
 
-def _resolve_paths(cwd: str = None) -> List[Tuple[str, str, str, str, str]]:
+def _resolve_paths(cwd: Optional[str] = None) -> List[Tuple[str, str, str, str, str]]:
     """Resolve tool paths, expanded from ~."""
     resolved = []
     for tool_id, display_name, rel_path, desc in TOOLS:
@@ -169,7 +173,6 @@ def _select_tools(message: str, resolved: List[Tuple]) -> List[Tuple]:
     """Interactive multi-select prompt for agent tools."""
     print(f"\n{message}\n")
     for i, (_, display_name, rel_path, full_path, desc) in enumerate(resolved, 1):
-        status = "✓" if os.path.isfile(full_path) else " "
         print(f"  [{i}] {display_name:<20} {rel_path}")
         print(f"      {desc}")
     print()
@@ -197,7 +200,7 @@ def _select_tools(message: str, resolved: List[Tuple]) -> List[Tuple]:
             print("Invalid input. Try again.")
 
 
-def install_tools(cwd: str = None) -> str:
+def install_tools(cwd: Optional[str] = None) -> str:
     """Interactively install graphlint prompt to selected agent tools (global)."""
     resolved = _resolve_paths(cwd)
     selected = _select_tools("Select agent tool(s) to install graphlint prompt:", resolved)
@@ -215,7 +218,7 @@ def install_tools(cwd: str = None) -> str:
     return "Install results:\n" + "\n".join(results)
 
 
-def uninstall_tools(cwd: str = None) -> str:
+def uninstall_tools(cwd: Optional[str] = None) -> str:
     """Interactively uninstall graphlint prompt from selected agent tools."""
     resolved = _resolve_paths(cwd)
     installed = [
@@ -239,7 +242,7 @@ def uninstall_tools(cwd: str = None) -> str:
                 break
             if not raw:
                 print("No selection. Aborting.")
-                return []
+                return "No tools selected."
             indices = [int(x.strip()) for x in raw.split(",")]
             selected = []
             for idx in indices:

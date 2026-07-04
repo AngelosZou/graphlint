@@ -130,8 +130,8 @@ class TextFormatter:
             wc = len(g.warnings)
             lines.append(
                 f"[{g.graph_id:>3}] {entry}{suffix}    "
-                f"节点:{g.node_count + g.variable_count}  "
-                f"边:{g.edge_count}  ⚠{wc}"
+                f"nodes:{g.node_count + g.variable_count}  "
+                f"edges:{g.edge_count}  ⚠{wc}"
             )
         if result.has_more:
             lines.append(self.i18n.t("cli.query.has_more"))

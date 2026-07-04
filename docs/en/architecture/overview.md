@@ -77,13 +77,13 @@ Command-line interface built on `argparse`:
 ### 4. Analysis Engine Layer
 
 - **`SourceParser`** (`graphlint/analyzer/parser.py`) — Recursively scans directories, performs AST parsing on each `.py` file
-- **`GraphBuilder`** (`graphlint/analyzer/graph.py`) — Builds the dependency graph from parse results, including nodes, edges, and connected component analysis
+- **`GraphBuilder`** (`graphlint/analyzer/graph.py`) — Builds the dependency graph from parse results, including nodes, edges, and connected component analysis. Edges are built in parallel per file from structured `ReferenceInfo` collected during AST parsing — no second AST walk is needed.
 - **`EntryPointDetector`** (`graphlint/analyzer/entry_detect.py`) — 10 built-in entry detection rules + custom rule support
 - **`WarningCollector`** (`graphlint/analyzer/warnings.py`) — Warning collection, deduplication, filtering, and statistics
 - **`ImportAnalyzer`** (`graphlint/analyzer/imports.py`) — Import statement parsing and unused import detection
 - **`DecoratorResolver`** (`graphlint/analyzer/decorators.py`) — Decorator resolution
 
-#### AST Parsing Flow
+#### AST Parsing & Edge Building Flow
 
 ```
 Source File (.py)
@@ -92,17 +92,18 @@ Source File (.py)
 AST Parse (ast.parse)
     │
     ▼
-ASTVisitor Traversal
+ASTVisitor Traversal (single pass)
     ├── Extract nodes (classes/functions/methods/variables/fields)
     ├── Parse import statements
-    └── Collect name usage
+    ├── Collect name usage
+    └── Collect structured references (ReferenceInfo — read/write/call/inherit/decorate)
     │
     ▼
 GraphBuilder Build Graph
     ├── Add nodes (assign IDs)
-    ├── Add edges (read/write/call/inherit/decorate)
+    ├── Add edges from ReferenceInfo — no second AST walk
     ├── Entry point detection
-    ├── Connected component analysis
+    ├── Connected component analysis (call graph prebuilt once and reused across reachability computations)
     └── Warning collection
 ```
 
@@ -181,7 +182,7 @@ GraphBuilder builds graph
 Entry point detection
     │
     ▼
-Connected component analysis
+Connected component analysis (call graph prebuilt once)
     │
     ▼
 Warning collection and deduplication

@@ -18,7 +18,7 @@ AI agents generate code rapidly, leaving behind dead and redundant code that pol
 - **Dependency graph** — builds directed edges: `read`, `write`, `call`, `inherit`, `decorate`
 - **Entry point detection** — 10 built-in rules (main, FastAPI, Flask, Django, Click, Typer, Celery, pytest, plus package and test entries) and custom rules
 - **Warning detection** — 11 warning types including circular references, unused imports, write-only variables, and more
-- **Incremental indexing** — SHA256-based change detection parses only modified files
+- **Incremental indexing** — SHA256-based change detection parses only modified files, with mtime-based fast-path stamp for zero-cost no-op rebuilds
 - **Python API + CLI** — integrate into any Tool, CI pipeline, or let agents self-analyze and self-clean
 - **Zero runtime dependencies** — only requires the Python standard library
 
@@ -140,6 +140,11 @@ Full documentation is available in the [docs/](docs/) directory:
 - [CLI Usage](docs/en/cli/usage.md)
 - [Architecture Overview](docs/en/architecture/overview.md)
 - [Python API](docs/en/api/)
+
+## Limitations
+
+- **Static analysis only** — currently, graphlint performs static analysis and cannot detect runtime linkage such as `getattr`, `importlib.import_module()`, or other dynamic dispatch patterns, which may result in false positives.
+- **Large codebase build time** — on a large codebase with 700+ `.py` files, 1,000+ classes, and 14,000+ functions, a full rebuild takes approximately 200 seconds (actual performance depends on hardware). This is not a concern for small projects — a codebase with 60 Python files completes in about 1 second.
 
 ## License
 

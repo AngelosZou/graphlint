@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "graphlint"
-version = "0.1.1"
+version = "0.1.3"
 description = "A static analysis tool for identifying dead code in a codebase. It provides Python API and CLI for use by agents."
 readme = "README_PYPI.md"
 license = "MIT"
@@ -47,8 +47,10 @@ dev = [
 
 [project.urls]
 Homepage = "https://github.com/AngelosZou/graphlint"
+Documentation = "https://github.com/AngelosZou/graphlint#readme"
 Repository = "https://github.com/AngelosZou/graphlint"
 Issues = "https://github.com/AngelosZou/graphlint/issues"
+Changelog = "https://github.com/AngelosZou/graphlint/blob/main/CHANGELOG.md"
 
 [project.scripts]
 graphlint = "graphlint.cli:main"

@@ -149,3 +149,248 @@ class TestSchema:
             )
         cursor = self.conn.execute("SELECT COUNT(*) FROM nodes")
         assert cursor.fetchone()[0] == 5
+
+
+# =============================================================================
+# New index tests (index enhancement)
+# =============================================================================
+
+
+@pytest.mark.timeout(30)
+class TestNewIndexes:
+    """Tests for new composite indexes and sorted indexes."""
+
+    @pytest.fixture(autouse=True)
+    def setup(self):
+        """Each test uses a separate in-memory database."""
+        self.conn = sqlite3.connect(":memory:")
+        self.conn.row_factory = sqlite3.Row
+        yield
+        self.conn.close()
+
+    def _index_exists(self, index_name: str) -> bool:
+        """Check if index exists."""
+        cursor = self.conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='index' AND name=?",
+            (index_name,),
+        )
+        return cursor.fetchone() is not None
+
+    def test_idx_edges_source_type_exists(self):
+        """Verify idx_edges_source_type composite index is created."""
+        from graphlint.storage.schema import create_tables
+
+        create_tables(self.conn)
+        assert self._index_exists("idx_edges_source_type"), \
+            "Missing composite index idx_edges_source_type"
+
+    def test_idx_edges_target_type_exists(self):
+        """Verify idx_edges_target_type composite index is created."""
+        from graphlint.storage.schema import create_tables
+
+        create_tables(self.conn)
+        assert self._index_exists("idx_edges_target_type"), \
+            "Missing composite index idx_edges_target_type"
+
+    def test_idx_warnings_node_exists(self):
+        """Verify idx_warnings_node index is created."""
+        from graphlint.storage.schema import create_tables
+
+        create_tables(self.conn)
+        assert self._index_exists("idx_warnings_node"), \
+            "Missing index idx_warnings_node"
+
+    def test_idx_snapshots_warnings_exists(self):
+        """Verify idx_snapshots_warnings sorted index is created."""
+        from graphlint.storage.schema import create_tables
+
+        create_tables(self.conn)
+        assert self._index_exists("idx_snapshots_warnings"), \
+            "Missing sorted index idx_snapshots_warnings"
+
+    def test_idx_snapshots_nodes_exists(self):
+        """Verify idx_snapshots_nodes sorted index is created."""
+        from graphlint.storage.schema import create_tables
+
+        create_tables(self.conn)
+        assert self._index_exists("idx_snapshots_nodes"), \
+            "Missing sorted index idx_snapshots_nodes"
+
+    def test_all_new_indexes_created_together(self):
+        """Verify all new indexes exist after create_tables call."""
+        from graphlint.storage.schema import create_tables
+
+        create_tables(self.conn)
+
+        new_indexes = {
+            "idx_edges_source_type",
+            "idx_edges_target_type",
+            "idx_warnings_node",
+            "idx_snapshots_warnings",
+            "idx_snapshots_nodes",
+        }
+        for idx in new_indexes:
+            assert self._index_exists(idx), f"Missing new index {idx}"
+
+    def test_new_indexes_do_not_break_existing_usage(self):
+        """Verify new indexes do not affect basic DML operations on existing tables."""
+        from graphlint.storage.schema import create_tables
+
+        create_tables(self.conn)
+
+        # Insert file
+        self.conn.execute(
+            "INSERT INTO files (path, hash, size_bytes, mtime_ns) VALUES (?, ?, ?, ?)",
+            ("/test.py", "abc", 100, 1),
+        )
+        # Insert nodes
+        self.conn.execute(
+            "INSERT INTO nodes (file_id, name, qualified_name, node_type, "
+            "line_start, line_end, col_offset) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (1, "MyClass", "test.MyClass", "class", 1, 10, 0),
+        )
+        self.conn.execute(
+            "INSERT INTO nodes (file_id, name, qualified_name, node_type, "
+            "line_start, line_end, col_offset) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (1, "my_func", "test.my_func", "function", 12, 15, 0),
+        )
+        # Insert edge (verify composite index does not affect edges insert)
+        self.conn.execute(
+            "INSERT INTO edges (source_id, target_id, edge_type, file_id, line) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (2, 1, "call", 1, 13),
+        )
+        # Insert warning (verify idx_warnings_node does not affect warnings insert)
+        self.conn.execute(
+            "INSERT INTO warnings (file_id, node_id, warn_type, severity, message, line) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (1, 1, "circular_ref", "warning", "cycle detected", 5),
+        )
+        # Insert snapshot (verify sorted indexes do not affect graph_snapshots insert)
+        self.conn.execute(
+            "INSERT INTO graph_snapshots "
+            "(snapshot_time, node_count, warning_count, edge_count) "
+            "VALUES (?, ?, ?, ?)",
+            ("2024-01-01", 2, 1, 1),
+        )
+
+        # Verify all data is queryable
+        assert self.conn.execute("SELECT COUNT(*) FROM edges").fetchone()[0] == 1
+        assert self.conn.execute("SELECT COUNT(*) FROM warnings").fetchone()[0] == 1
+        assert self.conn.execute("SELECT COUNT(*) FROM graph_snapshots").fetchone()[0] == 1
+
+
+# =============================================================================
+# Database PRAGMA optimization tests
+# =============================================================================
+
+
+@pytest.mark.timeout(30)
+class TestDatabasePragma:
+    """Tests for PRAGMA optimization settings during Database initialization."""
+
+    def test_pragma_cache_size(self, tmp_path):
+        """Verify PRAGMA cache_size is set to -8000 (8MB)."""
+        from graphlint.storage.db import Database
+
+        db = Database(str(tmp_path))
+        try:
+            row = db.fetchone("PRAGMA cache_size")
+            assert row is not None
+            # cache_size = -8000 means 8MB cache
+            assert row[0] == -8000, f"cache_size should be -8000, got {row[0]}"
+        finally:
+            db.close()
+
+    def test_pragma_temp_store(self, tmp_path):
+        """Verify PRAGMA temp_store is set to MEMORY (2)."""
+        from graphlint.storage.db import Database
+
+        db = Database(str(tmp_path))
+        try:
+            row = db.fetchone("PRAGMA temp_store")
+            assert row is not None
+            # 2 = MEMORY
+            assert row[0] == 2, f"temp_store should be 2 (MEMORY), got {row[0]}"
+        finally:
+            db.close()
+
+    def test_pragma_mmap_size(self, tmp_path):
+        """Verify PRAGMA mmap_size is set to 268435456 (256MB)."""
+        from graphlint.storage.db import Database
+
+        db = Database(str(tmp_path))
+        try:
+            row = db.fetchone("PRAGMA mmap_size")
+            assert row is not None
+            assert row[0] == 268435456, \
+                f"mmap_size should be 268435456, got {row[0]}"
+        finally:
+            db.close()
+
+    def test_pragma_journal_mode_wal(self, tmp_path):
+        """Verify PRAGMA journal_mode is WAL."""
+        from graphlint.storage.db import Database
+
+        db = Database(str(tmp_path))
+        try:
+            row = db.fetchone("PRAGMA journal_mode")
+            assert row is not None
+            assert row[0].lower() == "wal", \
+                f"journal_mode should be WAL, got {row[0]}"
+        finally:
+            db.close()
+
+    def test_pragma_foreign_keys_on(self, tmp_path):
+        """Verify PRAGMA foreign_keys is ON."""
+        from graphlint.storage.db import Database
+
+        db = Database(str(tmp_path))
+        try:
+            row = db.fetchone("PRAGMA foreign_keys")
+            assert row is not None
+            assert row[0] == 1, f"foreign_keys should be 1, got {row[0]}"
+        finally:
+            db.close()
+
+    def test_all_pragmas_set_simultaneously(self, tmp_path):
+        """Verify all PRAGMA optimizations are set simultaneously during Database init."""
+        from graphlint.storage.db import Database
+
+        db = Database(str(tmp_path))
+        try:
+            cache = db.fetchone("PRAGMA cache_size")
+            assert cache is not None and cache[0] == -8000
+
+            temp = db.fetchone("PRAGMA temp_store")
+            assert temp is not None and temp[0] == 2
+
+            mmap = db.fetchone("PRAGMA mmap_size")
+            assert mmap is not None and mmap[0] == 268435456
+
+            fk = db.fetchone("PRAGMA foreign_keys")
+            assert fk is not None and fk[0] == 1
+        finally:
+            db.close()
+
+    def test_database_creates_tables_and_new_indexes(self, tmp_path):
+        """Verify Database initialization includes new indexes."""
+        from graphlint.storage.db import Database
+
+        db = Database(str(tmp_path))
+        try:
+            new_indexes = {
+                "idx_edges_source_type",
+                "idx_edges_target_type",
+                "idx_warnings_node",
+                "idx_snapshots_warnings",
+                "idx_snapshots_nodes",
+            }
+            for idx in new_indexes:
+                cursor = db.execute(
+                    "SELECT name FROM sqlite_master WHERE type='index' AND name=?",
+                    (idx,),
+                )
+                assert cursor.fetchone() is not None, f"Missing index {idx} after Database init"
+        finally:
+            db.close()

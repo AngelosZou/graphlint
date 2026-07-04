@@ -10,7 +10,7 @@ import sqlite3
 # ---------------------------------------------------------------------------
 
 CREATE_TABLES_SQL: str = """
--- 文件记录表
+-- File records
 CREATE TABLE IF NOT EXISTS files (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     path            TEXT NOT NULL UNIQUE,
@@ -26,7 +26,7 @@ CREATE TABLE IF NOT EXISTS files (
 CREATE INDEX IF NOT EXISTS idx_files_hash ON files(hash);
 CREATE INDEX IF NOT EXISTS idx_files_status ON files(parse_status);
 
--- 节点表
+-- Nodes
 CREATE TABLE IF NOT EXISTS nodes (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     file_id         INTEGER NOT NULL REFERENCES files(id) ON DELETE CASCADE,
@@ -52,7 +52,7 @@ CREATE INDEX IF NOT EXISTS idx_nodes_qualified ON nodes(qualified_name);
 CREATE INDEX IF NOT EXISTS idx_nodes_deprecated ON nodes(is_deprecated)
     WHERE is_deprecated = 1;
 
--- 边表
+-- Edges
 CREATE TABLE IF NOT EXISTS edges (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     source_id       INTEGER NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
@@ -68,7 +68,7 @@ CREATE INDEX IF NOT EXISTS idx_edges_target ON edges(target_id);
 CREATE INDEX IF NOT EXISTS idx_edges_type ON edges(edge_type);
 CREATE INDEX IF NOT EXISTS idx_edges_file ON edges(file_id);
 
--- import 记录表
+-- Import records
 CREATE TABLE IF NOT EXISTS imports (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     file_id         INTEGER NOT NULL REFERENCES files(id) ON DELETE CASCADE,
@@ -83,7 +83,7 @@ CREATE TABLE IF NOT EXISTS imports (
 CREATE INDEX IF NOT EXISTS idx_imports_file ON imports(file_id);
 CREATE INDEX IF NOT EXISTS idx_imports_used ON imports(is_used);
 
--- 警告表
+-- Warnings
 CREATE TABLE IF NOT EXISTS warnings (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     file_id         INTEGER REFERENCES files(id) ON DELETE CASCADE,
@@ -98,7 +98,7 @@ CREATE TABLE IF NOT EXISTS warnings (
 CREATE INDEX IF NOT EXISTS idx_warnings_file ON warnings(file_id);
 CREATE INDEX IF NOT EXISTS idx_warnings_type ON warnings(warn_type);
 
--- 图结构快照表
+-- Graph snapshots
 CREATE TABLE IF NOT EXISTS graph_snapshots (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     snapshot_time   TEXT NOT NULL,
@@ -116,6 +116,21 @@ CREATE TABLE IF NOT EXISTS graph_snapshots (
 );
 
 CREATE INDEX IF NOT EXISTS idx_snapshots_time ON graph_snapshots(snapshot_time);
+
+-- Composite index: speed up edge-type filtered queries by (source_id, edge_type) for reachability analysis
+CREATE INDEX IF NOT EXISTS idx_edges_source_type ON edges(source_id, edge_type);
+
+-- Composite index: speed up reverse lookup by (target_id, edge_type) for dead-code test reference queries
+CREATE INDEX IF NOT EXISTS idx_edges_target_type ON edges(target_id, edge_type);
+
+-- Single-column index: speed up warnings JOIN queries by node_id
+CREATE INDEX IF NOT EXISTS idx_warnings_node ON warnings(node_id);
+
+-- Sorted index: speed up ORDER BY warning_count for list_graphs pagination
+CREATE INDEX IF NOT EXISTS idx_snapshots_warnings ON graph_snapshots(warning_count);
+
+-- Sorted index: speed up ORDER BY node_count for list_graphs pagination
+CREATE INDEX IF NOT EXISTS idx_snapshots_nodes ON graph_snapshots(node_count);
 """
 
 

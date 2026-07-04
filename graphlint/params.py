@@ -27,6 +27,7 @@ class ParamDef:
     type: ParamType
     default: Any
     help: str
+    help_key: str = ""
     choices: Optional[List[str]] = None
     cli_only: bool = False
     api_only: bool = False
@@ -67,7 +68,8 @@ PARAM_DEFS: List[ParamDef] = [
         cli_flags=["--include-tests", "-t"],
         type=ParamType.FLAG,
         default=False,
-        help="包含测试文件中的引用",
+        help="Include references in test files",
+        help_key="help.param.include_tests",
         category="query",
     ),
     ParamDef(
@@ -75,7 +77,8 @@ PARAM_DEFS: List[ParamDef] = [
         cli_flags=["--exclude-clean", "-C"],
         type=ParamType.FLAG,
         default=False,
-        help="排除无异常的图，仅返回包含警告/错误的图",
+        help="Exclude clean graphs, return only those with warnings/errors",
+        help_key="help.param.exclude_clean",
         category="query",
     ),
     ParamDef(
@@ -83,7 +86,8 @@ PARAM_DEFS: List[ParamDef] = [
         cli_flags=["--reachability", "-R"],
         type=ParamType.FLAG,
         default=False,
-        help="仅返回从入口经 CALL 边可达的图（排除不可达死代码）",
+        help="Return only graphs reachable from entry points via CALL edges",
+        help_key="help.param.exclude_unreachable",
         category="query",
     ),
     ParamDef(
@@ -91,7 +95,8 @@ PARAM_DEFS: List[ParamDef] = [
         cli_flags=["--dead-code-tests"],
         type=ParamType.FLAG,
         default=False,
-        help="查询引用了疑似死代码的测试",
+        help="Query tests referencing suspected dead code",
+        help_key="help.param.dead_code_tests",
         category="query",
     ),
     ParamDef(
@@ -99,7 +104,8 @@ PARAM_DEFS: List[ParamDef] = [
         cli_flags=["--graph-id", "-g"],
         type=ParamType.INT,
         default=None,
-        help="查询指定编号图结构的详细信息",
+        help="Show detailed info for a specific graph by ID",
+        help_key="help.param.graph_id",
         category="query",
     ),
     ParamDef(
@@ -107,7 +113,8 @@ PARAM_DEFS: List[ParamDef] = [
         cli_flags=["--json", "-j"],
         type=ParamType.FLAG,
         default=False,
-        help="以结构化 JSON 格式返回",
+        help="Return output in structured JSON format",
+        help_key="help.param.json_output",
         category="query",
     ),
     ParamDef(
@@ -116,7 +123,8 @@ PARAM_DEFS: List[ParamDef] = [
         type=ParamType.CHOICE,
         default="relative",
         choices=["absolute", "relative"],
-        help="路径格式：absolute / relative",
+        help="Path format: absolute / relative",
+        help_key="help.param.path_format",
         category="query",
     ),
     ParamDef(
@@ -124,7 +132,8 @@ PARAM_DEFS: List[ParamDef] = [
         cli_flags=["--root-dir", "-r"],
         type=ParamType.STR,
         default=".",
-        help="指定目标根目录（元数据目录的父目录）",
+        help="Target root directory (parent of metadata dir)",
+        help_key="help.param.root_dir",
         category="query",
     ),
     ParamDef(
@@ -132,7 +141,8 @@ PARAM_DEFS: List[ParamDef] = [
         cli_flags=["--max-results", "-n"],
         type=ParamType.INT,
         default=50,
-        help="最大返回图数量（1–1000）",
+        help="Max number of graphs to return (1–1000)",
+        help_key="help.param.max_results",
         category="query",
     ),
     ParamDef(
@@ -140,7 +150,8 @@ PARAM_DEFS: List[ParamDef] = [
         cli_flags=["--min-nodes"],
         type=ParamType.INT,
         default=0,
-        help="仅返回节点数 ≥ N 的图",
+        help="Only return graphs with node count ≥ N",
+        help_key="help.param.min_nodes",
         category="query",
     ),
     ParamDef(
@@ -148,7 +159,8 @@ PARAM_DEFS: List[ParamDef] = [
         cli_flags=["--max-nodes"],
         type=ParamType.INT,
         default=None,
-        help="仅返回节点数 ≤ N 的图",
+        help="Only return graphs with node count ≤ N",
+        help_key="help.param.max_nodes",
         category="query",
     ),
     ParamDef(
@@ -156,7 +168,8 @@ PARAM_DEFS: List[ParamDef] = [
         cli_flags=["--warn-types", "-w"],
         type=ParamType.STR,
         default=None,
-        help="逗号分隔的警告类型过滤",
+        help="Comma-separated list of warning types to filter",
+        help_key="help.param.warn_types",
         category="query",
     ),
     ParamDef(
@@ -165,7 +178,8 @@ PARAM_DEFS: List[ParamDef] = [
         type=ParamType.CHOICE,
         default="warnings",
         choices=["warnings", "nodes", "edges", "name"],
-        help="排序方式：warnings / nodes / edges / name",
+        help="Sort by: warnings / nodes / edges / name",
+        help_key="help.param.sort_by",
         category="query",
     ),
     ParamDef(
@@ -174,7 +188,8 @@ PARAM_DEFS: List[ParamDef] = [
         type=ParamType.CHOICE,
         default="auto",
         choices=["auto", "summary", "full", "minimal"],
-        help="详细级别：auto / summary / full / minimal",
+        help="Detail level: auto / summary / full / minimal",
+        help_key="help.param.detail_level",
         category="query",
     ),
     ParamDef(
@@ -182,7 +197,8 @@ PARAM_DEFS: List[ParamDef] = [
         cli_flags=["--output-limit"],
         type=ParamType.INT,
         default=8000,
-        help="输出文本量上限（字符数，100–100000）",
+        help="Output character limit (100–100000)",
+        help_key="help.param.output_limit",
         category="query",
     ),
     ParamDef(
@@ -190,7 +206,8 @@ PARAM_DEFS: List[ParamDef] = [
         cli_flags=["--edge-limit"],
         type=ParamType.INT,
         default=10,
-        help="单图详情最大显示的边数（0=不限制）",
+        help="Max edges shown in detail view (0=unlimited)",
+        help_key="help.param.edge_limit",
         category="query",
     ),
     ParamDef(
@@ -198,7 +215,8 @@ PARAM_DEFS: List[ParamDef] = [
         cli_flags=["--file-limit"],
         type=ParamType.INT,
         default=10,
-        help="单图详情最大显示的文件数（0=不限制）",
+        help="Max files shown in detail view (0=unlimited)",
+        help_key="help.param.file_limit",
         category="query",
     ),
     ParamDef(
@@ -206,7 +224,8 @@ PARAM_DEFS: List[ParamDef] = [
         cli_flags=["--node-limit"],
         type=ParamType.INT,
         default=30,
-        help="单图详情最大显示的节点数（0=不限制）",
+        help="Max nodes shown in detail view (0=unlimited)",
+        help_key="help.param.node_limit",
         category="query",
     ),
     ParamDef(
@@ -214,7 +233,8 @@ PARAM_DEFS: List[ParamDef] = [
         cli_flags=["--no-scan"],
         type=ParamType.FLAG,
         default=False,
-        help="仅从已有索引查询，不自动扫描/构建",
+        help="Query from existing index only, skip auto scan/build",
+        help_key="help.param.no_scan",
         category="query",
     ),
     # -------- Build parameters --------
@@ -223,7 +243,8 @@ PARAM_DEFS: List[ParamDef] = [
         cli_flags=["--force", "-f"],
         type=ParamType.FLAG,
         default=False,
-        help="强制全量重建索引（忽略增量）",
+        help="Force full index rebuild (ignore incremental)",
+        help_key="help.param.force_rebuild",
         category="build",
     ),
     ParamDef(
@@ -231,7 +252,8 @@ PARAM_DEFS: List[ParamDef] = [
         cli_flags=["--parallel", "-P"],
         type=ParamType.INT,
         default=0,
-        help="并行 worker 数（0=自动检测 CPU 核心数，最大 64）",
+        help="Parallel workers (0=auto-detect CPU count, max 64)",
+        help_key="help.param.parallel",
         category="build",
     ),
     # -------- Config parameters --------
@@ -241,7 +263,8 @@ PARAM_DEFS: List[ParamDef] = [
         type=ParamType.CHOICE,
         default="system",
         choices=["system", "zh_CN", "en"],
-        help="语言：system / zh_CN / en",
+        help="Language: system / zh_CN / en",
+        help_key="help.param.lang",
         category="config",
     ),
     ParamDef(
@@ -259,7 +282,8 @@ PARAM_DEFS: List[ParamDef] = [
             "add-exclude",
             "remove-exclude",
         ],
-        help="配置操作",
+        help="Configuration action",
+        help_key="help.param.config_action",
         category="config",
     ),
     ParamDef(
@@ -267,7 +291,8 @@ PARAM_DEFS: List[ParamDef] = [
         cli_flags=["--key"],
         type=ParamType.STR,
         default=None,
-        help="配置键（用于 set/get）",
+        help="Config key (for set/get)",
+        help_key="help.param.config_key",
         category="config",
     ),
     ParamDef(
@@ -275,7 +300,8 @@ PARAM_DEFS: List[ParamDef] = [
         cli_flags=["--value"],
         type=ParamType.STR,
         default=None,
-        help="配置值（用于 set）",
+        help="Config value (for set)",
+        help_key="help.param.config_value",
         category="config",
     ),
     ParamDef(
@@ -283,7 +309,8 @@ PARAM_DEFS: List[ParamDef] = [
         cli_flags=["--from"],
         type=ParamType.STR,
         default=None,
-        help="复制配置的源目录（用于 copy-from）",
+        help="Source directory for copy-from",
+        help_key="help.param.config_source",
         category="config",
     ),
     ParamDef(
@@ -291,7 +318,8 @@ PARAM_DEFS: List[ParamDef] = [
         cli_flags=["--rule-json"],
         type=ParamType.STR,
         default=None,
-        help="add-entry-rule 的 JSON 规则字符串",
+        help="JSON rule string for add-entry-rule",
+        help_key="help.param.rule_json",
         category="config",
     ),
     ParamDef(
@@ -299,7 +327,8 @@ PARAM_DEFS: List[ParamDef] = [
         cli_flags=["--name"],
         type=ParamType.STR,
         default=None,
-        help="remove-entry-rule 的规则名称",
+        help="Rule name for remove-entry-rule",
+        help_key="help.param.rule_name",
         category="config",
     ),
     ParamDef(
@@ -307,7 +336,8 @@ PARAM_DEFS: List[ParamDef] = [
         cli_flags=["--exclude-pattern"],
         type=ParamType.STR,
         default=None,
-        help="add-exclude / remove-exclude 的模式",
+        help="Pattern for add-exclude / remove-exclude",
+        help_key="help.param.exclude_pattern",
         category="config",
     ),
 ]

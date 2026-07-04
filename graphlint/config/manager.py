@@ -60,10 +60,10 @@ class ConfigManager:
         for part in parts:
             if isinstance(current, dict):
                 if part not in current:
-                    raise KeyError(f"配置键不存在: {key}")
+                    raise KeyError(f"Config key not found: {key}")
                 current = current[part]
             else:
-                raise ValueError(f"无法在非 dict 值上访问 '{part}'：{key}")
+                raise ValueError(f"Cannot access key '{part}' on non-dict value: {key}")
         return current
 
     def set(self, key: str, value: Any) -> None:
@@ -155,7 +155,7 @@ class ConfigManager:
                 if found:
                     src_config_path = found
                 else:
-                    raise ConfigNotFoundError(f"源路径中未找到配置: {source_path}")
+                    raise ConfigNotFoundError(f"Config not found in source path: {source_path}")
 
         with open(src_config_path, "r", encoding="utf-8") as fh:
             source_config = json.load(fh)

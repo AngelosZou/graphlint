@@ -16,6 +16,8 @@ env/
 venv/
 .mypy_cache/
 .ruff_cache/
+.tox/
+*.log
 *.swp
 *.swo
 .DS_Store

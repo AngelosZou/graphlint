@@ -157,6 +157,7 @@ class QueryEngine:
         else:
             self.db = Database(root_dir)  # type: ignore[assignment]
         self.root_dir = root_dir
+        self._warn_summary_cache: Optional[dict[str, int]] = None
 
     def list_graphs(self, filters: QueryFilters) -> QueryResult:
         """List graph summaries with filtering, sorting, pagination."""
@@ -209,13 +210,15 @@ class QueryEngine:
             if row["warning_count"] == 0:
                 skipped_clean += 1
 
-        # Global statistics
-        warn_summary: dict[str, int] = {}
-        all_warns = self.db.fetchall(
-            "SELECT warn_type, COUNT(*) as cnt FROM warnings GROUP BY warn_type"
-        )
-        for r in all_warns:
-            warn_summary[r["warn_type"]] = r["cnt"]
+        # Global statistics (use cache to avoid scanning warnings table on every list_graphs call)
+        if self._warn_summary_cache is None:
+            self._warn_summary_cache = {}
+            all_warns = self.db.fetchall(
+                "SELECT warn_type, COUNT(*) as cnt FROM warnings GROUP BY warn_type"
+            )
+            for r in all_warns:
+                self._warn_summary_cache[r["warn_type"]] = r["cnt"]
+        warn_summary = dict(self._warn_summary_cache)  # Shallow copy for backward compatibility
 
         return QueryResult(
             graphs=graphs,
@@ -417,7 +420,7 @@ class QueryEngine:
         if row["entry_type"]:
             entry += f" ({row['entry_type']})"
         wc = row["warning_count"] or 0
-        # 构建警告摘要字符串列表
+        # Build warning summary string list
         warn_strs = []
         if wc > 0:
             warn_strs.append(f"{wc} warnings")

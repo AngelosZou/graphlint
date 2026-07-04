@@ -268,9 +268,66 @@ def _parse_warn_types(warn_types: Optional[str]) -> Optional[list[str]]:
     return items
 
 
+def _quick_changed_check(root_dir: str) -> bool:
+    """Quick check if files have changed since the last build.
+
+    Strategy: compare the previously saved full file list (path, mtime_ns) against
+    the current filesystem state. False positives (reporting a change when there
+    isn't one) are acceptable — the caller falls back to a full incremental scan.
+    False negatives are not acceptable — eliminated by comparing each file's
+    mtime_ns directly.
+
+    Returns:
+        True if a change is detected (full scan needed), False if unchanged
+        (build can be skipped).
+    """
+    stamp_file = os.path.join(root_dir, ".graphlint", ".last_scan_stamp")
+    try:
+        with open(stamp_file, "r") as f:
+            saved = json.loads(f.read())
+    except (FileNotFoundError, json.JSONDecodeError):
+        return True  # No stamp, need full scan
+
+    saved_files = saved.get("files", {})
+
+    # Scan current filesystem (.py files only, consistent with _scan())
+    exclude = {
+        "__pycache__", ".mypy_cache", ".pytest_cache", ".tox",
+        ".venv", "venv", "env", "virtualenv", ".env",
+        "node_modules", ".git", ".svn", ".hg", ".idea",
+        ".vscode", ".vs", ".graphlint", "build", "dist",
+    }
+    current_files = {}
+    for dp, dns, fns in os.walk(root_dir, topdown=True, followlinks=False):
+        dns[:] = [d for d in dns if d not in exclude
+                  and not d.endswith(".egg-info") and not d.startswith(".")]
+        for fn in fns:
+            if fn.endswith(".py") and not fn.endswith((".pyc", ".pyo")) and not fn.startswith("."):
+                rel = os.path.relpath(os.path.join(dp, fn), root_dir).replace(os.sep, "/")
+                try:
+                    current_files[rel] = os.stat(os.path.join(dp, fn)).st_mtime_ns
+                except OSError:
+                    return True  # Cannot read, need full scan
+
+    # Detect path set changes
+    if set(current_files) != set(saved_files):
+        return True
+
+    # mtime change detection (compare one by one, zero false negatives)
+    for path, cur_mtime in current_files.items():
+        if saved_files.get(path) != cur_mtime:
+            return True
+
+    return False
+
+
 def _auto_build(root_dir: str, config: dict[str, Any]) -> bool:
     """Run an automatic incremental build. Returns True on success."""
     import traceback
+
+    # Quick short-circuit: skip full scan when nothing changed (check before creating DB connection to save resources)
+    if not _quick_changed_check(root_dir):
+        return True  # No changes, build is still fresh
 
     db = None
     try:

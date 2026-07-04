@@ -35,13 +35,13 @@ def build_parser(i18n: I18nManager) -> argparse.ArgumentParser:
     qp = sub.add_parser("query", parents=[_lang_parser], help=_t("help.query"))
     for p in PARAM_DEFS:
         if p.category == "query" and not p.api_only:
-            _add_arg(qp, p)
+            _add_arg(qp, p, _t)
 
     # build subcommand
     bp = sub.add_parser("build", parents=[_lang_parser], help=_t("help.build"))
     for p in PARAM_DEFS:
         if p.category == "build" and not p.api_only:
-            _add_arg(bp, p)
+            _add_arg(bp, p, _t)
 
     # install subcommand
     sub.add_parser("install", parents=[_lang_parser], help=_t("help.install"))
@@ -60,48 +60,49 @@ def build_parser(i18n: I18nManager) -> argparse.ArgumentParser:
 
     # config get <key>
     get_p = config_sub.add_parser("get", help=_t("help.config.get"))
-    get_p.add_argument("--key", required=True, help="Config key")
+    get_p.add_argument("--key", required=True, help=_t("help.param.config_key"))
 
     # config set <key> <value>
     set_p = config_sub.add_parser("set", help=_t("help.config.set"))
-    set_p.add_argument("--key", required=True, help="Config key")
-    set_p.add_argument("--value", required=True, help="Config value")
+    set_p.add_argument("--key", required=True, help=_t("help.param.config_key"))
+    set_p.add_argument("--value", required=True, help=_t("help.param.config_value"))
 
     # config copy-from <source>
     copy_p = config_sub.add_parser("copy-from", help=_t("help.config.copy_from"))
     copy_p.add_argument(
-        "--from", dest="config_source", required=True, help="Source path"
+        "--from", dest="config_source", required=True, help=_t("help.param.config_source")
     )
 
     # config add-entry-rule
     addrule_p = config_sub.add_parser(
         "add-entry-rule", help=_t("help.config.add_entry_rule")
     )
-    addrule_p.add_argument("--rule-json", required=True, help="Rule JSON string")
+    addrule_p.add_argument("--rule-json", required=True, help=_t("help.param.rule_json"))
 
     # config remove-entry-rule <name>
     removerule_p = config_sub.add_parser(
         "remove-entry-rule", help=_t("help.config.remove_entry_rule")
     )
-    removerule_p.add_argument("--name", required=True, help="Rule name")
+    removerule_p.add_argument("--name", required=True, help=_t("help.param.rule_name"))
 
     # config add-exclude <pattern>
     addexcl_p = config_sub.add_parser("add-exclude", help=_t("help.config.add_exclude"))
-    addexcl_p.add_argument("--exclude-pattern", required=True, help="Exclude pattern")
+    addexcl_p.add_argument("--exclude-pattern", required=True, help=_t("help.param.exclude_pattern"))
 
     # config remove-exclude <pattern>
     rmexcl_p = config_sub.add_parser(
         "remove-exclude", help=_t("help.config.remove_exclude")
     )
-    rmexcl_p.add_argument("--exclude-pattern", required=True, help="Exclude pattern")
+    rmexcl_p.add_argument("--exclude-pattern", required=True, help=_t("help.param.exclude_pattern"))
 
     return parser
 
 
-def _add_arg(parser: argparse.ArgumentParser, param: Any) -> None:
+def _add_arg(parser: argparse.ArgumentParser, param: Any, _t: Any = None) -> None:
     """Convert a ParamDef to an argparse argument."""
+    help_text = _t(param.help_key) if _t is not None and param.help_key else param.help
     kwargs: dict[str, Any] = {
-        "help": param.help,
+        "help": help_text,
         "dest": param.name,
     }
     if param.type == ParamType.FLAG:
@@ -202,7 +203,7 @@ def _run_config(args: argparse.Namespace) -> Any:
     from graphlint.api import configure
 
     kwargs = _args_to_kwargs(args, "config")
-    # 从 config_action 获取操作类型
+    # Get the action from config_action
     action = getattr(args, "config_action", None) or getattr(
         args, "config_action", None
     )
@@ -214,7 +215,7 @@ def _run_config(args: argparse.Namespace) -> Any:
 def _args_to_kwargs(args: argparse.Namespace, category: str) -> dict[str, Any]:
     """Convert argparse Namespace to API keyword arguments."""
     kwargs: dict[str, Any] = {}
-    # 先尝试从子命令匹配的 dest 获取 key/value/source/rule_json/name/exclude_pattern
+    # First try getting key/value/source/rule_json/name/exclude_pattern from subcommand-matched dest
     if category == "config":
         if hasattr(args, "key") and args.key:
             kwargs["key"] = args.key
@@ -230,7 +231,7 @@ def _args_to_kwargs(args: argparse.Namespace, category: str) -> dict[str, Any]:
             kwargs["exclude_pattern"] = args.exclude_pattern
     for p in PARAM_DEFS:
         if p.category == category and not p.cli_only:
-            # 跳过 config_action，因为它通过 action 参数传递
+            # Skip config_action since it's passed via the action parameter
             if p.name == "config_action":
                 continue
             val = getattr(args, p.name, p.default)

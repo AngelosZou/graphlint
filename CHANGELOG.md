@@ -2,6 +2,50 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.3] - 2026-07-04
+
+### Added
+- I18n support for CLI parameter help text: `PARAM_DEFS` help strings now go through the i18n system via `help_key`, enabling full language switching for `--help` output
+
+### Changed
+- `ParamDef` dataclass: added `help_key` field for i18n key lookup
+- `cli.py:_add_arg()` now resolves help text via `_t(help_key)` when available
+- Updated `en.py` and `zh_CN.py` with all `help.param.*` translation entries
+
+## [0.1.2] - 2026-07-04
+
+### Added
+- SQLite composite indexes (`idx_edges_source_type`, `idx_edges_target_type`) to accelerate edge-type filtered lookups
+- SQLite single-column index (`idx_warnings_node`) to speed up warnings JOIN queries
+- SQLite sorted indexes (`idx_snapshots_warnings`, `idx_snapshots_nodes`) for faster list_graphs pagination
+- PRAGMA optimizations on Database init: `cache_size=-8000` (8 MB), `mmap_size=268435456` (256 MB), `temp_store=MEMORY`
+- `_quick_changed_check()` — mtime-based fast-path stamp that short-circuits the entire build when no files have changed
+- `_update_scan_stamp()` — persists `{path: mtime_ns}` snapshot inside IndexLock after each successful build
+- `warnings_summary` cache in `QueryEngine.list_graphs()` — lazily computed then shallow-copied, eliminating repeated `GROUP BY` scans
+- `_precompute_edge_counts()` — single-pass edge count per component, replacing O(n × m) per-component iteration
+
+### Changed
+- Eliminated second AST traversal: edge building is now driven by `ReferenceInfo` collected during the single `ASTVisitor` pass — removed `_walk`, `_read_edges`, `_proc_call`, `_proc_assign`, `_proc_annassign`, `_target_ids`, `_read_target_expr` (~400 lines). In a large codebase (700+ `.py` files, 1000+ classes, 14,000+ functions), full rebuild time improved from ~2500s to ~200s.
+- `_build_file_edges_worker` now consumes `ParseResult.references` directly instead of re-walking the AST tree
+- Module pseudo-node (id=0) connectivity tightened: liveness only propagates through `read`/`call` edges, not `write` edges — preventing false reachability of write-only variables and fixing false dead-code reports for module-level used variables
+- Connected component BFS no longer unconditionally seeds node 0, avoiding spurious reachability
+- Module-level synthetic edges recreated for all files each build instead of only for unchanged files
+- Optimized multiple AST I/O bottlenecks in source file reading and tree reuse
+- `_symbol_index` / `_suffix_index` from `dict` to `defaultdict(list)`, removing all `.setdefault()` calls
+- `_resolve_symbol` now accepts a per-worker `resolve_cache` dict — repeated `(qname, scope)` pairs are resolved once per file
+- `call_graph` prebuilt once in `find_connected_components` and reused across `compute_entry_reachability` calls, eliminating redundant edge re-traversal
+- `_insert_nodes` uses a pre-built `(qualified_name, line_start) → file_path` map instead of O(n²) linear scan via `_node_path()`
+- Full rebuild (`incremental=False`) now uses per-table `DELETE FROM` instead of per-file `_delete_old` + selective cleanup
+- Incremental build edge insertion now uses global `DELETE FROM edges` instead of per-file partial delete, eliminating dangling old node-ID references
+- `load_prebuilt_edges` accepts optional `sql_to_mem` mapping, simplifying caller in `indexer.py`
+- Agent injection prompt strengthened to warn when graphlint CLI is unavailable
+
+### Removed
+- `_node_path()` helper function (replaced by pre-built node-to-file map)
+
+### Fixed
+- Windows compatibility: `os.unlink()` with `missing_ok=True` replaced by `if exists()` guard
+
 ## [0.1.1] - 2026-07-04
 
 ### Added

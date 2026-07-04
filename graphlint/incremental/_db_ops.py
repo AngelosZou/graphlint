@@ -20,8 +20,14 @@ _UTC = datetime.timezone.utc
 def load_prebuilt_edges(
     db: Database,
     unchanged_files: set[str],
+    sql_to_mem: Optional[dict[int, int]] = None,
 ) -> list[EdgeInfo]:
-    """Load edges for unchanged files from DB (incremental build)."""
+    """Load edges for unchanged files from DB (incremental build).
+
+    Args:
+        sql_to_mem: Optional mapping from SQL file_id to memory file_id.
+                    When provided, EdgeInfo file_id values are mapped to memory fid.
+    """
     if not unchanged_files:
         return []
     ph = ",".join("?" for _ in unchanged_files)
@@ -29,17 +35,21 @@ def load_prebuilt_edges(
         f"SELECT e.* FROM edges e JOIN files f ON e.file_id=f.id WHERE f.path IN ({ph})",
         tuple(unchanged_files),
     )
-    return [
-        EdgeInfo(
+    result = []
+    for r in rows:
+        sql_fid = r["file_id"]
+        mem_fid = sql_to_mem.get(sql_fid) if sql_to_mem else sql_fid
+        if not mem_fid:
+            continue
+        result.append(EdgeInfo(
             source_id=r["source_id"],
             target_id=r["target_id"],
             edge_type=r["edge_type"],
-            file_id=r["file_id"],
+            file_id=mem_fid,
             line=r["line"],
             context=r["context"] or "",
-        )
-        for r in rows
-    ]
+        ))
+    return result
 
 
 def load_old_changed_node_ids(
@@ -73,14 +83,10 @@ def update_db(
         if incremental:
             _delete_old(db, removed, changed)
         else:
-            all_rebuilt = [
-                fp
-                for fp in build_result.files
-                if fp not in changed and fp not in removed
-            ]
-            _delete_old(db, removed, changed)
-            if all_rebuilt:
-                _delete_old(db, [], all_rebuilt)
+            # Full build: unconditionally clear all data tables (keep files table)
+            # files table is updated by subsequent _upsert_files INSERT OR REPLACE
+            for tbl in ("edges", "nodes", "imports", "warnings", "graph_snapshots"):
+                db.execute(f"DELETE FROM {tbl}")
         _upsert_files(db, build_result, root_dir, test_patterns, changed)
         fid_map = _load_fid_map(db)
         _insert_nodes(db, build_result, fid_map, changed_files=changed_set)
@@ -156,16 +162,18 @@ def _insert_nodes(
     fid_map: dict[str, int],
     changed_files: Optional[set[str]] = None,
 ) -> None:
-    """Insert nodes with explicit IDs to stay consistent with in-memory data.
+    """Insert nodes with explicit IDs — sorted so parents precede children to avoid FK violations on parent_node_id."""
+    # Pre-build (qualified_name, line_start) → file_path map (single pass, eliminates O(n²) lookup)
+    node_to_file: dict[tuple[str, int], str] = {}
+    for fp, pr in build_result.files_data.items():
+        for n in pr.nodes:
+            node_to_file[(n.qualified_name, n.line_start)] = fp
 
-    Sorts nodes so parents are inserted before children, preventing FK
-    violations on parent_node_id across multiple changed files.
-    """
     rows: list[tuple[Any, ...]] = []
     for node in build_result.nodes:
         if node.id == 0:
             continue
-        fp = _node_path(node, build_result)
+        fp = node_to_file.get((node.qualified_name, node.line_start), "")
         if changed_files is not None and fp not in changed_files:
             continue
         fid = fid_map.get(fp, 0)
@@ -174,14 +182,8 @@ def _insert_nodes(
             continue
         rows.append(
             (
-                node_id,
-                fid,
-                node.name,
-                node.qualified_name,
-                node.node_type,
-                node.line_start,
-                node.line_end,
-                node.col_offset,
+                node_id, fid, node.name, node.qualified_name, node.node_type,
+                node.line_start, node.line_end, node.col_offset,
                 node.parent_node_id or None,
                 1 if node.is_deprecated else 0,
                 node.deprecation_msg or None,
@@ -223,6 +225,10 @@ def _do_insert_edges(
             mem_fid_to_sql[idx] = sql_fid
 
     if changed_files is not None:
+        # In incremental mode, delete all edges globally: preloaded edges for unchanged
+        # files contain correct new node IDs, but old edges in DB still have old node IDs.
+        # Deleting only changed-file edges would cause dangling references.
+        # DELETE FROM on the full table is fast in WAL mode (~10-50ms for 100K rows).
         db.execute("DELETE FROM edges")
 
     batch: list[tuple[Any, ...]] = []
@@ -292,10 +298,31 @@ def _insert_warnings(
         )
 
 
+def _precompute_edge_counts(
+    component_map: dict[int, int],
+    edges: list[EdgeInfo],
+) -> dict[int, int]:
+    """Pre-compute edge counts per component with a single pass over all edges.
+
+    Returns:
+        Mapping of comp_id -> edge_count
+    """
+    counts: dict[int, int] = {}
+    for e in edges:
+        cs = component_map.get(e.source_id)
+        ct = component_map.get(e.target_id)
+        if cs is not None:
+            counts[cs] = counts.get(cs, 0) + 1
+        if ct is not None and ct != cs:
+            counts[ct] = counts.get(ct, 0) + 1
+    return counts
+
+
 def _component_stats(
     comp: Any,
     build_result: GraphBuildResult,
     nid_map: dict[int, Any],
+    edge_counts: dict[int, int],
 ) -> tuple[Any, ...]:
     """Compute component statistics."""
     cf_count = sum(
@@ -308,11 +335,7 @@ def _component_stats(
         for nid in comp.node_ids
         if nid_map.get(nid, NodeInfo()).node_type in ("variable", "field")
     )
-    ec = sum(
-        1
-        for e in build_result.edges
-        if e.source_id in comp.node_ids or e.target_id in comp.node_ids
-    )
+    ec = edge_counts.get(comp.component_id, 0)
     wc = sum(1 for w in build_result.warnings if w.node_id in comp.node_ids)
     root_ids = sorted(nid for nid in comp.node_ids if nid != 0)
     root_json = json.dumps(root_ids)
@@ -368,8 +391,13 @@ def build_snapshots(
         if hasattr(build_result, "node_id_map")
         else getattr(build_result, "_node_id_map", {})
     )
+    # Pre-compute edge counts for all components (single pass, avoids per-component full traversal)
+    edge_counts = _precompute_edge_counts(
+        build_result.component_map,
+        build_result.edges,
+    )
     for comp in build_result.components:
-        stats = _component_stats(comp, build_result, nid_map)
+        stats = _component_stats(comp, build_result, nid_map, edge_counts)
         vals = _snapshot_values(comp, now, *stats)
         db.execute(
             "INSERT INTO graph_snapshots "
@@ -401,6 +429,11 @@ def update_snapshots(
         if hasattr(build_result, "node_id_map")
         else getattr(build_result, "_node_id_map", {})
     )
+    # Pre-compute edge counts for all components (single pass, avoids per-component full traversal)
+    edge_counts = _precompute_edge_counts(
+        build_result.component_map,
+        build_result.edges,
+    )
     _used_ids: set[int] = set()
     for comp in build_result.components:
         entry_file = comp.entry_info[0].file_path if comp.entry_info else None
@@ -414,7 +447,7 @@ def update_snapshots(
             max_id += 1
             snap_id = max_id
         _used_ids.add(snap_id)
-        stats = _component_stats(comp, build_result, nid_map)
+        stats = _component_stats(comp, build_result, nid_map, edge_counts)
         vals = _snapshot_values(comp, now, *stats)
         db.execute(
             "INSERT INTO graph_snapshots "
@@ -426,13 +459,4 @@ def update_snapshots(
         )
 
 
-def _node_path(node: NodeInfo, br: GraphBuildResult) -> str:
-    """Find file path via file_id."""
-    for fp, pr in br.files_data.items():
-        for n in pr.nodes:
-            if (
-                n.qualified_name == node.qualified_name
-                and n.line_start == node.line_start
-            ):
-                return fp
-    return ""
+

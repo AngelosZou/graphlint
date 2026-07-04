@@ -1,18 +1,35 @@
 # -*- coding: utf-8 -*-
-"""AST visitor — traverses AST to extract nodes, imports, and name usages."""
+"""AST visitor — traverses AST to extract nodes, imports, and symbol references."""
 
 from __future__ import annotations
 
 import ast
 from typing import List, Set
 
-from graphlint.analyzer._types import NodeInfo
+from graphlint.analyzer._types import NodeInfo, ReferenceInfo
 from graphlint.analyzer.decorators import DecoratorResolver
 from graphlint.analyzer.imports import ImportAnalyzer, ImportInfo
 
 
+def _call_name(func: ast.expr) -> str:
+    """Extract the dotted name from a function-call expression."""
+    if isinstance(func, ast.Name):
+        return func.id
+    if isinstance(func, ast.Attribute):
+        parts = [func.attr]
+        cur = func.value
+        while isinstance(cur, ast.Attribute):
+            parts.append(cur.attr)
+            cur = cur.value
+        if isinstance(cur, ast.Name) and cur.id != "self":
+            parts.append(cur.id)
+        parts.reverse()
+        return ".".join(parts)
+    return ""
+
+
 class ASTVisitor(ast.NodeVisitor):
-    """Custom AST visitor that extracts nodes, imports, and name usages."""
+    """Custom AST visitor that extracts nodes, imports, and structured references."""
 
     def __init__(
         self,
@@ -31,11 +48,20 @@ class ASTVisitor(ast.NodeVisitor):
         self.nodes: List[NodeInfo] = []
         self.imports: List[ImportInfo] = []
         self.name_usages: Set[str] = set()
+        self.references: List[ReferenceInfo] = []
 
         self._context: List[str] = [module_qualified]
         self._current_class_id: int = 0
         self._current_func_id: int = 0
         self._node_id: int = 1
+
+    # ------------------------------------------------------------------
+    # Source qualified name at current position
+    # ------------------------------------------------------------------
+
+    def _current_qname(self) -> str:
+        """Qualified name of the current scope."""
+        return ".".join(self._context)
 
     # ------------------------------------------------------------------
     # Generic visit
@@ -54,14 +80,28 @@ class ASTVisitor(ast.NodeVisitor):
             )
 
     def generic_visit(self, node: ast.AST) -> None:
-        """Generic visit: collect name usages."""
+        """Generic visit: collect read references from all Name/Attribute nodes."""
+        sq = self._current_qname()
         if isinstance(node, ast.Name):
             if isinstance(node.ctx, ast.Load):
                 self.name_usages.add(node.id)
+                self.references.append(ReferenceInfo(
+                    source_qname=sq,
+                    target_name=node.id,
+                    edge_type="read",
+                    line=node.lineno or 0,
+                ))
         elif isinstance(node, ast.Attribute):
             self.name_usages.add(node.attr)
             if isinstance(node.value, ast.Name):
                 self.name_usages.add(node.value.id)
+            if isinstance(node.ctx, ast.Load):
+                self.references.append(ReferenceInfo(
+                    source_qname=sq,
+                    target_name=node.attr,
+                    edge_type="read",
+                    line=node.lineno or 0,
+                ))
         super().generic_visit(node)
 
     # ------------------------------------------------------------------
@@ -79,6 +119,29 @@ class ASTVisitor(ast.NodeVisitor):
         infos = self.import_analyzer.analyze_import(node)
         self.imports.extend(infos)
         self.generic_visit(node)
+
+    # ------------------------------------------------------------------
+    # Call
+    # ------------------------------------------------------------------
+
+    def visit_Call(self, node: ast.Call) -> None:
+        """Process a function call — add call edge, visit args/keywords."""
+        sq = self._current_qname()
+        cname = _call_name(node.func)
+        if cname:
+            self.references.append(ReferenceInfo(
+                source_qname=sq,
+                target_name=cname,
+                edge_type="call",
+                line=node.lineno or 0,
+            ))
+        if isinstance(node.func, ast.Attribute):
+            self.visit(node.func.value)
+        for arg in node.args:
+            self.visit(arg)
+        for kw in node.keywords:
+            if kw.value is not None:
+                self.visit(kw.value)
 
     # ------------------------------------------------------------------
     # Class definition
@@ -119,8 +182,26 @@ class ASTVisitor(ast.NodeVisitor):
         self._context.append(node.name)
 
         for base in node.bases:
+            base_name = _call_name(base)
+            if base_name:
+                self.references.append(ReferenceInfo(
+                    source_qname=qualified,
+                    target_name=base_name,
+                    edge_type="inherit",
+                    line=base.lineno or node.lineno or 0,
+                ))
             self.visit(base)
         for dec in node.decorator_list:
+            dec_name = _call_name(
+                dec.func if isinstance(dec, ast.Call) else dec
+            )
+            if dec_name:
+                self.references.append(ReferenceInfo(
+                    source_qname=qualified,
+                    target_name=dec_name,
+                    edge_type="decorate",
+                    line=dec.lineno or node.lineno or 0,
+                ))
             self.visit(dec)
         for item in node.body:
             self.visit(item)
@@ -184,6 +265,16 @@ class ASTVisitor(ast.NodeVisitor):
         func_node_id = self._add_node(func_node)
 
         for dec in node.decorator_list:
+            dec_name = _call_name(
+                dec.func if isinstance(dec, ast.Call) else dec
+            )
+            if dec_name:
+                self.references.append(ReferenceInfo(
+                    source_qname=qualified,
+                    target_name=dec_name,
+                    edge_type="decorate",
+                    line=dec.lineno or node.lineno or 0,
+                ))
             self.visit(dec)
         if node.returns:
             self.visit(node.returns)
@@ -218,10 +309,12 @@ class ASTVisitor(ast.NodeVisitor):
         else:
             parent_id = 0
 
+        sq = self._current_qname()
         for target in node.targets:
+            self._add_write_ref(target, sq, node.lineno or 0)
             self._extract_target(target, node_type, parent_id, node)
 
-        self.generic_visit(node)
+        self.visit(node.value)
 
     def visit_AnnAssign(self, node: ast.AnnAssign) -> None:
         """Process annotated assignment statements."""
@@ -247,10 +340,51 @@ class ASTVisitor(ast.NodeVisitor):
                 type_ann = ""
             self.visit(node.annotation)
 
+        sq = self._current_qname()
+        if isinstance(node.target, ast.Name):
+            self.references.append(ReferenceInfo(
+                source_qname=sq,
+                target_name=node.target.id,
+                edge_type="write",
+                line=node.lineno or 0,
+            ))
+        elif isinstance(node.target, ast.Attribute) and not isinstance(node.target.value, ast.Attribute):
+            self.references.append(ReferenceInfo(
+                source_qname=sq,
+                target_name=node.target.attr,
+                edge_type="write",
+                line=node.lineno or 0,
+            ))
+
         self._extract_annotated_target(
             node.target, node_type, parent_id, node, type_ann
         )
-        self.generic_visit(node)
+        if node.value:
+            self.visit(node.value)
+
+    # ------------------------------------------------------------------
+    # Write reference helpers (recursive for nested tuples in assignment targets)
+    # ------------------------------------------------------------------
+
+    def _add_write_ref(self, target: ast.expr, source_qname: str, line: int) -> None:
+        """Add write references for assignment targets, recursing into Tuple/List."""
+        if isinstance(target, ast.Name):
+            self.references.append(ReferenceInfo(
+                source_qname=source_qname,
+                target_name=target.id,
+                edge_type="write",
+                line=line,
+            ))
+        elif isinstance(target, ast.Attribute) and not isinstance(target.value, ast.Attribute):
+            self.references.append(ReferenceInfo(
+                source_qname=source_qname,
+                target_name=target.attr,
+                edge_type="write",
+                line=line,
+            ))
+        elif isinstance(target, (ast.Tuple, ast.List)):
+            for elt in target.elts:
+                self._add_write_ref(elt, source_qname, line)
 
     # ------------------------------------------------------------------
     # Target extraction helpers

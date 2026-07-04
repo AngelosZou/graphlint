@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import ast
 from dataclasses import dataclass, field
 from typing import Any, List, Optional
 
@@ -40,6 +41,18 @@ class ParseResult:
     warnings: list[Any] = field(default_factory=list)
     hash: str = ""
     source: Optional[str] = None
+    tree: Optional[ast.AST] = None
+    references: list[ReferenceInfo] = field(default_factory=list)
+
+
+@dataclass
+class ReferenceInfo:
+    """A structured reference collected during AST parse — replaces the second tree walk."""
+
+    source_qname: str = ""
+    target_name: str = ""
+    edge_type: str = ""
+    line: int = 0
 
 
 @dataclass

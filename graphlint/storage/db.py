@@ -9,7 +9,7 @@ import sys
 from contextlib import contextmanager
 from typing import Any, Optional
 
-# fcntl 仅在 Unix 上可用
+# fcntl is only available on Unix
 try:
     import fcntl
 except ImportError:
@@ -83,6 +83,18 @@ class Database:
             pass
         try:
             self.conn.execute("PRAGMA synchronous=NORMAL")
+        except _sqlite3.OperationalError:
+            pass
+        try:
+            self.conn.execute("PRAGMA cache_size=-8000")  # 8 MB cache
+        except _sqlite3.OperationalError:
+            pass
+        try:
+            self.conn.execute("PRAGMA mmap_size=268435456")  # 256 MB memory-mapped I/O
+        except _sqlite3.OperationalError:
+            pass
+        try:
+            self.conn.execute("PRAGMA temp_store=MEMORY")  # Store temp tables in memory
         except _sqlite3.OperationalError:
             pass
         from graphlint.storage.schema import create_tables

@@ -3,8 +3,7 @@
 
 from __future__ import annotations
 
-import ast
-import os
+from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from typing import Any, Optional
@@ -41,29 +40,8 @@ class GraphBuildResult:
 
 
 # ---------------------------------------------------------------------------
-# Module-level AST walk functions — shared by serial and parallel code paths
+# Symbol resolution (used by edge building and reference resolution)
 # ---------------------------------------------------------------------------
-
-_STMT_WALK_TYPES = (
-    ast.FunctionDef,
-    ast.AsyncFunctionDef,
-    ast.ClassDef,
-    ast.Call,
-    ast.Assign,
-    ast.AnnAssign,
-    ast.Expr,
-    ast.Return,
-    ast.Raise,
-    ast.If,
-    ast.While,
-    ast.For,
-    ast.With,
-    ast.AugAssign,
-    ast.Assert,
-    ast.Delete,
-    ast.Try,
-    ast.ExceptHandler,
-)
 
 
 def _resolve_symbol(
@@ -72,10 +50,30 @@ def _resolve_symbol(
     symbol_index: dict[str, list[int]],
     suffix_index: dict[str, list[int]],
     node_id_map: dict[int, NodeInfo],
+    resolve_cache: Optional[dict] = None,
+    scope_suffix_index: Optional[dict[tuple[str, str], list[int]]] = None,
 ) -> list[int]:
     """Resolve a symbol by exact match first, then suffix match."""
+    cache_key = (qname, scope)
+    if resolve_cache is not None and cache_key in resolve_cache:
+        cached = resolve_cache[cache_key]
+        return list(cached) if cached else []
+
     if qname in symbol_index:
-        return list(symbol_index[qname])
+        result = list(symbol_index[qname])
+        if resolve_cache is not None:
+            resolve_cache[cache_key] = result if result else []
+        return result
+
+    # Scope-qualified suffix lookup (O(1)) — fast path, avoids suffix scan
+    if scope and scope_suffix_index:
+        key = (scope, qname)
+        r = scope_suffix_index.get(key)
+        if r is not None:
+            if resolve_cache is not None:
+                resolve_cache[cache_key] = list(r)
+            return list(r)
+
     r = suffix_index.get(qname)
     if r:
         result = list(r)
@@ -86,379 +84,45 @@ def _resolve_symbol(
                 if node_id_map.get(i, NodeInfo()).qualified_name.startswith(scope)
             ]
             if scoped:
+                if resolve_cache is not None:
+                    resolve_cache[cache_key] = scoped
                 return scoped
+        if resolve_cache is not None:
+            resolve_cache[cache_key] = result
         return result
+    if resolve_cache is not None:
+        resolve_cache[cache_key] = []
     return []
-
-
-def _call_name(func: ast.expr) -> str:
-    if isinstance(func, ast.Name):
-        return func.id
-    if isinstance(func, ast.Attribute):
-        parts = [func.attr]
-        cur = func.value
-        while isinstance(cur, ast.Attribute):
-            parts.append(cur.attr)
-            cur = cur.value
-        if isinstance(cur, ast.Name) and cur.id != "self":
-            parts.append(cur.id)
-        parts.reverse()
-        return ".".join(parts)
-    return ""
-
-
-def _read_edges(
-    expr: ast.AST,
-    ctx: list[int],
-    fid: int,
-    line: int,
-    edges: list[EdgeInfo],
-    symbol_index: dict[str, list[int]],
-    suffix_index: dict[str, list[int]],
-    node_id_map: dict[int, NodeInfo],
-    config: dict[str, Any],
-) -> None:
-    """Recursively collect READ edges from all expressions."""
-    caller = ctx[-1] if ctx[-1] else 0
-    scope = node_id_map.get(caller, NodeInfo()).qualified_name if caller else ""
-    if isinstance(expr, ast.Name) and isinstance(expr.ctx, ast.Load):
-        for tid in _resolve_symbol(expr.id, scope, symbol_index, suffix_index, node_id_map):
-            if tid != caller:
-                edges.append(EdgeInfo(caller, tid, "read", fid, line))
-    elif isinstance(expr, ast.Attribute):
-        _read_edges(expr.value, ctx, fid, line, edges, symbol_index, suffix_index, node_id_map, config)
-        for tid in _resolve_symbol(expr.attr, scope, symbol_index, suffix_index, node_id_map):
-            if tid != caller:
-                edges.append(EdgeInfo(caller, tid, "read", fid, line))
-    elif isinstance(expr, ast.Call):
-        _read_edges(expr.func, ctx, fid, line, edges, symbol_index, suffix_index, node_id_map, config)
-        cname = _call_name(expr.func)
-        cids = _resolve_symbol(cname, "", symbol_index, suffix_index, node_id_map)
-        for cid in cids:
-            if cid != caller:
-                edges.append(EdgeInfo(caller, cid, "call", fid, line))
-        for a in expr.args:
-            _read_edges(a, ctx, fid, line, edges, symbol_index, suffix_index, node_id_map, config)
-        for kw in expr.keywords:
-            _read_edges(kw.value, ctx, fid, line, edges, symbol_index, suffix_index, node_id_map, config)
-    elif isinstance(expr, ast.Subscript):
-        _read_edges(expr.value, ctx, fid, line, edges, symbol_index, suffix_index, node_id_map, config)
-        _read_edges(expr.slice, ctx, fid, line, edges, symbol_index, suffix_index, node_id_map, config)
-    elif isinstance(expr, ast.BinOp):
-        _read_edges(expr.left, ctx, fid, line, edges, symbol_index, suffix_index, node_id_map, config)
-        _read_edges(expr.right, ctx, fid, line, edges, symbol_index, suffix_index, node_id_map, config)
-    elif isinstance(expr, ast.Compare):
-        _read_edges(expr.left, ctx, fid, line, edges, symbol_index, suffix_index, node_id_map, config)
-        for c in expr.comparators:
-            _read_edges(c, ctx, fid, line, edges, symbol_index, suffix_index, node_id_map, config)
-    elif isinstance(expr, ast.UnaryOp):
-        _read_edges(expr.operand, ctx, fid, line, edges, symbol_index, suffix_index, node_id_map, config)
-    elif isinstance(expr, ast.BoolOp):
-        for v in expr.values:
-            _read_edges(v, ctx, fid, line, edges, symbol_index, suffix_index, node_id_map, config)
-    elif isinstance(expr, (ast.List, ast.Tuple, ast.Set)):
-        for e in expr.elts:
-            _read_edges(e, ctx, fid, line, edges, symbol_index, suffix_index, node_id_map, config)
-    elif isinstance(expr, ast.Dict):
-        for k, v in zip(expr.keys or [], expr.values):
-            if k:
-                _read_edges(k, ctx, fid, line, edges, symbol_index, suffix_index, node_id_map, config)
-            _read_edges(v, ctx, fid, line, edges, symbol_index, suffix_index, node_id_map, config)
-    elif isinstance(expr, ast.JoinedStr):
-        for v in expr.values:
-            if isinstance(v, ast.FormattedValue):
-                _read_edges(v.value, ctx, fid, line, edges, symbol_index, suffix_index, node_id_map, config)
-                if v.format_spec:
-                    _read_edges(v.format_spec, ctx, fid, line, edges, symbol_index, suffix_index, node_id_map, config)
-    elif isinstance(expr, ast.Starred):
-        _read_edges(expr.value, ctx, fid, line, edges, symbol_index, suffix_index, node_id_map, config)
-    elif isinstance(expr, ast.IfExp):
-        _read_edges(expr.test, ctx, fid, line, edges, symbol_index, suffix_index, node_id_map, config)
-        _read_edges(expr.body, ctx, fid, line, edges, symbol_index, suffix_index, node_id_map, config)
-        _read_edges(expr.orelse, ctx, fid, line, edges, symbol_index, suffix_index, node_id_map, config)
-    elif isinstance(expr, ast.Lambda):
-        _read_edges(expr.body, ctx, fid, line, edges, symbol_index, suffix_index, node_id_map, config)
-    elif isinstance(expr, ast.GeneratorExp):
-        for g in expr.generators:
-            _read_edges(g.iter, ctx, fid, line, edges, symbol_index, suffix_index, node_id_map, config)
-            for i in g.ifs:
-                _read_edges(i, ctx, fid, line, edges, symbol_index, suffix_index, node_id_map, config)
-        _read_edges(expr.elt, ctx, fid, line, edges, symbol_index, suffix_index, node_id_map, config)
-    elif isinstance(expr, (ast.ListComp, ast.SetComp)):
-        for g in expr.generators:
-            _read_edges(g.iter, ctx, fid, line, edges, symbol_index, suffix_index, node_id_map, config)
-            for i in g.ifs:
-                _read_edges(i, ctx, fid, line, edges, symbol_index, suffix_index, node_id_map, config)
-        _read_edges(expr.elt, ctx, fid, line, edges, symbol_index, suffix_index, node_id_map, config)
-    elif isinstance(expr, ast.DictComp):
-        for g in expr.generators:
-            _read_edges(g.iter, ctx, fid, line, edges, symbol_index, suffix_index, node_id_map, config)
-            for i in g.ifs:
-                _read_edges(i, ctx, fid, line, edges, symbol_index, suffix_index, node_id_map, config)
-        _read_edges(expr.key, ctx, fid, line, edges, symbol_index, suffix_index, node_id_map, config)
-        _read_edges(expr.value, ctx, fid, line, edges, symbol_index, suffix_index, node_id_map, config)
-    elif isinstance(expr, ast.NamedExpr):
-        _read_edges(expr.value, ctx, fid, line, edges, symbol_index, suffix_index, node_id_map, config)
-
-
-def _target_ids(
-    target: ast.expr,
-    scope: str,
-    symbol_index: dict[str, list[int]],
-    suffix_index: dict[str, list[int]],
-    node_id_map: dict[int, NodeInfo],
-) -> list[int]:
-    if isinstance(target, ast.Name):
-        return _resolve_symbol(target.id, scope, symbol_index, suffix_index, node_id_map)
-    if isinstance(target, ast.Attribute):
-        if isinstance(target.value, ast.Attribute):
-            return []
-        return _resolve_symbol(target.attr, scope, symbol_index, suffix_index, node_id_map)
-    if isinstance(target, (ast.Tuple, ast.List)):
-        ids: list[int] = []
-        for e in target.elts:
-            ids.extend(_target_ids(e, scope, symbol_index, suffix_index, node_id_map))
-        return ids
-    return []
-
-
-def _read_target_expr(
-    expr: ast.AST,
-    ctx: list[int],
-    fid: int,
-    line: int,
-    edges: list[EdgeInfo],
-    symbol_index: dict[str, list[int]],
-    suffix_index: dict[str, list[int]],
-    node_id_map: dict[int, NodeInfo],
-    config: dict[str, Any],
-) -> None:
-    """Read expressions embedded in assignment targets (e.g., f[call(...)] = v)."""
-    if isinstance(expr, ast.Subscript):
-        _read_target_expr(expr.value, ctx, fid, line, edges, symbol_index, suffix_index, node_id_map, config)
-        _read_target_expr(expr.slice, ctx, fid, line, edges, symbol_index, suffix_index, node_id_map, config)
-    elif isinstance(expr, ast.Attribute):
-        _read_target_expr(expr.value, ctx, fid, line, edges, symbol_index, suffix_index, node_id_map, config)
-    elif isinstance(expr, ast.Call):
-        _read_edges(expr.func, ctx, fid, line, edges, symbol_index, suffix_index, node_id_map, config)
-        for arg in expr.args:
-            _read_edges(arg, ctx, fid, line, edges, symbol_index, suffix_index, node_id_map, config)
-        for kw in expr.keywords:
-            _read_edges(kw.value, ctx, fid, line, edges, symbol_index, suffix_index, node_id_map, config)
-
-
-def _proc_call(
-    node: ast.Call,
-    ctx: list[int],
-    fid: int,
-    fnodes: dict[str, int],
-    mq: str,
-    edges: list[EdgeInfo],
-    symbol_index: dict[str, list[int]],
-    suffix_index: dict[str, list[int]],
-    node_id_map: dict[int, NodeInfo],
-    config: dict[str, Any],
-) -> None:
-    """Process a function call."""
-    caller = ctx[-1] if ctx[-1] else 0
-    cname = _call_name(node.func)
-    cids = _resolve_symbol(cname, "", symbol_index, suffix_index, node_id_map)
-    if isinstance(node.func, ast.Attribute):
-        if isinstance(node.func.value, ast.Call):
-            _walk(node.func.value, ctx, fid, fnodes, mq, edges, symbol_index, suffix_index, node_id_map, config)
-        oname = _call_name(node.func.value)
-        for oid in _resolve_symbol(oname, "", symbol_index, suffix_index, node_id_map):
-            if caller != oid:
-                edges.append(EdgeInfo(caller, oid, "read", fid, node.lineno))
-            for cid in cids:
-                edges.append(EdgeInfo(oid, cid, "call", fid, node.lineno))
-    for cid in cids:
-        if cid != caller:
-            edges.append(EdgeInfo(caller, cid, "call", fid, node.lineno))
-    if not cids and isinstance(node.func, ast.Attribute):
-        cur_attr: ast.expr = node.func
-        while isinstance(cur_attr, ast.Attribute):
-            cur_attr = cur_attr.value
-        if isinstance(cur_attr, ast.Name):
-            leaf_cids = _resolve_symbol(node.func.attr, "", symbol_index, suffix_index, node_id_map)
-            for cid in leaf_cids:
-                if cid != caller:
-                    edges.append(EdgeInfo(caller, cid, "call", fid, node.lineno))
-    for arg in node.args:
-        if isinstance(arg, ast.Call):
-            _walk(arg, ctx, fid, fnodes, mq, edges, symbol_index, suffix_index, node_id_map, config)
-        else:
-            _read_edges(arg, ctx, fid, node.lineno, edges, symbol_index, suffix_index, node_id_map, config)
-    for kw in node.keywords:
-        if isinstance(kw.value, ast.Call):
-            _walk(kw.value, ctx, fid, fnodes, mq, edges, symbol_index, suffix_index, node_id_map, config)
-        else:
-            _read_edges(kw.value, ctx, fid, node.lineno, edges, symbol_index, suffix_index, node_id_map, config)
-
-
-def _proc_assign(
-    node: ast.Assign,
-    ctx: list[int],
-    fid: int,
-    fnodes: dict[str, int],
-    mq: str,
-    edges: list[EdgeInfo],
-    symbol_index: dict[str, list[int]],
-    suffix_index: dict[str, list[int]],
-    node_id_map: dict[int, NodeInfo],
-    config: dict[str, Any],
-) -> None:
-    """Process an assignment statement."""
-    caller = ctx[-1] if ctx[-1] else 0
-    scope = node_id_map.get(caller, NodeInfo()).qualified_name if caller else mq
-    for t in node.targets:
-        for tid in _target_ids(t, scope, symbol_index, suffix_index, node_id_map):
-            if tid != caller:
-                edges.append(EdgeInfo(caller, tid, "write", fid, node.lineno))
-        _read_target_expr(t, ctx, fid, node.lineno, edges, symbol_index, suffix_index, node_id_map, config)
-    if isinstance(node.value, ast.Call):
-        _walk(node.value, ctx, fid, fnodes, mq, edges, symbol_index, suffix_index, node_id_map, config)
-    else:
-        _read_edges(node.value, ctx, fid, node.lineno, edges, symbol_index, suffix_index, node_id_map, config)
-
-
-def _proc_annassign(
-    node: ast.AnnAssign,
-    ctx: list[int],
-    fid: int,
-    mq: str,
-    edges: list[EdgeInfo],
-    symbol_index: dict[str, list[int]],
-    suffix_index: dict[str, list[int]],
-    node_id_map: dict[int, NodeInfo],
-    config: dict[str, Any],
-) -> None:
-    """Process an annotated assignment."""
-    if node.target:
-        caller = ctx[-1] if ctx[-1] else 0
-        scope = node_id_map.get(caller, NodeInfo()).qualified_name if caller else mq
-        for tid in _target_ids(node.target, scope, symbol_index, suffix_index, node_id_map):
-            if tid != caller:
-                edges.append(EdgeInfo(caller, tid, "write", fid, node.lineno))
-    if node.value:
-        _read_edges(node.value, ctx, fid, node.lineno, edges, symbol_index, suffix_index, node_id_map, config)
-
-
-def _walk(
-    node: ast.AST,
-    ctx: list[int],
-    fid: int,
-    fnodes: dict[str, int],
-    mq: str,
-    edges: list[EdgeInfo],
-    symbol_index: dict[str, list[int]],
-    suffix_index: dict[str, list[int]],
-    node_id_map: dict[int, NodeInfo],
-    config: dict[str, Any],
-) -> None:
-    """Recursively walk AST to build edges."""
-    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-        nid = fnodes.get(f"{mq}.{node.name}", 0)
-        ctx.append(nid)
-        for dec in node.decorator_list:
-            dec_name = _call_name(
-                dec.func if isinstance(dec, ast.Call) else dec
-            )
-            dec_ids = _resolve_symbol(dec_name, "", symbol_index, suffix_index, node_id_map)
-            for did in dec_ids:
-                if did != nid:
-                    edges.append(EdgeInfo(nid, did, "decorate", fid, node.lineno))
-        for item in node.body:
-            _walk(item, ctx, fid, fnodes, mq, edges, symbol_index, suffix_index, node_id_map, config)
-        ctx.pop()
-    elif isinstance(node, ast.ClassDef):
-        nid = fnodes.get(f"{mq}.{node.name}", 0)
-        ctx.append(nid)
-        old_mq = mq
-        mq = f"{mq}.{node.name}"
-        for base in node.bases:
-            base_name = _call_name(base)
-            base_ids = _resolve_symbol(base_name, "", symbol_index, suffix_index, node_id_map)
-            for bid in base_ids:
-                if bid != nid:
-                    edges.append(EdgeInfo(nid, bid, "inherit", fid, node.lineno))
-        for dec in node.decorator_list:
-            dec_name = _call_name(
-                dec.func if isinstance(dec, ast.Call) else dec
-            )
-            dec_ids = _resolve_symbol(dec_name, "", symbol_index, suffix_index, node_id_map)
-            for did in dec_ids:
-                if did != nid:
-                    edges.append(EdgeInfo(nid, did, "decorate", fid, node.lineno))
-        for item in node.body:
-            _walk(item, ctx, fid, fnodes, mq, edges, symbol_index, suffix_index, node_id_map, config)
-        mq = old_mq
-        ctx.pop()
-    elif isinstance(node, ast.Call):
-        _proc_call(node, ctx, fid, fnodes, mq, edges, symbol_index, suffix_index, node_id_map, config)
-    elif isinstance(node, ast.Assign):
-        _proc_assign(node, ctx, fid, fnodes, mq, edges, symbol_index, suffix_index, node_id_map, config)
-    elif isinstance(node, ast.AnnAssign):
-        _proc_annassign(node, ctx, fid, mq, edges, symbol_index, suffix_index, node_id_map, config)
-    elif isinstance(node, ast.Expr):
-        _read_edges(node.value, ctx, fid, node.lineno, edges, symbol_index, suffix_index, node_id_map, config)
-    elif isinstance(node, ast.Return) and node.value:
-        if isinstance(node.value, ast.Call):
-            _walk(node.value, ctx, fid, fnodes, mq, edges, symbol_index, suffix_index, node_id_map, config)
-        else:
-            _read_edges(node.value, ctx, fid, node.lineno, edges, symbol_index, suffix_index, node_id_map, config)
-    elif isinstance(node, ast.Raise) and node.exc:
-        if isinstance(node.exc, ast.Call):
-            _walk(node.exc, ctx, fid, fnodes, mq, edges, symbol_index, suffix_index, node_id_map, config)
-        else:
-            _read_edges(node.exc, ctx, fid, node.lineno, edges, symbol_index, suffix_index, node_id_map, config)
-    elif isinstance(node, (ast.If, ast.While)):
-        _read_edges(node.test, ctx, fid, node.lineno, edges, symbol_index, suffix_index, node_id_map, config)
-    elif isinstance(node, ast.For):
-        _read_edges(node.iter, ctx, fid, node.lineno, edges, symbol_index, suffix_index, node_id_map, config)
-    elif isinstance(node, ast.With):
-        for item in node.items:
-            _read_edges(item.context_expr, ctx, fid, node.lineno, edges, symbol_index, suffix_index, node_id_map, config)
-    elif isinstance(node, ast.AugAssign):
-        _read_edges(node.value, ctx, fid, node.lineno, edges, symbol_index, suffix_index, node_id_map, config)
-    elif isinstance(node, ast.Assert):
-        _read_edges(node.test, ctx, fid, node.lineno, edges, symbol_index, suffix_index, node_id_map, config)
-        if node.msg:
-            _read_edges(node.msg, ctx, fid, node.lineno, edges, symbol_index, suffix_index, node_id_map, config)
-    elif isinstance(node, ast.Raise) and node.exc:
-        _read_edges(node.exc, ctx, fid, node.lineno, edges, symbol_index, suffix_index, node_id_map, config)
-    elif isinstance(node, ast.Try):
-        pass
-    for child in ast.iter_child_nodes(node):
-        if isinstance(child, _STMT_WALK_TYPES):
-            if isinstance(
-                child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
-            ):
-                if isinstance(
-                    node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
-                ):
-                    continue
-            _walk(child, ctx, fid, fnodes, mq, edges, symbol_index, suffix_index, node_id_map, config)
 
 
 def _build_file_edges_worker(
     fp: str,
-    source: str,
+    pr: ParseResult,
     fnodes: dict[str, int],
     fid: int,
     symbol_index: dict[str, list[int]],
     suffix_index: dict[str, list[int]],
     node_id_map: dict[int, NodeInfo],
     config: dict[str, Any],
+    resolve_cache: Optional[dict] = None,
+    scope_suffix_index: Optional[dict[tuple[str, str], list[int]]] = None,
 ) -> list[EdgeInfo]:
-    """Build edges for a single file — usable from ThreadPoolExecutor."""
-    try:
-        tree = ast.parse(source, filename=fp)
-    except SyntaxError:
-        return []
-    mq = fp.replace("/", ".").replace(".py", "")
+    """Build edges from structured references — no AST walk needed."""
     edges: list[EdgeInfo] = []
-    _walk(tree, [0], fid, fnodes, mq, edges, symbol_index, suffix_index, node_id_map, config)
+    for ref in pr.references:
+        source_id = fnodes.get(ref.source_qname, 0)
+        if not source_id:
+            continue
+        scope = node_id_map.get(source_id, NodeInfo()).qualified_name if source_id else ""
+        target_ids = _resolve_symbol(
+            ref.target_name, scope,
+            symbol_index, suffix_index, node_id_map,
+            resolve_cache=resolve_cache,
+            scope_suffix_index=scope_suffix_index,
+        )
+        for tid in target_ids:
+            if tid != source_id:
+                edges.append(EdgeInfo(source_id, tid, ref.edge_type, fid, ref.line))
     return edges
 
 
@@ -477,8 +141,9 @@ class GraphBuilder:
     ) -> None:
         self._nodes: list[NodeInfo] = []
         self._edges: list[EdgeInfo] = []
-        self._symbol_index: dict[str, list[int]] = {}
-        self._suffix_index: dict[str, list[int]] = {}
+        self._symbol_index: defaultdict[str, list[int]] = defaultdict(list)
+        self._suffix_index: defaultdict[str, list[int]] = defaultdict(list)
+        self._scope_suffix_index: defaultdict[tuple[str, str], list[int]] = defaultdict(list)
         self._next_node_id: int = 1
         self._node_id_map: dict[int, NodeInfo] = {}
         self._old_to_new: dict[tuple[str, str], int] = {}
@@ -519,11 +184,14 @@ class GraphBuilder:
         self._node_id_map[nid] = saved
         qname = node.qualified_name
         if qname:
-            self._symbol_index.setdefault(qname, []).append(nid)
+            self._symbol_index[qname].append(nid)
             parts = qname.split(".")
             for i in range(len(parts)):
                 suffix = ".".join(parts[i:])
-                self._suffix_index.setdefault(suffix, []).append(nid)
+                self._suffix_index[suffix].append(nid)
+                for j in range(i + 1):
+                    scope = ".".join(parts[:j])
+                    self._scope_suffix_index[(scope, suffix)].append(nid)
         return nid
 
     def add_edge(
@@ -625,7 +293,7 @@ class GraphBuilder:
             if fid and fid in file_nodes_by_fid:
                 fnodes_map[fp] = {n.qualified_name: n.id for n in file_nodes_by_fid[fid]}
 
-        # Parallel edge building for changed files
+        # Parallel edge building for changed files (from structured references, no AST)
         pw = self.config.get("performance", {}).get("parallel_workers", 0) or 0
         if pw > 1 and len(changed_list) > 1:
             with ThreadPoolExecutor(max_workers=min(pw, len(changed_list))) as ex:
@@ -633,20 +301,14 @@ class GraphBuilder:
                 for fp in changed_list:
                     pr = parse_results[fp]
                     fnodes = fnodes_map.get(fp, {})
-                    source = pr.source
-                    if source is None:
-                        abs_p = os.path.join(self.config.get("_root_dir", os.getcwd()), fp)
-                        try:
-                            with open(abs_p, "r", encoding="utf-8") as fh:
-                                source = fh.read()
-                        except OSError:
-                            continue
                     futs[
                         ex.submit(
                             _build_file_edges_worker,
-                            fp, source, fnodes, fid_map[fp],
+                            fp, pr, fnodes, fid_map[fp],
                             self._symbol_index, self._suffix_index,
                             self._node_id_map, self.config,
+                            {},  # Per-worker independent resolve cache
+                            self._scope_suffix_index,
                         )
                     ] = fp
                 for fut in as_completed(futs):
@@ -686,21 +348,16 @@ class GraphBuilder:
                 if _pe.source_id and _pe.target_id:
                     self._edges.append(_pe)
 
-        # Add synthetic module-level edges for unchanged files to reconnect
-        # module-level nodes through the module pseudo-node (id=0).
+        # Add synthetic module-level edges to connect all top-level nodes
+        # through the module pseudo-node (id=0) for correct connectivity.
         # Module-level edges (source_id=0) are not stored in the DB, so they
-        # must be recreated in memory for correct component connectivity.
-        if changed_files:
-            for fp in parse_results:
-                if fp not in changed_files:
-                    _fid = fid_map.get(fp, 0)
-                    if _fid:
-                        _first = None
-                        for _n in self._nodes:
-                            if _n.file_id == _fid and _n.parent_node_id == 0:
-                                if _first is None:
-                                    _first = _n.id
-                                self.add_edge(0, _n.id, "read", _fid, 0)
+        # must be recreated in memory each build.
+        for fp in parse_results:
+            _fid = fid_map.get(fp, 0)
+            if _fid:
+                for _n in self._nodes:
+                    if _n.file_id == _fid and _n.parent_node_id == 0:
+                        self.add_edge(0, _n.id, "read", _fid, 0)
 
         entries = self.entry_detector.detect(
             parse_results,
@@ -776,6 +433,7 @@ class GraphBuilder:
                     for nid in comp.node_ids
                     if nid in self._node_id_map
                     and self._node_id_map[nid].name not in _PUBLIC_API_DUNDERS
+                    and self._node_id_map[nid].name != "_"
                     and nid not in special_method_nids
                 ]
                 # If every node in the component is either a public API
@@ -825,15 +483,7 @@ class GraphBuilder:
         fid: int,
         fnodes: dict[str, int] | None = None,
     ) -> None:
-        """Build edges for a single file."""
-        src = pr.source
-        if src is None:
-            abs_p = os.path.join(self.config.get("_root_dir", os.getcwd()), fp)
-            try:
-                with open(abs_p, "r", encoding="utf-8") as fh:
-                    src = fh.read()
-            except OSError:
-                return
+        """Build edges for a single file from structured references."""
         if fnodes is None:
             fnodes = {}
             for n in self._nodes:
@@ -841,9 +491,11 @@ class GraphBuilder:
                     fnodes[n.qualified_name] = n.id
         self._edges.extend(
             _build_file_edges_worker(
-                fp, src, fnodes, fid,
+                fp, pr, fnodes, fid,
                 self._symbol_index, self._suffix_index,
                 self._node_id_map, self.config,
+                resolve_cache={},
+                scope_suffix_index=self._scope_suffix_index,
             )
         )
 

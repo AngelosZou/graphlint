@@ -58,6 +58,7 @@ class SourceParser:
                 )
             )
             return result
+        result.tree = tree
         module_q = self._file_to_module(rel_path)
         visitor = ASTVisitor(
             module_qualified=module_q,
@@ -68,6 +69,7 @@ class SourceParser:
         visitor.visit(tree)
         result.nodes, result.imports = visitor.nodes, visitor.imports
         result.name_usages = visitor.name_usages
+        result.references = visitor.references
         unused = self.import_analyzer.detect_unused_imports(
             result.imports,
             result.name_usages,

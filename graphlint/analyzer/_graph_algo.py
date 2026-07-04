@@ -19,6 +19,7 @@ def compute_entry_reachability(
     entries: list[EntryInfo],
     node_id_map: Optional[dict[int, NodeInfo]] = None,
     file_id_map: Optional[dict[str, int]] = None,
+    call_graph: Optional[dict[int, list[int]]] = None,
 ) -> tuple[set[int], set[int]]:
     """Directed reachability analysis from entry points via CALL edges.
 
@@ -52,14 +53,16 @@ def compute_entry_reachability(
     if not entry_ids and not noprop_ids:
         return set(), set()
 
-    call_graph: dict[int, list[int]] = {}
-    for edge in edges:
-        if edge.edge_type == "call":
-            call_graph.setdefault(edge.source_id, []).append(edge.target_id)
-        elif edge.edge_type == "read" and node_id_map:
-            tgt = node_id_map.get(edge.target_id)
-            if tgt and tgt.node_type in ("function", "class", "method"):
+    if call_graph is None:
+        # Build call_graph by iterating edges
+        call_graph = {}
+        for edge in edges:
+            if edge.edge_type == "call":
                 call_graph.setdefault(edge.source_id, []).append(edge.target_id)
+            elif edge.edge_type == "read" and node_id_map:
+                tgt = node_id_map.get(edge.target_id)
+                if tgt and tgt.node_type in ("function", "class", "method"):
+                    call_graph.setdefault(edge.source_id, []).append(edge.target_id)
 
     reachable: set[int] = set(entry_ids)
     queue: deque[int] = deque(entry_ids)
@@ -192,8 +195,19 @@ def find_connected_components(
                 adj.setdefault(nid, set()).add(parent)
                 adj.setdefault(parent, set()).add(nid)
 
+    # Pre-build call_graph once to avoid repeated traversal inside compute_entry_reachability
+    call_graph: dict[int, list[int]] = {}
+    for edge in edges:
+        if edge.edge_type == "call":
+            call_graph.setdefault(edge.source_id, []).append(edge.target_id)
+        elif edge.edge_type == "read" and node_id_map:
+            tgt = node_id_map.get(edge.target_id)
+            if tgt and tgt.node_type in ("function", "class", "method"):
+                call_graph.setdefault(edge.source_id, []).append(edge.target_id)
+
     reachable, noprop_ids = compute_entry_reachability(
-        edges, entries, node_id_map, file_id_map
+        edges, entries, node_id_map, file_id_map,
+        call_graph=call_graph,
     )
 
     visited: set[int] = set()
@@ -224,33 +238,50 @@ def find_connected_components(
         comp_reachable = {nid for nid in comp_nodes if nid in reachable}
         comp_unreachable = comp_nodes - comp_reachable
 
-        # Expand: nodes with any edge from already-reachable nodes
-        # (including module root source_id=0) are also alive.
-        # Exclude test-file nodes (noprop_ids) from expansion sources.
-        _expanded = (comp_reachable - noprop_ids) | {0}
-        _changed = True
-        while _changed:
-            _changed = False
-            for e in edges:
-                if e.source_id in _expanded and e.target_id in comp_unreachable:
+        # BFS expansion: traverse all undirected edges from reachable seed set,
+        # picking up nodes connected via any edge type (read, call, write, etc.)
+        # Node 0 (module pseudo-node) is handled specially: we only expand from 0
+        # to nodes that have at least one read/call edge from 0 (indicating
+        # module-level usage), not nodes with only write edges (unused variables).
+        seed = comp_reachable
+        if noprop_ids:
+            seed = seed - noprop_ids
+        q = deque(seed)
+        class_special_map: dict[int, list[int]] = {}
+        if node_id_map:
+            for _nid, _ninfo in node_id_map.items():
+                if _ninfo.name in _SPECIAL_METHOD_DUNDERS and _ninfo.parent_node_id:
+                    class_special_map.setdefault(_ninfo.parent_node_id, []).append(_nid)
+        while q:
+            cur = q.popleft()
+            if cur == 0:
+                continue
+            for nid in adj.get(cur, set()):
+                if nid == 0 or nid in comp_reachable:
+                    continue
+                if nid in comp_unreachable:
+                    comp_reachable.add(nid)
+                    comp_unreachable.discard(nid)
+                    q.append(nid)
+            if cur in class_special_map:
+                for sm_nid in class_special_map[cur]:
+                    if sm_nid in comp_unreachable:
+                        comp_reachable.add(sm_nid)
+                        comp_unreachable.discard(sm_nid)
+                        q.append(sm_nid)
+
+        # Module-level usage expansion: nodes reachable from the module pseudo-node
+        # (id=0) via read/call edges are considered alive (defined and used within
+        # the module), even though their only connection is through node 0.
+        for e in edges:
+            if e.source_id == 0 and e.target_id in comp_unreachable:
+                if e.edge_type in ("read", "call"):
                     comp_reachable.add(e.target_id)
                     comp_unreachable.discard(e.target_id)
-                    _expanded.add(e.target_id)
-                    _changed = True
-            # Propagate reachability to special method overloads whose
-            # parent class has just been expanded — they belong together.
-            if node_id_map:
-                for nid in list(comp_unreachable):
-                    child_ninfo = node_id_map.get(nid)
-                    if (
-                        child_ninfo
-                        and child_ninfo.name in _SPECIAL_METHOD_DUNDERS
-                        and child_ninfo.parent_node_id in _expanded
-                    ):
-                        comp_reachable.add(nid)
-                        comp_unreachable.discard(nid)
-                        _expanded.add(nid)
-                        _changed = True
+            elif e.target_id == 0 and e.source_id in comp_unreachable:
+                if e.edge_type in ("read", "call"):
+                    comp_reachable.add(e.source_id)
+                    comp_unreachable.discard(e.source_id)
 
         if comp_reachable:
             for nid in comp_reachable:

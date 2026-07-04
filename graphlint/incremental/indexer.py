@@ -108,6 +108,7 @@ class IncrementalIndexer:
         removed = [fp for fp in db_files_info if fp not in disk_files]
         changed = added + modified
         if not changed and not removed and not force_rebuild:
+            self._update_scan_stamp(disk_files)
             return IndexResult(files_scanned=len(disk_files))
         pr_map: dict[str, ParseResult] = {}
         if changed:
@@ -127,29 +128,25 @@ class IncrementalIndexer:
         builder = self._create_builder(wc)
         incremental = not force_rebuild and bool(changed)
 
-        # 增量模式：加载旧节点 ID 和未变更文件的边
+        # Incremental mode: load old node IDs and edges for unchanged files
         prebuilt = None
         old_changed_node_ids: dict[int, tuple[str, str]] = {}
         if incremental:
             old_changed_node_ids = load_old_changed_node_ids(self.db, changed)
             if unchanged:
-                raw = load_prebuilt_edges(self.db, unchanged)
-                if raw:
-                    # 构建 SQL fid → memory fid 映射（必须包含所有文件，pr_map 中已含）
-                    sql_fid_map = {
-                        r["path"]: r["id"]
-                        for r in self.db.fetchall("SELECT id, path FROM files")
-                    }
-                    sql_to_mem = {}
-                    for idx, fp in enumerate(pr_map, 1):
-                        sfid = sql_fid_map.get(fp)
-                        if sfid:
-                            sql_to_mem[sfid] = idx
-                    for e in raw:
-                        mem_fid = sql_to_mem.get(e.file_id)
-                        if mem_fid:
-                            e.file_id = mem_fid
-                    prebuilt = raw
+                # Build SQL fid → memory fid mapping
+                sql_fid_map = {
+                    r["path"]: r["id"]
+                    for r in self.db.fetchall("SELECT id, path FROM files")
+                }
+                sql_to_mem = {}
+                for idx, fp in enumerate(pr_map, 1):
+                    sfid = sql_fid_map.get(fp)
+                    if sfid:
+                        sql_to_mem[sfid] = idx
+
+                raw = load_prebuilt_edges(self.db, unchanged, sql_to_mem)
+                prebuilt = raw  # Already mapped, no further processing needed
 
         br = builder.build(
             pr_map,
@@ -158,7 +155,7 @@ class IncrementalIndexer:
             old_changed_node_ids=old_changed_node_ids if incremental else None,
         )
 
-        # 重映射预加载边中的旧节点 ID → 新节点 ID（在 build() 内部完成）
+        # Remap old node IDs → new node IDs in prebuilt edges (done inside build())
 
         update_db(
             self.db,
@@ -171,6 +168,8 @@ class IncrementalIndexer:
         )
         if not incremental:
             build_snapshots(self.db, br)
+        # Update stamp before returning (while IndexLock is held, ensuring atomicity)
+        self._update_scan_stamp(disk_files)
         return IndexResult(
             files_scanned=len(disk_files),
             files_changed=len(modified),
@@ -184,6 +183,28 @@ class IncrementalIndexer:
     # ------------------------------------------------------------------
     # Filesystem scan
     # ------------------------------------------------------------------
+
+    def _update_scan_stamp(self, disk_files=None):
+        """Save the current full file (path, mtime_ns) snapshot.
+
+        Reuses _scan() results to avoid redundant os.walk.
+        Called while IndexLock is held, ensuring atomicity.
+        """
+        if disk_files is None:
+            disk_files = self._scan()
+
+        files = {}
+        for rel in disk_files:
+            abs_p = os.path.join(self.root_dir, rel)
+            try:
+                files[rel] = os.stat(abs_p).st_mtime_ns
+            except OSError:
+                pass
+
+        stamp_path = os.path.join(self.root_dir, ".graphlint", ".last_scan_stamp")
+        os.makedirs(os.path.dirname(stamp_path), exist_ok=True)
+        with open(stamp_path, "w") as f:
+            json.dump({"files": files}, f)
 
     def _scan(self) -> list[str]:
         """Scan all .py files."""
