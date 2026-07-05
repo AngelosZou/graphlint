@@ -84,9 +84,16 @@ def _resolve_symbol(
                 if node_id_map.get(i, NodeInfo()).qualified_name.startswith(scope)
             ]
             if scoped:
-                if resolve_cache is not None:
-                    resolve_cache[cache_key] = scoped
-                return scoped
+                # When scope filters to only the caller itself, include
+                # all suffix candidates for cross-class call dispatch.
+                only_self = (
+                    len(scoped) == 1
+                    and node_id_map.get(scoped[0], NodeInfo()).qualified_name == scope
+                )
+                if not only_self:
+                    if resolve_cache is not None:
+                        resolve_cache[cache_key] = scoped
+                    return scoped
         if resolve_cache is not None:
             resolve_cache[cache_key] = result
         return result

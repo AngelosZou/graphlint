@@ -52,8 +52,8 @@ graphlint query -C --sort-by warnings --json
 ```
 
 ## Limitations
-- **Static analysis only** — graphlint cannot detect runtime linkage (`getattr`, `importlib`, etc.). May cause false positives.
-- **Large codebase build time** — a full rebuild on 700+ `.py` files / 1,000+ classes / 14,000+ functions takes ~200s (hardware-dependent). Small codebases (~60 files) complete in ~1s.\
+- **Static analysis only** — graphlint cannot detect runtime linkage (`getattr`, `importlib`, etc.) or dynamic dispatch patterns. May cause false positives. Mitigation: add custom entry rules matching your codebase's conventions. For example, graphlint's own codebase uses `function_def:_detect_*` and `function_def:visit_*` patterns to prevent functions discovered via `getattr` from being flagged as dead.
+- **Large codebase build time** — a full rebuild on 700+ `.py` files / 1,000+ classes / 14,000+ functions takes ~200s (hardware-dependent). Small codebases (~60 files) complete in ~1s. Best practice: run `query` before making changes to plan, and avoid invoking `query` during refactoring to prevent unnecessary index rebuilds.\
 """
 
 MARKER_START = "<!-- graphlint:start -->"

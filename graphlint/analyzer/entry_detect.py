@@ -69,7 +69,13 @@ class EntryPointDetector:
                     continue
                 file_pattern = rule.get("file_pattern", "**/*.py")
                 if not fnmatch.fnmatch(file_path, file_pattern):
-                    continue
+                    # Also match root-level files (fnmatch **/ requires /)
+                    if file_pattern.startswith("**/") and fnmatch.fnmatch(
+                        file_path, file_pattern[3:]
+                    ):
+                        pass
+                    else:
+                        continue
                 if not pr.nodes:
                     continue
                 detector_method = self._BUILTIN_DETECTORS.get(rule_name)

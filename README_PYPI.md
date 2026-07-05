@@ -141,8 +141,8 @@ Full documentation is available in the [docs/](https://github.com/AngelosZou/gra
 
 ## Limitations
 
-- **Static analysis only** — currently, graphlint performs static analysis and cannot detect runtime linkage such as `getattr`, `importlib.import_module()`, or other dynamic dispatch patterns, which may result in false positives.
-- **Large codebase build time** — on a large codebase with 700+ `.py` files, 1,000+ classes, and 14,000+ functions, a full rebuild takes approximately 200 seconds (actual performance depends on hardware). This is not a concern for small projects — a codebase with 60 Python files completes in about 1 second.
+- **Static analysis only** — graphlint performs static analysis and cannot detect runtime linkage such as `getattr`, `importlib`, or dynamic dispatch patterns, which may result in false positives. **Mitigation:** add custom entry rules matching your codebase's conventions. For example, graphlint's own codebase uses `function_def:_detect_*` and `function_def:visit_*` patterns to prevent functions discovered via `getattr` from being flagged as dead.
+- **Large codebase build time** — on a large codebase with 700+ `.py` files, 1,000+ classes, and 14,000+ functions, a full rebuild takes approximately 200 seconds (actual performance depends on hardware). Small projects (~60 files) complete in ~1 second. **Best practice:** run `query` before making changes to plan your work, and avoid invoking `query` during refactoring to prevent unnecessary index rebuilds.
 
 ## License
 

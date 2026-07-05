@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.7] - 2026-07-06
+
+### Fixed
+- `_resolve_symbol` scope filtering no longer drops cross-class `call` edges
+  when a method resolves a same-named call via a different class (registry
+  / dispatch pattern) — all suffix-matched candidates are now included
+- Entry point `file_pattern` matching (`**/*.py` via fnmatch) now also
+  matches root-level Python files, not only files in subdirectories
+
 ## [0.1.6] - 2026-07-05
 
 ### Changed
