@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.5] - 2026-07-05
+
+### Added
+- `global` keyword support: `visit_Global` handler tracks names declared as `global X` and resolves references to module-level qualified names (`module.X`) instead of local ones, preventing false local node creation
+- `visit_AugAssign` handler for augmented assignment (`X += 1`, `X *= 2`, etc.), generating both read and write references to the target
+- Scope isolation for `global` declarations — `_global_names` is saved/restored on function entry/exit, preventing leakage between functions
+
+### Fixed
+- `global X` in functions/methods no longer creates spurious local variable nodes for globally-declared names
+- Augmented assignment (`X += 1`) was silently dropped during AST traversal — now correctly produces both read and write edges
+
 ## [0.1.4] - 2026-07-04
 
 ### Fixed

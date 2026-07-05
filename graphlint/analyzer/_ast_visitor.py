@@ -54,6 +54,7 @@ class ASTVisitor(ast.NodeVisitor):
         self._current_class_id: int = 0
         self._current_func_id: int = 0
         self._node_id: int = 1
+        self._global_names: Set[str] = set()
 
     # ------------------------------------------------------------------
     # Source qualified name at current position
@@ -84,10 +85,13 @@ class ASTVisitor(ast.NodeVisitor):
         sq = self._current_qname()
         if isinstance(node, ast.Name):
             if isinstance(node.ctx, ast.Load):
+                target = node.id
+                if target in self._global_names:
+                    target = self.module_qualified + "." + target
                 self.name_usages.add(node.id)
                 self.references.append(ReferenceInfo(
                     source_qname=sq,
-                    target_name=node.id,
+                    target_name=target,
                     edge_type="read",
                     line=node.lineno or 0,
                 ))
@@ -119,6 +123,14 @@ class ASTVisitor(ast.NodeVisitor):
         infos = self.import_analyzer.analyze_import(node)
         self.imports.extend(infos)
         self.generic_visit(node)
+
+    # ------------------------------------------------------------------
+    # Global declaration
+    # ------------------------------------------------------------------
+
+    def visit_Global(self, node: ast.Global) -> None:
+        """Process global declaration — names refer to module-level variables."""
+        self._global_names.update(node.names)
 
     # ------------------------------------------------------------------
     # Call
@@ -284,12 +296,15 @@ class ASTVisitor(ast.NodeVisitor):
 
         prev_class_id = self._current_class_id
         prev_func_id = self._current_func_id
+        prev_global_names = self._global_names
         self._current_class_id = 0
         self._current_func_id = func_node_id
+        self._global_names = set()
         self._context.append(node.name)
         for item in node.body:
             self.visit(item)
         self._context.pop()
+        self._global_names = prev_global_names
         self._current_class_id = prev_class_id
         self._current_func_id = prev_func_id
 
@@ -343,13 +358,26 @@ class ASTVisitor(ast.NodeVisitor):
 
         sq = self._current_qname()
         if isinstance(node.target, ast.Name):
-            if parent_id != 0:
-                self.references.append(ReferenceInfo(
-                    source_qname=sq,
-                    target_name=node.target.id,
-                    edge_type="write",
-                    line=node.lineno or 0,
-                ))
+            if node.target.id in self._global_names:
+                if parent_id != 0:
+                    module_target = self.module_qualified + "." + node.target.id
+                    self.references.append(ReferenceInfo(
+                        source_qname=sq,
+                        target_name=module_target,
+                        edge_type="write",
+                        line=node.lineno or 0,
+                    ))
+            else:
+                if parent_id != 0:
+                    self.references.append(ReferenceInfo(
+                        source_qname=sq,
+                        target_name=node.target.id,
+                        edge_type="write",
+                        line=node.lineno or 0,
+                    ))
+                self._extract_annotated_target(
+                    node.target, node_type, parent_id, node, type_ann
+                )
         elif isinstance(node.target, ast.Attribute) and not isinstance(node.target.value, ast.Attribute):
             if parent_id != 0:
                 self.references.append(ReferenceInfo(
@@ -358,12 +386,63 @@ class ASTVisitor(ast.NodeVisitor):
                     edge_type="write",
                     line=node.lineno or 0,
                 ))
-
-        self._extract_annotated_target(
-            node.target, node_type, parent_id, node, type_ann
-        )
+            self._extract_annotated_target(
+                node.target, node_type, parent_id, node, type_ann
+            )
+        else:
+            self._extract_annotated_target(
+                node.target, node_type, parent_id, node, type_ann
+            )
         if node.value:
             self.visit(node.value)
+
+    # ------------------------------------------------------------------
+    # Augmented assignment
+    # ------------------------------------------------------------------
+
+    def visit_AugAssign(self, node: ast.AugAssign) -> None:
+        """Process augmented assignment (e.g. X += 1) — both read and write."""
+        sq = self._current_qname()
+        if isinstance(node.target, ast.Name):
+            target_name = node.target.id
+            if target_name in self._global_names:
+                module_target = self.module_qualified + "." + target_name
+                self.references.append(ReferenceInfo(
+                    source_qname=sq,
+                    target_name=module_target,
+                    edge_type="write",
+                    line=node.lineno or 0,
+                ))
+                self.references.append(ReferenceInfo(
+                    source_qname=sq,
+                    target_name=module_target,
+                    edge_type="read",
+                    line=node.lineno or 0,
+                ))
+            else:
+                self.references.append(ReferenceInfo(
+                    source_qname=sq,
+                    target_name=target_name,
+                    edge_type="write",
+                    line=node.lineno or 0,
+                ))
+                self.references.append(ReferenceInfo(
+                    source_qname=sq,
+                    target_name=target_name,
+                    edge_type="read",
+                    line=node.lineno or 0,
+                ))
+            self.name_usages.add(target_name)
+        elif isinstance(node.target, ast.Attribute):
+            self.references.append(ReferenceInfo(
+                source_qname=sq,
+                target_name=node.target.attr,
+                edge_type="write",
+                line=node.lineno or 0,
+            ))
+            self.name_usages.add(node.target.attr)
+            self.visit(node.target.value)
+        self.visit(node.value)
 
     # ------------------------------------------------------------------
     # Write reference helpers (recursive for nested tuples in assignment targets)
@@ -372,6 +451,15 @@ class ASTVisitor(ast.NodeVisitor):
     def _add_write_ref(self, target: ast.expr, source_qname: str, line: int) -> None:
         """Add write references for assignment targets, recursing into Tuple/List."""
         if isinstance(target, ast.Name):
+            if target.id in self._global_names:
+                module_target = self.module_qualified + "." + target.id
+                self.references.append(ReferenceInfo(
+                    source_qname=source_qname,
+                    target_name=module_target,
+                    edge_type="write",
+                    line=line,
+                ))
+                return
             self.references.append(ReferenceInfo(
                 source_qname=source_qname,
                 target_name=target.id,
@@ -402,6 +490,8 @@ class ASTVisitor(ast.NodeVisitor):
     ) -> None:
         """Extract variable/field nodes from assignment targets."""
         if isinstance(target, ast.Name):
+            if target.id in self._global_names:
+                return
             qualified = ".".join(self._context + [target.id])
             self._add_node(
                 NodeInfo(
@@ -445,6 +535,8 @@ class ASTVisitor(ast.NodeVisitor):
     ) -> None:
         """Extract nodes from annotated assignment targets."""
         if isinstance(target, ast.Name):
+            if target.id in self._global_names:
+                return
             qualified = ".".join(self._context + [target.id])
             self._add_node(
                 NodeInfo(

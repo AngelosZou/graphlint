@@ -6,6 +6,7 @@ import tempfile
 
 import pytest
 
+from graphlint.analyzer._types import ParseResult
 from graphlint.analyzer.parser import SourceParser
 
 
@@ -156,3 +157,247 @@ def greet():
         pr = self.parser.parse_file(fp, "empty_class.py")
         class_nodes = [n for n in pr.nodes if n.node_type == "class"]
         assert len(class_nodes) == 1
+
+
+@pytest.mark.timeout(30)
+class TestGlobalKeyword:
+    """Tests for global keyword support in AST parsing."""
+
+    MODULE = "my_mod"
+
+    @pytest.fixture(autouse=True)
+    def setup(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self.tmpdir = tmpdir
+            self.parser = SourceParser(tmpdir, BASE_CONFIG)
+            yield
+
+    def _parse(self, code: str) -> ParseResult:
+        fp = _make_file(self.tmpdir, f"{self.MODULE}.py", code)
+        return self.parser.parse_file(fp, f"{self.MODULE}.py")
+
+    def test_global_write(self):
+        """global X + X = 20 creates write ref to module-level X, no local node."""
+        code = """
+X = 10
+
+def set_x():
+    global X
+    X = 20
+"""
+        pr = self._parse(code)
+        module_qname = f"{self.MODULE}.X"
+        # No local node for X inside set_x
+        local_x = [n for n in pr.nodes if n.qualified_name == f"{self.MODULE}.set_x.X"]
+        assert len(local_x) == 0, "Should not create local node for global X"
+        # One write reference targeting the module-level qualified name
+        write_refs = [r for r in pr.references if r.edge_type == "write" and r.target_name == module_qname]
+        assert len(write_refs) == 1, "Should create write ref to module-level X"
+        assert write_refs[0].source_qname == f"{self.MODULE}.set_x"
+
+    def test_global_read(self):
+        """global X + return X creates read ref to module-level X."""
+        code = """
+X = 10
+
+def get_x():
+    global X
+    return X
+"""
+        pr = self._parse(code)
+        module_qname = f"{self.MODULE}.X"
+        read_refs = [r for r in pr.references if r.edge_type == "read" and r.target_name == module_qname]
+        assert len(read_refs) == 1, "Should create read ref to module-level X"
+        assert read_refs[0].source_qname == f"{self.MODULE}.get_x"
+
+    def test_global_augmented_assign(self):
+        """global X + X += 1 creates read+write refs to module-level X."""
+        code = """
+X = 10
+
+def inc_x():
+    global X
+    X += 1
+"""
+        pr = self._parse(code)
+        module_qname = f"{self.MODULE}.X"
+        write_refs = [r for r in pr.references if r.edge_type == "write" and r.target_name == module_qname]
+        read_refs = [r for r in pr.references if r.edge_type == "read" and r.target_name == module_qname]
+        assert len(write_refs) == 1, "Should create write ref for augmented assign"
+        assert len(read_refs) == 1, "Should create read ref for augmented assign"
+
+    def test_global_multiple_names(self):
+        """global X, Y creates correct refs for both names."""
+        code = """
+X = 10
+Y = 20
+
+def swap():
+    global X, Y
+    X, Y = Y, X
+"""
+        pr = self._parse(code)
+        module_qname_x = f"{self.MODULE}.X"
+        module_qname_y = f"{self.MODULE}.Y"
+        # Write refs to module-level X and Y
+        write_x = [r for r in pr.references if r.edge_type == "write" and r.target_name == module_qname_x]
+        write_y = [r for r in pr.references if r.edge_type == "write" and r.target_name == module_qname_y]
+        assert len(write_x) == 1
+        assert len(write_y) == 1
+        # Read refs to module-level X and Y (RHS of tuple assignment)
+        read_x = [r for r in pr.references if r.edge_type == "read" and r.target_name == module_qname_x]
+        read_y = [r for r in pr.references if r.edge_type == "read" and r.target_name == module_qname_y]
+        assert len(read_x) == 1
+        assert len(read_y) == 1
+
+    def test_global_nested_function(self):
+        """global in nested function still refers to module-level name."""
+        code = """
+X = 10
+
+def outer():
+    def inner():
+        global X
+        X = 30
+"""
+        pr = self._parse(code)
+        module_qname = f"{self.MODULE}.X"
+        # No local node for X in inner
+        local_x_inner = [n for n in pr.nodes if n.qualified_name == f"{self.MODULE}.outer.inner.X"]
+        assert len(local_x_inner) == 0
+        # Write ref from inner to module-level X
+        write_refs = [r for r in pr.references if r.edge_type == "write" and r.target_name == module_qname]
+        assert len(write_refs) == 1
+        assert write_refs[0].source_qname == f"{self.MODULE}.outer.inner"
+
+    def test_local_var_unaffected(self):
+        """Non-global variables in the same function behave normally."""
+        code = """
+def foo():
+    x = 42
+    return x
+"""
+        pr = self._parse(code)
+        module_qname = f"{self.MODULE}.foo.x"
+        local_x = [n for n in pr.nodes if n.qualified_name == module_qname]
+        assert len(local_x) == 1, "Local variable should have a node"
+        write_refs = [r for r in pr.references if r.edge_type == "write" and r.target_name == "x"]
+        assert len(write_refs) == 1, "Local write should use bare name"
+
+    def test_global_annotated_assign(self):
+        """global X + X: int = 20 creates write ref to module-level X, no local node."""
+        code = """
+X: int = 10
+
+def set_x():
+    global X
+    X: int = 20
+"""
+        pr = self._parse(code)
+        module_qname = f"{self.MODULE}.X"
+        local_x = [n for n in pr.nodes if n.qualified_name == f"{self.MODULE}.set_x.X"]
+        assert len(local_x) == 0, "Should not create local node for annotated global X"
+        write_refs = [r for r in pr.references if r.edge_type == "write" and r.target_name == module_qname]
+        assert len(write_refs) == 1, "Should create write ref to module-level X"
+
+    def test_global_refers_missing_module_var(self):
+        """global X where X doesn't exist at module level: no crash, ref gracefully dropped."""
+        code = """
+def init():
+    global X
+    X = 42
+"""
+        pr = self._parse(code)
+        module_qname = f"{self.MODULE}.X"
+        write_refs = [r for r in pr.references if r.edge_type == "write" and r.target_name == module_qname]
+        assert len(write_refs) == 1
+        # No local node created
+        local_x = [n for n in pr.nodes if n.qualified_name == f"{self.MODULE}.init.X"]
+        assert len(local_x) == 0
+
+    def test_global_in_method(self):
+        """global X inside a class method writes to module-level X."""
+        code = """
+X = 10
+
+class MyClass:
+    def method(self):
+        global X
+        X = 20
+"""
+        pr = self._parse(code)
+        module_qname = f"{self.MODULE}.X"
+        local_x = [n for n in pr.nodes if n.qualified_name == f"{self.MODULE}.MyClass.method.X"]
+        assert len(local_x) == 0, "Should not create local node for global X in method"
+        write_refs = [r for r in pr.references if r.edge_type == "write" and r.target_name == module_qname]
+        assert len(write_refs) == 1
+        assert write_refs[0].source_qname == f"{self.MODULE}.MyClass.method"
+
+    def test_global_scope_isolation(self):
+        """global X in one function does not leak into another function."""
+        code = """
+X = 10
+
+def func_a():
+    global X
+    X = 20
+
+def func_b():
+    X = 30
+"""
+        pr = self._parse(code)
+        module_qname = f"{self.MODULE}.X"
+        # func_a writes to module-level X
+        write_refs_a = [
+            r for r in pr.references
+            if r.edge_type == "write"
+            and r.target_name == module_qname
+            and r.source_qname == f"{self.MODULE}.func_a"
+        ]
+        assert len(write_refs_a) == 1
+        # func_b creates a local variable X — not global
+        local_x_b = [n for n in pr.nodes if n.qualified_name == f"{self.MODULE}.func_b.X"]
+        assert len(local_x_b) == 1, "func_b should create local node for X"
+        # func_b's write uses bare name
+        write_refs_b = [
+            r for r in pr.references
+            if r.edge_type == "write"
+            and r.target_name == "X"
+            and r.source_qname == f"{self.MODULE}.func_b"
+        ]
+        assert len(write_refs_b) == 1
+
+    def test_global_in_async_function(self):
+        """global X inside an async def writes to module-level X."""
+        code = """
+X = 10
+
+async def async_func():
+    global X
+    X = 20
+"""
+        pr = self._parse(code)
+        module_qname = f"{self.MODULE}.X"
+        local_x = [n for n in pr.nodes if n.qualified_name == f"{self.MODULE}.async_func.X"]
+        assert len(local_x) == 0
+        write_refs = [r for r in pr.references if r.edge_type == "write" and r.target_name == module_qname]
+        assert len(write_refs) == 1
+        assert write_refs[0].source_qname == f"{self.MODULE}.async_func"
+
+    def test_global_class_level_var_write(self):
+        """global X where X is a class-level variable (module-level) — no local node."""
+        code = """
+class Config:
+    X = 10
+
+def set_x():
+    global X
+    X = 20
+"""
+        pr = self._parse(code)
+        module_qname = f"{self.MODULE}.X"
+        local_x = [n for n in pr.nodes if n.qualified_name == f"{self.MODULE}.set_x.X"]
+        assert len(local_x) == 0
+        write_refs = [r for r in pr.references if r.edge_type == "write" and r.target_name == module_qname]
+        assert len(write_refs) == 1
+        assert write_refs[0].source_qname == f"{self.MODULE}.set_x"
