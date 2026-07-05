@@ -17,8 +17,6 @@ from graphlint.analyzer.warnings import WarningCollector, WarningInfo
 from graphlint.config.manager import ConfigManager
 from graphlint.incremental._db_ops import (
     build_snapshots,
-    load_old_changed_node_ids,
-    load_prebuilt_edges,
     update_db,
 )
 from graphlint.storage.db import Database, IndexLock
@@ -71,18 +69,7 @@ class IncrementalIndexer:
         return result
 
     def _run_inner(self, force_rebuild: bool, wc: WarningCollector) -> IndexResult:
-        """Internal index logic."""
-        if force_rebuild:
-            with self.db.transaction():
-                for t in (
-                    "edges",
-                    "nodes",
-                    "imports",
-                    "warnings",
-                    "graph_snapshots",
-                    "files",
-                ):
-                    self.db.execute(f"DELETE FROM {t}")
+        """Index all files — full rebuild on any change."""
         disk_files = self._scan()
         db_files_info = {
             r["path"]: (r["hash"], r["mtime_ns"])
@@ -110,74 +97,34 @@ class IncrementalIndexer:
         if not changed and not removed and not force_rebuild:
             self._update_scan_stamp(disk_files)
             return IndexResult(files_scanned=len(disk_files))
-        pr_map: dict[str, ParseResult] = {}
-        if changed:
-            for fp, pr in self._parse_batch(changed):
-                pr_map[fp] = pr
-                for w in pr.warnings:
-                    wc.add(
-                        w.warn_type,
-                        w.severity,
-                        w.message,
-                        w.file_path,
-                        w.line,
-                        w.node_id,
-                    )
-        if not force_rebuild and unchanged:
-            pr_map.update(self._load_unchanged(unchanged))
-        builder = self._create_builder(wc)
-        incremental = not force_rebuild and bool(changed)
 
-        # Incremental mode: load old node IDs and edges for unchanged files
-        prebuilt = None
-        old_changed_node_ids: dict[int, tuple[str, str]] = {}
-        if incremental:
-            old_changed_node_ids = load_old_changed_node_ids(self.db, changed)
-            if unchanged:
-                # Build SQL fid → memory fid mapping
-                sql_fid_map = {
-                    r["path"]: r["id"]
-                    for r in self.db.fetchall("SELECT id, path FROM files")
-                }
-                sql_to_mem = {}
-                for idx, fp in enumerate(pr_map, 1):
-                    sfid = sql_fid_map.get(fp)
-                    if sfid:
-                        sql_to_mem[sfid] = idx
-
-                raw = load_prebuilt_edges(self.db, unchanged, sql_to_mem)
-                prebuilt = raw  # Already mapped, no further processing needed
-
-        br = builder.build(
-            pr_map,
-            changed_files=set(changed) if incremental else None,
-            prebuilt_edges=prebuilt,
-            old_changed_node_ids=old_changed_node_ids if incremental else None,
-        )
-
-        # Remap old node IDs → new node IDs in prebuilt edges (done inside build())
-
+        # Full build: when files change, build from scratch to avoid stale edges.
+        with self.db.transaction():
+            for t in ("edges", "nodes", "imports", "warnings", "graph_snapshots", "files"):
+                self.db.execute(f"DELETE FROM {t}")
+        all_results = self._parse_batch(disk_files)
+        _pr_map: dict[str, ParseResult] = {}
+        for fp, pr in all_results:
+            _pr_map[fp] = pr
+            for w in pr.warnings:
+                wc.add(w.warn_type, w.severity, w.message, w.file_path, w.line, w.node_id)
+        _builder = self._create_builder(wc)
+        _br = _builder.build(_pr_map)
         update_db(
-            self.db,
-            br,
-            removed,
-            changed,
-            self.root_dir,
-            self.config.get("test_patterns", {}),
-            incremental=incremental,
+            self.db, _br, [], list(_pr_map),
+            self.root_dir, self.config.get("test_patterns", {}),
+            incremental=False,
         )
-        if not incremental:
-            build_snapshots(self.db, br)
-        # Update stamp before returning (while IndexLock is held, ensuring atomicity)
+        build_snapshots(self.db, _br)
         self._update_scan_stamp(disk_files)
         return IndexResult(
             files_scanned=len(disk_files),
-            files_changed=len(modified),
+            files_changed=len(changed),
             files_added=len(added),
             files_removed=len(removed),
-            nodes_added=len(br.nodes),
-            edges_updated=len(br.edges),
-            warnings_generated=len(br.warnings),
+            nodes_added=len(_br.nodes),
+            edges_updated=len(_br.edges),
+            warnings_generated=len(_br.warnings),
         )
 
     # ------------------------------------------------------------------

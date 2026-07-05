@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Tests for _auto_build fast short-circuit mechanism."""
+"""Tests for _auto_build and _quick_changed_check."""
 
 from __future__ import annotations
 
@@ -216,27 +216,19 @@ class TestUpdateScanStamp:
 class TestAutoBuildIntegration:
     """Integration tests: simulate _auto_build flow."""
 
-    def test_auto_build_no_changes_short_circuit(self, tmp_path: Path):
-        """Verify _auto_build skips full path when no changes."""
+    def test_auto_build_always_creates_db(self, tmp_path: Path):
+        """_auto_build always creates a Database connection."""
         from graphlint.api import _auto_build
 
-        # Create .py file
         (tmp_path / "main.py").write_text("x = 1", encoding="utf-8")
-        mtime = os.stat(str(tmp_path / "main.py")).st_mtime_ns
 
-        # Create stamp file (recording current state)
-        stamp_dir = tmp_path / ".graphlint"
-        stamp_dir.mkdir(parents=True, exist_ok=True)
-        (stamp_dir / ".last_scan_stamp").write_text(
-            json.dumps({"files": {"main.py": mtime}}),
-            encoding="utf-8",
-        )
-
-        # Mock to verify _auto_build does not create Database when _quick_changed_check returns False
         with patch("graphlint.api.Database") as mock_db:
+            mock_db_instance = MagicMock()
+            mock_db.return_value = mock_db_instance
+
             result = _auto_build(str(tmp_path), {})
             assert result is True
-            mock_db.assert_not_called(), "Should not create Database when no changes"
+            mock_db.assert_called_once()
 
     def test_auto_build_first_run_full_path(self, tmp_path: Path):
         """Verify first run (no stamp file) takes full path."""
@@ -278,15 +270,13 @@ class TestAutoBuildIntegration:
             # Should create Database when changes exist
             mock_db.assert_called_once()
 
-    def test_auto_build_quick_check_false_no_db_creation(self, tmp_path: Path):
-        """Verify no DB connection when _quick_changed_check=False."""
+    def test_auto_build_with_stamp_file_still_creates_db(self, tmp_path: Path):
+        """_auto_build creates a Database even when stamp file exists."""
         from graphlint.api import _auto_build
 
-        # Create .py file
         (tmp_path / "main.py").write_text("x = 1", encoding="utf-8")
         mtime = os.stat(str(tmp_path / "main.py")).st_mtime_ns
 
-        # Create stamp file
         stamp_dir = tmp_path / ".graphlint"
         stamp_dir.mkdir(parents=True, exist_ok=True)
         (stamp_dir / ".last_scan_stamp").write_text(
@@ -294,10 +284,7 @@ class TestAutoBuildIntegration:
             encoding="utf-8",
         )
 
-        # Mock Database and IncrementalIndexer
         with patch("graphlint.api.Database") as mock_db, \
              patch("graphlint.api.IncrementalIndexer") as mock_indexer:
-            result = _auto_build(str(tmp_path), {})
-            assert result is True
-            mock_db.assert_not_called()
-            mock_indexer.assert_not_called()
+            _auto_build(str(tmp_path), {})
+            mock_db.assert_called_once()

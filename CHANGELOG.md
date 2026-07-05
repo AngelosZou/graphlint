@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.6] - 2026-07-05
+
+### Changed
+- `ThreadPoolExecutor` replaced with `ProcessPoolExecutor` for edge building
+- Incremental builds on file change now trigger a full rebuild instead of loading prebuilt edges
+- Module-level usage expansion in connected-component analysis uses a Counter to distinguish real references from synthetic edges
+- Dead-code merge loop uses O(1) `comp_by_id` dict lookup instead of O(C) linear scan
+
+### Removed
+- `_quick_changed_check()` — mtime-based fast-path stamp was unreliable on Windows NTFS and could trigger unnecessary incremental builds that produced stale edges
+- Ghost-node insertion workaround and stale-edge skip logic in `_do_insert_edges`
+
 ## [0.1.5] - 2026-07-05
 
 ### Added

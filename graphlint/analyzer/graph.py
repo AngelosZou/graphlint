@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
@@ -305,61 +305,6 @@ class GraphBuilder:
             if fid and fid in file_nodes_by_fid:
                 fnodes_map[fp] = {n.qualified_name: n.id for n in file_nodes_by_fid[fid]}
 
-        # Parallel edge building for changed files (from structured references, no AST)
-        pw = self.config.get("performance", {}).get("parallel_workers", 0) or 0
-        if pw > 1 and len(changed_list) > 1:
-            with ThreadPoolExecutor(max_workers=min(pw, len(changed_list))) as ex:
-                futs = {}
-                for fp in changed_list:
-                    pr = parse_results[fp]
-                    fnodes = fnodes_map.get(fp, {})
-                    futs[
-                        ex.submit(
-                            _build_file_edges_worker,
-                            fp, pr, fnodes, fid_map[fp],
-                            self._symbol_index, self._suffix_index,
-                            self._node_id_map, self.config,
-                            {},  # Per-worker independent resolve cache
-                            self._scope_suffix_index,
-                        )
-                    ] = fp
-                for fut in as_completed(futs):
-                    fp = futs[fut]
-                    try:
-                        self._edges.extend(fut.result())
-                    except Exception:
-                        pass
-        else:
-            for fp in changed_list:
-                self._build_edges(fp, parse_results[fp], fid_map.get(fp, 0), fnodes_map.get(fp, {}))
-
-        # Merge prebuilt edges from DB for unchanged files (incremental mode)
-        if prebuilt_edges:
-            # Remap old node IDs in prebuilt edges to new IDs
-            if old_to_new_global:
-                _changed_old_ids = set(old_to_new_global)
-                for _pe in prebuilt_edges:
-                    if _pe.source_id in _changed_old_ids:
-                        _pe.source_id = old_to_new_global.get(_pe.source_id, 0)
-                    if _pe.target_id in _changed_old_ids:
-                        _pe.target_id = old_to_new_global.get(_pe.target_id, 0)
-            # Filter out edges referencing removed nodes (present in old
-            # changed-file data but not in the new build). These old node IDs
-            # would violate FK constraints during DB insertion.
-            if old_changed_node_ids:
-                _all_old_ids = set(old_changed_node_ids)
-                _live_old_ids = set(old_to_new_global) if old_to_new_global else set()
-                _removed_ids = _all_old_ids - _live_old_ids
-                if _removed_ids:
-                    for _pe in prebuilt_edges:
-                        if _pe.source_id in _removed_ids:
-                            _pe.source_id = 0
-                        if _pe.target_id in _removed_ids:
-                            _pe.target_id = 0
-            for _pe in prebuilt_edges:
-                if _pe.source_id and _pe.target_id:
-                    self._edges.append(_pe)
-
         entries = self.entry_detector.detect(
             parse_results,
             self._nodes,
@@ -368,6 +313,37 @@ class GraphBuilder:
         for e in entries:
             if e.node_id and e.node_id in self._node_id_map:
                 self._node_id_map[e.node_id].is_entry = True
+
+        self._edges = self._build_edges_batch(
+            changed_list, parse_results, fid_map, fnodes_map,
+        )
+
+        # Add synthetic module-level edges to connect all top-level nodes
+        # through the module pseudo-node (id=0) for correct connectivity.
+        for fp in parse_results:
+            _fid = fid_map.get(fp, 0)
+            if _fid:
+                for _n in self._nodes:
+                    if _n.file_id == _fid and _n.parent_node_id == 0:
+                        self.add_edge(0, _n.id, "read", _fid, 0)
+
+        _changed_old_ids = set(old_to_new_global) if old_to_new_global else set()
+        _all_old_ids = set(old_changed_node_ids) if old_changed_node_ids else set()
+        _removed_ids = _all_old_ids - (_changed_old_ids if old_to_new_global else set())
+
+        if prebuilt_edges:
+            for pe in prebuilt_edges:
+                sid, tid = pe.source_id, pe.target_id
+                if sid in _changed_old_ids:
+                    sid = old_to_new_global.get(sid, 0)
+                if tid in _changed_old_ids:
+                    tid = old_to_new_global.get(tid, 0)
+                if sid in _removed_ids:
+                    sid = 0
+                if tid in _removed_ids:
+                    tid = 0
+                if sid and tid:
+                    self._edges.append(pe)
 
         comp_map, comps = find_connected_components(
             self._nodes,
@@ -390,6 +366,53 @@ class GraphBuilder:
             components=comps,
             node_id_map=dict(self._node_id_map),
         )
+
+    def _build_edges_batch(
+        self,
+        changed_list: list[str],
+        parse_results: dict[str, ParseResult],
+        fid_map: dict[str, int],
+        fnodes_map: dict[str, dict[str, int]],
+    ) -> list[EdgeInfo]:
+        """Build edges for a batch of files (parallel or sequential)."""
+        all_edges: list[EdgeInfo] = []
+        pw = self.config.get("performance", {}).get("parallel_workers", 0) or 0
+        if pw > 1 and len(changed_list) > 1:
+            with ProcessPoolExecutor(max_workers=min(pw, len(changed_list))) as ex:
+                futs = {}
+                for fp in changed_list:
+                    pr = parse_results[fp]
+                    fnodes = fnodes_map.get(fp, {})
+                    futs[
+                        ex.submit(
+                            _build_file_edges_worker,
+                            fp, pr, fnodes, fid_map[fp],
+                            self._symbol_index, self._suffix_index,
+                            self._node_id_map, self.config,
+                            {},  # Per-worker independent resolve cache
+                            self._scope_suffix_index,
+                        )
+                    ] = fp
+                for fut in as_completed(futs):
+                    try:
+                        all_edges.extend(fut.result())
+                    except Exception:
+                        pass
+        else:
+            for fp in changed_list:
+                pr = parse_results[fp]
+                fnodes = fnodes_map.get(fp, {})
+                fid = fid_map.get(fp, 0)
+                all_edges.extend(
+                    _build_file_edges_worker(
+                        fp, pr, fnodes, fid,
+                        self._symbol_index, self._suffix_index,
+                        self._node_id_map, self.config,
+                        {},
+                        self._scope_suffix_index,
+                    )
+                )
+        return all_edges
 
     def _add_warnings(
         self,

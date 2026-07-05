@@ -18,9 +18,7 @@ AI agents generate code rapidly, leaving behind dead and redundant code that pol
 - **Dependency graph** — builds directed edges: `read`, `write`, `call`, `inherit`, `decorate`
 - **Entry point detection** — 10 built-in rules (main, FastAPI, Flask, Django, Click, Typer, Celery, pytest, plus package and test entries) and custom rules
 - **Warning detection** — 11 warning types including circular references, unused imports, write-only variables, and more
-- **Incremental indexing** — SHA256-based change detection parses only modified files, with mtime-based fast-path stamp for zero-cost no-op rebuilds
 - **Python API + CLI** — integrate into any Tool, CI pipeline, or let agents self-analyze and self-clean
-- **Zero runtime dependencies** — only requires the Python standard library
 
 ## Installation
 

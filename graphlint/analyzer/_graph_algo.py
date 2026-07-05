@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from collections import deque
+from collections import defaultdict, deque
 from typing import Optional
 
 from graphlint.analyzer._types import ComponentInfo, EdgeInfo, NodeInfo
@@ -286,16 +286,26 @@ def find_connected_components(
                         comp_unreachable.discard(sm_nid)
                         q.append(sm_nid)
 
-        # Module-level usage expansion: nodes reachable from the module pseudo-node
-        # (id=0) via read/call edges are considered alive (defined and used within
-        # the module), even though their only connection is through node 0.
+        # Nodes reachable from module pseudo-node (id=0) via read/call
+        # edges are alive only if they also have a non-synthetic edge.
+        has_real: set[int] = set()
+        zero_src: defaultdict[int, int] = defaultdict(int)
+        for e in edges:
+            if e.source_id and e.target_id:
+                has_real.add(e.source_id)
+                has_real.add(e.target_id)
+            elif e.source_id == 0 and e.target_id:
+                zero_src[e.target_id] += 1
+        for nid, cnt in zero_src.items():
+            if cnt > 1:
+                has_real.add(nid)
         for e in edges:
             if e.source_id == 0 and e.target_id in comp_unreachable:
-                if e.edge_type in ("read", "call"):
+                if e.edge_type in ("read", "call") and e.target_id in has_real:
                     comp_reachable.add(e.target_id)
                     comp_unreachable.discard(e.target_id)
             elif e.target_id == 0 and e.source_id in comp_unreachable:
-                if e.edge_type in ("read", "call"):
+                if e.edge_type in ("read", "call") and e.source_id in has_real:
                     comp_reachable.add(e.source_id)
                     comp_unreachable.discard(e.source_id)
 
@@ -348,7 +358,8 @@ def find_connected_components(
             x_edges.setdefault(cs, set()).add(ct)
             x_edges.setdefault(ct, set()).add(cs)
 
-    # Iterate until convergence: dead code may connect to live code via multiple hops
+    comp_by_id: dict[int, ComponentInfo] = {c.component_id: c for c in components}
+
     changed = True
     while changed:
         changed = False
@@ -361,17 +372,15 @@ def find_connected_components(
             # Find all adjacent live components
             live_nbrs = []
             for nbr in neighbors:
-                nbr_comp = next((c for c in components if c.component_id == nbr), None)
+                nbr_comp = comp_by_id.get(nbr)
                 if nbr_comp and not nbr_comp.is_dead_code:
                     live_nbrs.append(nbr_comp)
             if not live_nbrs:
                 continue
-            # Merge into the largest adjacent live component
             target = max(live_nbrs, key=lambda c: len(c.node_ids))
             target.node_ids.update(comp.node_ids)
             for nid in list(comp.node_ids):
                 component_map[nid] = target.component_id
-            # Redirect all connections from this dead component to target
             for other in list(neighbors):
                 if other == target.component_id:
                     continue
@@ -379,6 +388,7 @@ def find_connected_components(
                 x_edges.setdefault(other, set()).add(target.component_id)
                 x_edges.setdefault(target.component_id, set()).add(other)
             x_edges.pop(comp.component_id, None)
+            comp_by_id.pop(comp.component_id, None)
             components.remove(comp)
             changed = True
             break

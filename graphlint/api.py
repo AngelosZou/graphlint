@@ -8,6 +8,9 @@ import os
 import time
 from typing import Any, Optional, Union
 
+import sys
+import traceback
+
 from graphlint.analyzer.warnings import WarningCollector
 from graphlint.config.manager import ConfigManager
 from graphlint.exceptions import InvalidParamError, InvalidPathError
@@ -322,13 +325,7 @@ def _quick_changed_check(root_dir: str) -> bool:
 
 
 def _auto_build(root_dir: str, config: dict[str, Any]) -> bool:
-    """Run an automatic incremental build. Returns True on success."""
-    import traceback
-
-    # Quick short-circuit: skip full scan when nothing changed (check before creating DB connection to save resources)
-    if not _quick_changed_check(root_dir):
-        return True  # No changes, build is still fresh
-
+    """Run auto build. Returns True on success. Builds from scratch if files changed."""
     db = None
     try:
         db = Database(root_dir)
@@ -338,8 +335,6 @@ def _auto_build(root_dir: str, config: dict[str, Any]) -> bool:
         indexer.run(force_rebuild=False, warning_collector=wc)
         return True
     except Exception as exc:
-        import sys
-
         msg = str(exc)
         is_fk = "FOREIGN KEY constraint failed" in msg
         if is_fk:

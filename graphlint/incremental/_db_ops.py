@@ -225,10 +225,7 @@ def _do_insert_edges(
             mem_fid_to_sql[idx] = sql_fid
 
     if changed_files is not None:
-        # In incremental mode, delete all edges globally: preloaded edges for unchanged
-        # files contain correct new node IDs, but old edges in DB still have old node IDs.
-        # Deleting only changed-file edges would cause dangling references.
-        # DELETE FROM on the full table is fast in WAL mode (~10-50ms for 100K rows).
+        # Delete all edges globally and re-insert to keep data consistent.
         db.execute("DELETE FROM edges")
 
     batch: list[tuple[Any, ...]] = []
