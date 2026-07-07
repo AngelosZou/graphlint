@@ -117,6 +117,16 @@ CREATE TABLE IF NOT EXISTS graph_snapshots (
 
 CREATE INDEX IF NOT EXISTS idx_snapshots_time ON graph_snapshots(snapshot_time);
 
+-- Component members: maps node_id to component_id for incremental connectivity analysis
+CREATE TABLE IF NOT EXISTS component_members (
+    component_id    INTEGER NOT NULL,
+    node_id         INTEGER NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
+    PRIMARY KEY (component_id, node_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_comp_members_comp ON component_members(component_id);
+CREATE INDEX IF NOT EXISTS idx_comp_members_node ON component_members(node_id);
+
 -- Composite index: speed up edge-type filtered queries by (source_id, edge_type) for reachability analysis
 CREATE INDEX IF NOT EXISTS idx_edges_source_type ON edges(source_id, edge_type);
 

@@ -276,29 +276,22 @@ def _parse_warn_types(warn_types: Optional[str]) -> Optional[list[str]]:
     return items
 
 
-def _quick_changed_check(root_dir: str) -> bool:
-    """Quick check if files have changed since the last build.
+def _scan_current(root_dir: str) -> tuple[bool, dict[str, int]]:
+    """Scan .py files and detect changes against the last saved stamp.
 
-    Strategy: compare the previously saved full file list (path, mtime_ns) against
-    the current filesystem state. False positives (reporting a change when there
-    isn't one) are acceptable — the caller falls back to a full incremental scan.
-    False negatives are not acceptable — eliminated by comparing each file's
-    mtime_ns directly.
-
-    Returns:
-        True if a change is detected (full scan needed), False if unchanged
-        (build can be skipped).
+    Returns (changed, current_files) where current_files maps
+    each .py file's relative path to its mtime_ns.
     """
     stamp_file = os.path.join(root_dir, ".graphlint", ".last_scan_stamp")
+    stamp_ok = True
     try:
         with open(stamp_file, "r") as f:
             saved = json.loads(f.read())
     except (FileNotFoundError, json.JSONDecodeError):
-        return True  # No stamp, need full scan
-
+        saved = {}
+        stamp_ok = False
     saved_files = saved.get("files", {})
 
-    # Scan current filesystem (.py files only, consistent with _scan())
     exclude = {
         "__pycache__", ".mypy_cache", ".pytest_cache", ".tox",
         ".venv", "venv", "env", "virtualenv", ".env",
@@ -306,6 +299,7 @@ def _quick_changed_check(root_dir: str) -> bool:
         ".vscode", ".vs", ".graphlint", "build", "dist",
     }
     current_files = {}
+    changed = False
     for dp, dns, fns in os.walk(root_dir, topdown=True, followlinks=False):
         dns[:] = [d for d in dns if d not in exclude
                   and not d.endswith(".egg-info") and not d.startswith(".")]
@@ -313,25 +307,31 @@ def _quick_changed_check(root_dir: str) -> bool:
             if fn.endswith(".py") and not fn.endswith((".pyc", ".pyo")) and not fn.startswith("."):
                 rel = os.path.relpath(os.path.join(dp, fn), root_dir).replace(os.sep, "/")
                 try:
-                    current_files[rel] = os.stat(os.path.join(dp, fn)).st_mtime_ns
+                    mtime = os.stat(os.path.join(dp, fn)).st_mtime_ns
                 except OSError:
-                    return True  # Cannot read, need full scan
+                    changed = True
+                    continue
+                current_files[rel] = mtime
+                saved_mtime = saved_files.get(rel)
+                if saved_mtime is None or saved_mtime != mtime:
+                    changed = True
 
-    # Detect path set changes
-    if set(current_files) != set(saved_files):
-        return True
+    # Detect file deletions
+    for path in saved_files:
+        if path not in current_files:
+            changed = True
+            break
 
-    # mtime change detection (compare one by one, zero false negatives)
-    for path, cur_mtime in current_files.items():
-        if saved_files.get(path) != cur_mtime:
-            return True
+    if not stamp_ok:
+        changed = True
 
-    return False
+    return changed, current_files
 
 
 def _auto_build(root_dir: str, config: dict[str, Any]) -> bool:
     """Run auto build. Returns True on success. Builds from scratch if files changed."""
-    if not _quick_changed_check(root_dir):
+    changed, current_files = _scan_current(root_dir)
+    if not changed:
         return True
     db = None
     try:
@@ -339,7 +339,7 @@ def _auto_build(root_dir: str, config: dict[str, Any]) -> bool:
         wc = WarningCollector()
         parallel = config.get("performance", {}).get("parallel_workers", 0)
         indexer = IncrementalIndexer(root_dir, db, parallel)
-        indexer.run(force_rebuild=False, warning_collector=wc)
+        indexer.run(force_rebuild=False, warning_collector=wc, pre_scanned_files=current_files)
         return True
     except Exception as exc:
         msg = str(exc)

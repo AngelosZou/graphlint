@@ -175,6 +175,7 @@ class TestNodePathPrebuild:
         # Nodes from both files
         node1 = self._make_node(1, "mod1.Foo", 1, "Foo")
         node2 = self._make_node(2, "mod2.Bar", 1, "Bar")
+        node2.file_id = 2  # second file in build_result.files
 
         pr1 = _make_mock_parse_result([node1])
         pr2 = _make_mock_parse_result([node2])

@@ -2,6 +2,23 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.9] - 2026-07-08
+
+### Fixed
+- FOREIGN KEY constraint failure on incremental rebuilds — prebuilt edge
+  remapping now correctly writes remapped node IDs into edge objects
+- `_insert_nodes` node-to-file key collision when multiple changed files
+  share the same qualified name and line number
+
+### Changed
+- Incremental rebuild now parses only changed files instead of all files
+- Filesystem scan merged into a single `os.walk` pass instead of two
+- Redundant file hash computation eliminated in both full and incremental paths
+
+### Added
+- `component_members` table in SQLite schema for future incremental
+  connectivity analysis
+
 ## [0.1.8] - 2026-07-07
 
 ### Added

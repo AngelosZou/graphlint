@@ -17,7 +17,10 @@ from graphlint.analyzer.warnings import WarningCollector, WarningInfo
 from graphlint.config.manager import ConfigManager
 from graphlint.incremental._db_ops import (
     build_snapshots,
+    load_old_changed_node_ids,
+    load_prebuilt_edges,
     update_db,
+    update_snapshots,
 )
 from graphlint.storage.db import Database, IndexLock
 from graphlint.storage.hashing import compute_file_hash
@@ -59,103 +62,174 @@ class IncrementalIndexer:
         self,
         force_rebuild: bool = False,
         warning_collector: Optional[WarningCollector] = None,
+        pre_scanned_files: Optional[dict[str, int]] = None,
     ) -> IndexResult:
-        """Run incremental or full index."""
+        """Run incremental or full index.
+
+        pre_scanned_files skips the internal filesystem scan.
+        """
         start = time.time()
         wc = warning_collector or WarningCollector()
         with IndexLock(self.root_dir):
-            result = self._run_inner(force_rebuild, wc)
+            result = self._run_inner(force_rebuild, wc, pre_scanned_files)
         result.duration_ms = int((time.time() - start) * 1000)
         return result
 
-    def _run_inner(self, force_rebuild: bool, wc: WarningCollector) -> IndexResult:
-        """Index all files — full rebuild on any change."""
-        disk_files = self._scan()
+    def _run_inner(
+        self,
+        force_rebuild: bool,
+        wc: WarningCollector,
+        pre_scanned_files: Optional[dict[str, int]] = None,
+    ) -> IndexResult:
+        """Index files — incremental rebuild on changes, full rebuild on force."""
+        if pre_scanned_files is not None:
+            disk_files = list(pre_scanned_files.keys())
+            file_mtimes = pre_scanned_files
+        else:
+            scanned = self._scan_with_mtime()
+            file_mtimes = {}
+            disk_files = []
+            for rel, mtime in scanned:
+                file_mtimes[rel] = mtime
+                disk_files.append(rel)
+
         db_files_info = {
             r["path"]: (r["hash"], r["mtime_ns"])
             for r in self.db.fetchall("SELECT path, hash, mtime_ns FROM files")
         }
+        needs_full = force_rebuild or not db_files_info
+        hash_cache: dict[str, str] = {}
         added, modified, unchanged = [], [], set()
         for fp in disk_files:
             db_info = db_files_info.get(fp)
             abs_p = os.path.join(self.root_dir, fp)
             if db_info is not None and not force_rebuild:
                 _, db_mtime = db_info
-                disk_stat = os.stat(abs_p)
-                if disk_stat.st_mtime_ns == db_mtime:
+                disk_mtime = file_mtimes.get(fp)
+                if disk_mtime == db_mtime:
                     unchanged.add(fp)
                     continue
+            if needs_full:
+                # parser computes hash — skip redundant computation here
+                if fp not in db_files_info:
+                    added.append(fp)
+                else:
+                    modified.append(fp)
+                continue
             cur = compute_file_hash(abs_p)
+            hash_cache[fp] = cur
             if fp not in db_files_info:
                 added.append(fp)
-            elif cur != db_files_info[fp][0] or force_rebuild:
+            elif cur != db_files_info[fp][0]:
                 modified.append(fp)
             else:
                 unchanged.add(fp)
         removed = [fp for fp in db_files_info if fp not in disk_files]
         changed = added + modified
-        if not changed and not removed and not force_rebuild:
-            self._update_scan_stamp(disk_files)
+
+        if not changed and not removed and not needs_full:
+            self._update_scan_stamp(disk_files, file_mtimes)
             return IndexResult(files_scanned=len(disk_files))
 
-        # Full build: when files change, build from scratch to avoid stale edges.
-        with self.db.transaction():
-            for t in ("edges", "nodes", "imports", "warnings", "graph_snapshots", "files"):
-                self.db.execute(f"DELETE FROM {t}")
-        all_results = self._parse_batch(disk_files)
-        _pr_map: dict[str, ParseResult] = {}
-        for fp, pr in all_results:
-            _pr_map[fp] = pr
-            for w in pr.warnings:
-                wc.add(w.warn_type, w.severity, w.message, w.file_path, w.line, w.node_id)
-        _builder = self._create_builder(wc)
-        _br = _builder.build(_pr_map)
-        update_db(
-            self.db, _br, [], list(_pr_map),
-            self.root_dir, self.config.get("test_patterns", {}),
-            incremental=False,
-        )
-        build_snapshots(self.db, _br)
-        self._update_scan_stamp(disk_files)
+        pr_map: dict[str, ParseResult] = {}
+
+        if needs_full:
+            with self.db.transaction():
+                for t in ("edges", "nodes", "imports", "warnings", "graph_snapshots", "files"):
+                    self.db.execute(f"DELETE FROM {t}")
+            all_results = self._parse_batch(disk_files)
+            for fp, pr in all_results:
+                pr_map[fp] = pr
+                for w in pr.warnings:
+                    wc.add(w.warn_type, w.severity, w.message, w.file_path, w.line, w.node_id)
+            builder = self._create_builder(wc)
+            br = builder.build(pr_map)
+            update_db(
+                self.db, br, [], list(pr_map),
+                self.root_dir, self.config.get("test_patterns", {}),
+                incremental=False,
+            )
+            build_snapshots(self.db, br)
+        else:
+            if changed:
+                for fp, pr in self._parse_batch(changed):
+                    if fp in hash_cache:
+                        pr.hash = hash_cache[fp]
+                    pr_map[fp] = pr
+                    for w in pr.warnings:
+                        wc.add(w.warn_type, w.severity, w.message, w.file_path, w.line, w.node_id)
+            if unchanged:
+                pr_map.update(self._load_unchanged(unchanged))
+
+            old_ids: dict[int, tuple[str, str]] = {}
+            prebuilt = None
+            if changed:
+                old_ids = load_old_changed_node_ids(self.db, changed)
+                if unchanged:
+                    sql_fid_map = {
+                        r["path"]: r["id"]
+                        for r in self.db.fetchall("SELECT id, path FROM files")
+                    }
+                    sql_to_mem = {}
+                    for idx, fp in enumerate(pr_map, 1):
+                        sfid = sql_fid_map.get(fp)
+                        if sfid:
+                            sql_to_mem[sfid] = idx
+                    prebuilt = load_prebuilt_edges(self.db, unchanged, sql_to_mem)
+
+            builder = self._create_builder(wc)
+            br = builder.build(
+                pr_map,
+                changed_files=set(changed) if changed else None,
+                prebuilt_edges=prebuilt,
+                old_changed_node_ids=old_ids if old_ids else None,
+            )
+            update_db(
+                self.db, br, removed, changed,
+                self.root_dir, self.config.get("test_patterns", {}),
+                incremental=True,
+            )
+            update_snapshots(self.db, br)
+
+        self._update_scan_stamp(disk_files, file_mtimes)
         return IndexResult(
             files_scanned=len(disk_files),
-            files_changed=len(changed),
+            files_changed=len(modified),
             files_added=len(added),
             files_removed=len(removed),
-            nodes_added=len(_br.nodes),
-            edges_updated=len(_br.edges),
-            warnings_generated=len(_br.warnings),
+            nodes_added=len(br.nodes),
+            edges_updated=len(br.edges),
+            warnings_generated=len(br.warnings),
         )
 
-    # ------------------------------------------------------------------
-    # Filesystem scan
-    # ------------------------------------------------------------------
-
-    def _update_scan_stamp(self, disk_files=None):
-        """Save the current full file (path, mtime_ns) snapshot.
-
-        Reuses _scan() results to avoid redundant os.walk.
-        Called while IndexLock is held, ensuring atomicity.
-        """
+    def _update_scan_stamp(self, disk_files=None, current_mtimes=None):
+        """Save current file snapshot for fast change detection on next run."""
         if disk_files is None:
-            disk_files = self._scan()
+            scanned = self._scan_with_mtime()
+            disk_files = [rel for rel, _ in scanned]
+            current_mtimes = dict(scanned)
 
         files = {}
-        for rel in disk_files:
-            abs_p = os.path.join(self.root_dir, rel)
-            try:
-                files[rel] = os.stat(abs_p).st_mtime_ns
-            except OSError:
-                pass
+        if current_mtimes is not None:
+            for rel in disk_files:
+                if rel in current_mtimes:
+                    files[rel] = current_mtimes[rel]
+        else:
+            for rel in disk_files:
+                abs_p = os.path.join(self.root_dir, rel)
+                try:
+                    files[rel] = os.stat(abs_p).st_mtime_ns
+                except OSError:
+                    pass
 
         stamp_path = os.path.join(self.root_dir, ".graphlint", ".last_scan_stamp")
         os.makedirs(os.path.dirname(stamp_path), exist_ok=True)
         with open(stamp_path, "w") as f:
             json.dump({"files": files}, f)
 
-    def _scan(self) -> list[str]:
-        """Scan all .py files."""
-        result = []
+    def _scan_with_mtime(self) -> list[tuple[str, int]]:
+        """Scan all .py files, returning (rel_path, mtime_ns) pairs."""
+        result: list[tuple[str, int]] = []
         exclude = {
             "__pycache__",
             ".mypy_cache",
@@ -191,17 +265,16 @@ class IncrementalIndexer:
                     and not fn.endswith((".pyc", ".pyo"))
                     and not fn.startswith(".")
                 ):
-                    result.append(
-                        os.path.relpath(
-                            os.path.join(dp, fn),
-                            self.root_dir,
-                        ).replace(os.sep, "/")
-                    )
+                    fp = os.path.join(dp, fn)
+                    rel = os.path.relpath(fp, self.root_dir).replace(os.sep, "/")
+                    try:
+                        mtime = os.stat(fp).st_mtime_ns
+                    except OSError:
+                        continue
+                    result.append((rel, mtime))
         return result
 
-    # ------------------------------------------------------------------
-    # Parallel parsing
-    # ------------------------------------------------------------------
+    # -- Parallel parsing -------------------------------------------------
 
     def _parse_batch(self, fps: list[str]) -> list[tuple[str, ParseResult]]:
         """Parse files in parallel using ProcessPoolExecutor."""
@@ -241,9 +314,7 @@ class IncrementalIndexer:
                     )
         return results
 
-    # ------------------------------------------------------------------
-    # Load unchanged
-    # ------------------------------------------------------------------
+    # -- Load unchanged from DB ----------------------------------------
 
     def _load_unchanged(self, unchanged: set[str]) -> dict[str, ParseResult]:
         """Load node data for unchanged files from SQLite."""

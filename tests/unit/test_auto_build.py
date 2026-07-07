@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Tests for _auto_build and _quick_changed_check."""
+"""Tests for _auto_build and _scan_current."""
 
 from __future__ import annotations
 
@@ -12,47 +12,46 @@ import pytest
 
 
 # =============================================================================
-# TEST-T11: _quick_changed_check and _update_scan_stamp tests
+# TEST-T11: _scan_current and _update_scan_stamp tests
 # =============================================================================
 
 
 @pytest.mark.timeout(30)
-class TestQuickChangedCheck:
-    """Tests for _quick_changed_check fast short-circuit detection."""
+class TestScanCurrent:
+    """Tests for _scan_current — single-scan change detection."""
 
     def test_no_stamp_file_returns_true(self, tmp_path: Path):
-        """No .last_scan_stamp file should return True."""
-        from graphlint.api import _quick_changed_check
+        """No .last_scan_stamp file should return (True, current_files)."""
+        from graphlint.api import _scan_current
 
-        # Ensure .graphlint directory does not exist
         stamp_dir = tmp_path / ".graphlint"
         assert not stamp_dir.exists()
 
-        result = _quick_changed_check(str(tmp_path))
-        assert result is True, "No stamp file should return True"
+        changed, files = _scan_current(str(tmp_path))
+        assert changed is True, "No stamp file should return changed=True"
+        assert isinstance(files, dict)
 
     def test_corrupted_stamp_file_returns_true(self, tmp_path: Path):
-        """Corrupted .last_scan_stamp file (invalid JSON) should return True."""
-        from graphlint.api import _quick_changed_check
+        """Corrupted .last_scan_stamp file should return changed=True."""
+        from graphlint.api import _scan_current
 
         stamp_dir = tmp_path / ".graphlint"
         stamp_dir.mkdir(parents=True, exist_ok=True)
         stamp_file = stamp_dir / ".last_scan_stamp"
         stamp_file.write_text("invalid json content{{{", encoding="utf-8")
 
-        result = _quick_changed_check(str(tmp_path))
-        assert result is True, "Corrupted stamp file should return True"
+        changed, files = _scan_current(str(tmp_path))
+        assert changed is True, "Corrupted stamp file should return changed=True"
+        assert isinstance(files, dict)
 
     def test_no_changes_returns_false(self, tmp_path: Path):
-        """Correct snapshot with no file changes should return False."""
-        from graphlint.api import _quick_changed_check
+        """Correct snapshot with no file changes should return changed=False."""
+        from graphlint.api import _scan_current
 
-        # Create a .py file
         src_file = tmp_path / "main.py"
         src_file.write_text("print('hello')", encoding="utf-8")
         mtime = os.stat(str(src_file)).st_mtime_ns
 
-        # Create correct stamp file
         stamp_dir = tmp_path / ".graphlint"
         stamp_dir.mkdir(parents=True, exist_ok=True)
         stamp_file = stamp_dir / ".last_scan_stamp"
@@ -61,18 +60,18 @@ class TestQuickChangedCheck:
             encoding="utf-8",
         )
 
-        result = _quick_changed_check(str(tmp_path))
-        assert result is False, "No changes should return False"
+        changed, files = _scan_current(str(tmp_path))
+        assert changed is False, "No changes should return changed=False"
+        assert files == {"main.py": mtime}
 
     def test_modified_file_returns_true(self, tmp_path: Path):
-        """Modified file should return True."""
-        from graphlint.api import _quick_changed_check
+        """Modified file should return changed=True."""
+        from graphlint.api import _scan_current
 
         src_file = tmp_path / "main.py"
         src_file.write_text("print('hello')", encoding="utf-8")
         old_mtime = os.stat(str(src_file)).st_mtime_ns
 
-        # Create stamp file (recording old mtime)
         stamp_dir = tmp_path / ".graphlint"
         stamp_dir.mkdir(parents=True, exist_ok=True)
         stamp_file = stamp_dir / ".last_scan_stamp"
@@ -81,25 +80,25 @@ class TestQuickChangedCheck:
             encoding="utf-8",
         )
 
-        # Modify file (short delay to ensure Windows mtime update)
         import time
         time.sleep(0.05)
         src_file.write_text("print('world')", encoding="utf-8")
         new_mtime = os.stat(str(src_file)).st_mtime_ns
-        assert new_mtime != old_mtime, "mtime should change after delay"
+        assert new_mtime != old_mtime
 
-        result = _quick_changed_check(str(tmp_path))
-        assert result is True, "Modified file should return True"
+        changed, files = _scan_current(str(tmp_path))
+        assert changed is True, "Modified file should return changed=True"
+        assert "main.py" in files
+        assert files["main.py"] == new_mtime
 
     def test_deleted_file_returns_true(self, tmp_path: Path):
-        """Deleted file should return True."""
-        from graphlint.api import _quick_changed_check
+        """Deleted file should return changed=True."""
+        from graphlint.api import _scan_current
 
         src_file = tmp_path / "main.py"
         src_file.write_text("print('hello')", encoding="utf-8")
         old_mtime = os.stat(str(src_file)).st_mtime_ns
 
-        # Create stamp file
         stamp_dir = tmp_path / ".graphlint"
         stamp_dir.mkdir(parents=True, exist_ok=True)
         stamp_file = stamp_dir / ".last_scan_stamp"
@@ -108,17 +107,16 @@ class TestQuickChangedCheck:
             encoding="utf-8",
         )
 
-        # Delete file
         src_file.unlink()
 
-        result = _quick_changed_check(str(tmp_path))
-        assert result is True, "Deleted file should return True"
+        changed, files = _scan_current(str(tmp_path))
+        assert changed is True, "Deleted file should return changed=True"
+        assert "main.py" not in files
 
     def test_new_file_returns_true(self, tmp_path: Path):
-        """New file should return True."""
-        from graphlint.api import _quick_changed_check
+        """New file should return changed=True."""
+        from graphlint.api import _scan_current
 
-        # Create stamp file (empty record)
         stamp_dir = tmp_path / ".graphlint"
         stamp_dir.mkdir(parents=True, exist_ok=True)
         stamp_file = stamp_dir / ".last_scan_stamp"
@@ -127,23 +125,21 @@ class TestQuickChangedCheck:
             encoding="utf-8",
         )
 
-        # Add new file
         src_file = tmp_path / "new.py"
         src_file.write_text("print('new')", encoding="utf-8")
 
-        result = _quick_changed_check(str(tmp_path))
-        assert result is True, "New file should return True"
+        changed, files = _scan_current(str(tmp_path))
+        assert changed is True, "New file should return changed=True"
+        assert "new.py" in files
 
     def test_ignores_non_py_files(self, tmp_path: Path):
         """Non-.py file changes should not trigger change detection."""
-        from graphlint.api import _quick_changed_check
+        from graphlint.api import _scan_current
 
-        # Create .py file
         py_file = tmp_path / "main.py"
         py_file.write_text("print('hello')", encoding="utf-8")
         mtime = os.stat(str(py_file)).st_mtime_ns
 
-        # Create stamp file
         stamp_dir = tmp_path / ".graphlint"
         stamp_dir.mkdir(parents=True, exist_ok=True)
         stamp_file = stamp_dir / ".last_scan_stamp"
@@ -152,12 +148,12 @@ class TestQuickChangedCheck:
             encoding="utf-8",
         )
 
-        # Add non-.py file (should be ignored)
         txt_file = tmp_path / "notes.txt"
         txt_file.write_text("some notes", encoding="utf-8")
 
-        result = _quick_changed_check(str(tmp_path))
-        assert result is False, "Non-.py file changes should not affect result"
+        changed, files = _scan_current(str(tmp_path))
+        assert changed is False, "Non-.py file changes should not affect result"
+        assert "notes.txt" not in files
 
 
 @pytest.mark.timeout(30)
@@ -216,8 +212,8 @@ class TestUpdateScanStamp:
 class TestAutoBuildIntegration:
     """Integration tests: simulate _auto_build flow."""
 
-    def test_auto_build_always_creates_db(self, tmp_path: Path):
-        """_auto_build always creates a Database connection."""
+    def test_auto_build_first_run_creates_db(self, tmp_path: Path):
+        """First run (no stamp) should create Database."""
         from graphlint.api import _auto_build
 
         (tmp_path / "main.py").write_text("x = 1", encoding="utf-8")
@@ -230,48 +226,8 @@ class TestAutoBuildIntegration:
             assert result is True
             mock_db.assert_called_once()
 
-    def test_auto_build_first_run_full_path(self, tmp_path: Path):
-        """Verify first run (no stamp file) takes full path."""
-        from graphlint.api import _auto_build
-
-        # Create .py file
-        (tmp_path / "main.py").write_text("x = 1", encoding="utf-8")
-
-        with patch("graphlint.api.Database") as mock_db:
-            mock_db_instance = MagicMock()
-            mock_db.return_value = mock_db_instance
-
-            _auto_build(str(tmp_path), {})
-
-            # First run should create Database
-            mock_db.assert_called_once_with(str(tmp_path))
-
-    def test_auto_build_with_changes(self, tmp_path: Path):
-        """Verify file changes trigger full path."""
-        from graphlint.api import _auto_build
-
-        # Create old stamp file (without current file)
-        stamp_dir = tmp_path / ".graphlint"
-        stamp_dir.mkdir(parents=True, exist_ok=True)
-        (stamp_dir / ".last_scan_stamp").write_text(
-            json.dumps({"files": {"old.py": 12345}}),
-            encoding="utf-8",
-        )
-
-        # Create new .py file (not in stamp)
-        (tmp_path / "main.py").write_text("x = 1", encoding="utf-8")
-
-        with patch("graphlint.api.Database") as mock_db:
-            mock_db_instance = MagicMock()
-            mock_db.return_value = mock_db_instance
-
-            _auto_build(str(tmp_path), {})
-
-            # Should create Database when changes exist
-            mock_db.assert_called_once()
-
-    def test_auto_build_with_stamp_file_still_creates_db(self, tmp_path: Path):
-        """_auto_build creates a Database even when stamp file exists."""
+    def test_auto_build_no_change_skips_db(self, tmp_path: Path):
+        """When stamp matches, _auto_build should skip DB creation."""
         from graphlint.api import _auto_build
 
         (tmp_path / "main.py").write_text("x = 1", encoding="utf-8")
@@ -284,7 +240,27 @@ class TestAutoBuildIntegration:
             encoding="utf-8",
         )
 
-        with patch("graphlint.api.Database") as mock_db, \
-             patch("graphlint.api.IncrementalIndexer") as mock_indexer:
+        with patch("graphlint.api.Database") as mock_db:
+            result = _auto_build(str(tmp_path), {})
+            assert result is True
+            mock_db.assert_not_called()
+
+    def test_auto_build_with_changes(self, tmp_path: Path):
+        """Verify file changes trigger DB creation."""
+        from graphlint.api import _auto_build
+
+        stamp_dir = tmp_path / ".graphlint"
+        stamp_dir.mkdir(parents=True, exist_ok=True)
+        (stamp_dir / ".last_scan_stamp").write_text(
+            json.dumps({"files": {"old.py": 12345}}),
+            encoding="utf-8",
+        )
+
+        (tmp_path / "main.py").write_text("x = 1", encoding="utf-8")
+
+        with patch("graphlint.api.Database") as mock_db:
+            mock_db_instance = MagicMock()
+            mock_db.return_value = mock_db_instance
+
             _auto_build(str(tmp_path), {})
             mock_db.assert_called_once()

@@ -350,6 +350,8 @@ class GraphBuilder:
                 if tid in _removed_ids:
                     tid = 0
                 if sid and tid:
+                    pe.source_id = sid
+                    pe.target_id = tid
                     self._edges.append(pe)
 
         comp_map, comps = find_connected_components(

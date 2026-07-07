@@ -162,18 +162,15 @@ def _insert_nodes(
     fid_map: dict[str, int],
     changed_files: Optional[set[str]] = None,
 ) -> None:
-    """Insert nodes with explicit IDs — sorted so parents precede children to avoid FK violations on parent_node_id."""
-    # Pre-build (qualified_name, line_start) → file_path map (single pass, eliminates O(n²) lookup)
-    node_to_file: dict[tuple[str, int], str] = {}
-    for fp, pr in build_result.files_data.items():
-        for n in pr.nodes:
-            node_to_file[(n.qualified_name, n.line_start)] = fp
+    """Insert nodes sorted by parent dependency for FK-safe ordering."""
+    # build_result.files[fid-1] = path for each memory file_id
+    mem_fid_to_path: dict[int, str] = dict(enumerate(build_result.files, 1))
 
     rows: list[tuple[Any, ...]] = []
     for node in build_result.nodes:
         if node.id == 0:
             continue
-        fp = node_to_file.get((node.qualified_name, node.line_start), "")
+        fp = mem_fid_to_path.get(node.file_id, "")
         if changed_files is not None and fp not in changed_files:
             continue
         fid = fid_map.get(fp, 0)
@@ -195,8 +192,7 @@ def _insert_nodes(
             )
         )
 
-    # Sort: nodes without parent (parent_id=0/None) first, then by parent_id
-    # so parents are always inserted before their children, avoiding FK errors
+    # parents before children to avoid FK violations on parent_node_id
     rows.sort(key=lambda r: (0 if r[8] is None else 1, r[8] or 0, r[0]))
 
     for i in range(0, len(rows), 5000):
@@ -377,6 +373,31 @@ def _snapshot_values(
     )
 
 
+def _save_component_members(
+    db: Database,
+    component_map: dict[int, int],
+) -> None:
+    """Write component_members mapping for incremental connectivity analysis."""
+    db.execute("DELETE FROM component_members")
+
+    batch: list[tuple[int, int]] = []
+    for nid, cid in component_map.items():
+        if nid == 0:
+            continue
+        batch.append((cid, nid))
+        if len(batch) >= 5000:
+            db.executemany(
+                "INSERT INTO component_members (component_id, node_id) VALUES (?,?)",
+                batch,
+            )
+            batch.clear()
+    if batch:
+        db.executemany(
+            "INSERT INTO component_members (component_id, node_id) VALUES (?,?)",
+            batch,
+        )
+
+
 def build_snapshots(
     db: Database,
     build_result: GraphBuildResult,
@@ -404,6 +425,7 @@ def build_snapshots(
             "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
             vals,
         )
+    _save_component_members(db, build_result.component_map)
 
 
 def update_snapshots(
@@ -454,6 +476,7 @@ def update_snapshots(
             "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (snap_id,) + vals,
         )
+    _save_component_members(db, build_result.component_map)
 
 
 
