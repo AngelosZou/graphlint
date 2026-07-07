@@ -2,6 +2,16 @@
 
 Graphlint provides `install` and `uninstall` subcommands to inject its usage prompt into your AI coding tools at the **global level**. Once installed, every project you open with that tool will have graphlint's guidance available — no per-project setup needed.
 
+## Prompt Command
+
+If your agent tool is not listed or you prefer manual setup, copy the prompt to your clipboard:
+
+```bash
+graphlint prompt
+```
+
+This copies the same `AGENT_PROMPT` content that `install` would write — paste it into your agent's system prompt or configuration file.
+
 ## Install
 
 ```bash

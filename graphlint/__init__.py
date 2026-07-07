@@ -3,7 +3,7 @@
 
 from typing import Any
 
-__version__ = "0.1.7"
+__version__ = "0.1.8"
 
 __all__ = ["query", "build", "configure", "__version__"]
 

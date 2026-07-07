@@ -53,6 +53,7 @@ STRINGS: dict[str, str] = {
     "help.query": "Query dependency graph",
     "help.build": "Build/rebuild index",
     "help.install": "Install graphlint prompt into agent tools (opencode, cursor, codex, cc)",
+    "help.prompt": "Copy graphlint prompt to clipboard",
     "help.uninstall": "Remove graphlint prompt from agent tools",
     "help.config": "Manage configuration",
     "help.config.operations": "Config operations",
@@ -93,6 +94,14 @@ STRINGS: dict[str, str] = {
     "help.param.rule_json": "JSON rule string for add-entry-rule",
     "help.param.rule_name": "Rule name for remove-entry-rule",
     "help.param.exclude_pattern": "Pattern for add-exclude / remove-exclude",
+    # -------- Errors --------
+    # -------- Agent install/prompt --------
+    "cli.install.auto_updated": "Auto-updated graphlint prompt to the latest version for:",
+    "cli.install.select_title": "Select agent tool(s) to install graphlint prompt:",
+    "cli.install.select_prompt": "Enter numbers (comma separated), 'all' or leave empty to cancel: ",
+    "cli.install.agent_not_found": "Didn't find your agent? Submit a request at https://github.com/AngelosZou/graphlint/issues, or use graphlint prompt to copy the prompt to your clipboard.",
+    "cli.uninstall.select_prompt": "Enter numbers to uninstall (comma separated), 'all' or leave empty to cancel: ",
+    "cli.prompt.copied": "Prompt copied to clipboard. Paste it into your Agent's system prompt to teach it graphlint.",
     # -------- Errors --------
     "error.hash_mismatch": "File hash mismatch. Run query or build first.",
     "error.no_index": "No index found. Run build first.",

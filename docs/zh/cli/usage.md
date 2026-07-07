@@ -1,11 +1,11 @@
 # CLI 使用指南
 
-`graphlint` 命令行工具提供五个子命令：`query`、`build`、`install`、`uninstall` 和 `config`。
+`graphlint` 命令行工具提供六个子命令：`query`、`build`、`install`、`uninstall`、`prompt` 和 `config`。
 
 ## 全局选项
 
 ```
-usage: graphlint [-h] {query,build,install,uninstall,config} ...
+usage: graphlint [-h] {query,build,install,uninstall,prompt,config} ...
 ```
 
 - `-h, --help` — 显示帮助信息
@@ -85,6 +85,18 @@ graphlint uninstall
 ```
 
 扫描全局配置文件中的已安装提示词，交互式移除。
+
+## prompt — 复制提示词到粘贴板
+
+将 graphlint 的 Agent 提示词复制到系统粘贴板，供手动粘贴到 Agent 的配置中。
+
+### 用法
+
+```bash
+graphlint prompt
+```
+
+如果成功复制到粘贴板，将显示成功消息。如果失败（例如系统没有提供可用的粘贴板工具），提示词文本将直接输出到终端。
 
 ## build — 构建/重建索引
 

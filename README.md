@@ -38,6 +38,9 @@ Graphlint provides a command to inject its usage prompt into your AI coding tool
 # Install graphlint prompt into agent tools (opencode, cursor, codex, cc)
 graphlint install
 
+# Copy the prompt to clipboard for manual paste into your agent
+graphlint prompt
+
 # Remove graphlint prompt from agent tools
 graphlint uninstall
 ```

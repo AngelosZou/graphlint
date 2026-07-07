@@ -49,6 +49,9 @@ def build_parser(i18n: I18nManager) -> argparse.ArgumentParser:
     # uninstall subcommand
     sub.add_parser("uninstall", parents=[_lang_parser], help=_t("help.uninstall"))
 
+    # prompt subcommand
+    sub.add_parser("prompt", parents=[_lang_parser], help=_t("help.prompt"))
+
     # config subcommand with sub-subcommands
     cp = sub.add_parser("config", parents=[_lang_parser], help=_t("help.config"))
     config_sub = cp.add_subparsers(
@@ -150,9 +153,11 @@ def main() -> int:
         elif command == "config":
             result = _run_config(args)
         elif command == "install":
-            result = _run_install()
+            result = _run_install(i18n)
         elif command == "uninstall":
-            result = _run_uninstall()
+            result = _run_uninstall(i18n)
+        elif command == "prompt":
+            result = _run_prompt(i18n)
         else:
             parser.print_help()
             return 1
@@ -168,18 +173,31 @@ def main() -> int:
         return 1
 
 
-def _run_install() -> str:
+def _run_install(i18n: I18nManager) -> str:
     """Execute the install command."""
     from graphlint.agent_tools import install_tools
 
-    return install_tools()
+    result = install_tools(_t=i18n.t)
+    return result + "\n\n" + i18n.t("cli.install.agent_not_found")
 
 
-def _run_uninstall() -> str:
+def _run_prompt(i18n: I18nManager) -> str:
+    """Execute the prompt command — copy AGENT_PROMPT to clipboard."""
+    from graphlint.agent_tools import copy_prompt_to_clipboard
+
+    if copy_prompt_to_clipboard():
+        return i18n.t("cli.prompt.copied")
+    # Fallback: print the prompt text to stdout
+    from graphlint.agent_tools import AGENT_PROMPT
+
+    return AGENT_PROMPT + "\n\n" + i18n.t("cli.prompt.copied")
+
+
+def _run_uninstall(i18n: I18nManager) -> str:
     """Execute the uninstall command."""
     from graphlint.agent_tools import uninstall_tools
 
-    return uninstall_tools()
+    return uninstall_tools(_t=i18n.t)
 
 
 def _run_query(args: argparse.Namespace) -> Any:

@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.8] - 2026-07-07
+
+### Added
+- Agent prompt auto-update: `install` now scans all installed prompts on start,
+  replaces outdated content when its version is below the library version,
+  and prints the list of updated agents
+- `install` / `uninstall` interactive selection: support Ctrl+C to abort and
+  empty input to cancel; prompt texts are now i18n-localized
+- `graphlint prompt` subcommand to copy the agent prompt to the system clipboard
+- Documentation for agent integration (`docs/*/guide/agent-integration.md`)
+
+### Fixed
+- Query deadlock: `_build_edge_mapping` now avoids `result` future list
+  mutation under concurrent executor shutdown, preventing infinite waits
+
 ## [0.1.7] - 2026-07-06
 
 ### Fixed

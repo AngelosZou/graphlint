@@ -1,11 +1,11 @@
 # CLI Usage Guide
 
-The `graphlint` command-line tool provides five subcommands: `query`, `build`, `install`, `uninstall`, and `config`.
+The `graphlint` command-line tool provides six subcommands: `query`, `build`, `install`, `uninstall`, `prompt`, and `config`.
 
 ## Global Options
 
 ```
-usage: graphlint [-h] {query,build,install,uninstall,config} ...
+usage: graphlint [-h] {query,build,install,uninstall,prompt,config} ...
 ```
 
 - `-h, --help` — Show help message
@@ -85,6 +85,18 @@ graphlint uninstall
 ```
 
 Scans global config paths for previously installed prompts and interactively removes them.
+
+## prompt — Copy Prompt to Clipboard
+
+Copy graphlint's agent prompt to the system clipboard so you can manually paste it into your agent's configuration.
+
+### Usage
+
+```bash
+graphlint prompt
+```
+
+If clipboard access succeeds, a confirmation message is shown. If it fails (e.g., no clipboard tool available), the prompt text is printed to stdout instead.
 
 ## build — Build/Rebuild Index
 

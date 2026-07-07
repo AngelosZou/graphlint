@@ -53,6 +53,7 @@ STRINGS: dict[str, str] = {
     "help.query": "查询依赖关系图",
     "help.build": "构建/重建索引",
     "help.install": "将 graphlint 提示词安装到 Agent 工具（opencode, cursor, codex, cc）",
+    "help.prompt": "将 graphlint 提示词复制到粘贴板",
     "help.uninstall": "从 Agent 工具中移除 graphlint 提示词",
     "help.config": "管理配置",
     "help.config.operations": "配置操作",
@@ -93,6 +94,14 @@ STRINGS: dict[str, str] = {
     "help.param.rule_json": "add-entry-rule 的 JSON 规则字符串",
     "help.param.rule_name": "remove-entry-rule 的规则名称",
     "help.param.exclude_pattern": "add-exclude / remove-exclude 的模式",
+    # -------- Errors --------
+    # -------- Agent install/prompt --------
+    "cli.install.auto_updated": "已自动更新以下Agent的graphlint提示词至最新版本：",
+    "cli.install.select_title": "选择要安装 graphlint 提示词的 Agent 工具：",
+    "cli.install.select_prompt": "输入编号（逗号分隔）、all 或留空取消：",
+    "cli.install.agent_not_found": "没有找到你在使用的Agent？在 https://github.com/AngelosZou/graphlint/issues 提出需求，或者使用 graphlint prompt 将提示词复制到粘贴板。",
+    "cli.uninstall.select_prompt": "输入要卸载的编号（逗号分隔）、all 或留空取消：",
+    "cli.prompt.copied": "已将提示词复制到粘贴板，粘贴到Agent的提示词中以学会使用graphlint",
     # -------- Errors --------
     "error.hash_mismatch": "文件哈希不匹配。请先执行 query 或 build 更新索引。",
     "error.no_index": "尚未构建索引。请先执行 build。",

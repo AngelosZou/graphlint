@@ -8,7 +8,11 @@ available in every project the agent opens.
 from __future__ import annotations
 
 import os
+import subprocess
+import sys
 from typing import List, Optional, Tuple
+
+from graphlint import __version__
 
 AGENT_PROMPT = """# graphlint — Dead Code Detection for Python
 
@@ -58,10 +62,11 @@ graphlint query -C --sort-by warnings --json
 
 MARKER_START = "<!-- graphlint:start -->"
 MARKER_END = "<!-- graphlint:end -->"
+VERSION_MARKER = "<!-- graphlint:version:"
 
 
 def _prompt_block() -> str:
-    return f"\n{MARKER_START}\n{AGENT_PROMPT}\n{MARKER_END}\n"
+    return f"\n{MARKER_START}\n{VERSION_MARKER}{__version__} -->\n{AGENT_PROMPT}\n{MARKER_END}\n"
 
 
 def _expand(path: str) -> str:
@@ -92,7 +97,7 @@ TOOLS: List[Tuple[str, str, str, str]] = [
     ),
     (
         "cc",
-        "Claude Code (CLI)",
+        "Claude Code",
         "~/.claude/CLAUDE.md",
         "Global CLAUDE.md — read by Claude Code in every project",
     ),
@@ -106,11 +111,34 @@ def _prompt_installed_in(filepath: str) -> bool:
         return MARKER_START in f.read()
 
 
-def _write_prompt(filepath: str) -> bool:
+def _read_prompt_version(filepath: str) -> str:
+    if not os.path.isfile(filepath):
+        return ""
+    with open(filepath, encoding="utf-8") as f:
+        content = f.read()
+    if VERSION_MARKER not in content:
+        return ""
+    start = content.index(VERSION_MARKER) + len(VERSION_MARKER)
+    end = content.index(" -->", start)
+    return content[start:end]
+
+
+def _write_prompt(filepath: str) -> str:
     try:
         os.makedirs(os.path.dirname(filepath), exist_ok=True)
         if os.path.isfile(filepath) and _prompt_installed_in(filepath):
-            return False
+            installed_version = _read_prompt_version(filepath)
+            if installed_version == __version__:
+                return "uptodate"
+            with open(filepath, encoding="utf-8") as f:
+                content = f.read()
+            start = content.index(MARKER_START)
+            end = content.index(MARKER_END) + len(MARKER_END)
+            new_block = _prompt_block()
+            content = content[:start] + new_block + content[end:]
+            with open(filepath, "w", encoding="utf-8") as f:
+                f.write(content)
+            return "updated"
         block = _prompt_block()
         if os.path.isfile(filepath):
             with open(filepath, "a", encoding="utf-8") as f:
@@ -118,9 +146,9 @@ def _write_prompt(filepath: str) -> bool:
         else:
             with open(filepath, "w", encoding="utf-8") as f:
                 f.write(block)
-        return True
+        return "installed"
     except OSError:
-        return False
+        return "failed"
 
 
 def _remove_prompt(filepath: str) -> bool:
@@ -169,47 +197,79 @@ def _resolve_paths(cwd: Optional[str] = None) -> List[Tuple[str, str, str, str, 
     return resolved
 
 
-def _select_tools(message: str, resolved: List[Tuple]) -> List[Tuple]:
+def _prompt_selection(items: List[Tuple], prompt: str) -> List[Tuple]:
+    """Prompt user to select from a numbered list. Supports Ctrl+C to cancel."""
+    print()
+    try:
+        raw = input(prompt).strip()
+    except (EOFError, KeyboardInterrupt):
+        print()
+        return []
+    if raw.lower() in ("all", "a"):
+        return list(items)
+    if not raw:
+        return []
+    try:
+        indices = [int(x.strip()) for x in raw.split(",")]
+    except ValueError:
+        return []
+    selected = []
+    for idx in indices:
+        if 1 <= idx <= len(items):
+            selected.append(items[idx - 1])
+    return selected
+
+
+def _select_tools(resolved: List[Tuple], _t=None) -> List[Tuple]:
     """Interactive multi-select prompt for agent tools."""
-    print(f"\n{message}\n")
+    title = _t("cli.install.select_title") if _t is not None else "Select agent tool(s) to install graphlint prompt:"
+    print(f"\n{title}")
     for i, (_, display_name, rel_path, full_path, desc) in enumerate(resolved, 1):
         print(f"  [{i}] {display_name:<20} {rel_path}")
-        print(f"      {desc}")
-    print()
-    while True:
-        try:
-            raw = input(
-                "Enter numbers separated by comma (e.g. 1,3) or 'all': "
-            ).strip()
-            if raw.lower() == "all":
-                return list(resolved)
-            if not raw:
-                print("No selection. Aborting.")
-                return []
-            indices = [int(x.strip()) for x in raw.split(",")]
-            selected = []
-            for idx in indices:
-                if 1 <= idx <= len(resolved):
-                    selected.append(resolved[idx - 1])
-                else:
-                    print(f"  Invalid number: {idx}")
-                    break
-            else:
-                return selected
-        except (ValueError, KeyboardInterrupt):
-            print("Invalid input. Try again.")
+    prompt = (
+        _t("cli.install.select_prompt")
+        if _t is not None
+        else "Enter numbers (comma separated), 'all' or leave empty to cancel: "
+    )
+    return _prompt_selection(list(resolved), prompt)
 
 
-def install_tools(cwd: Optional[str] = None) -> str:
+def install_tools(cwd: Optional[str] = None, _t=None) -> str:
     """Interactively install graphlint prompt to selected agent tools (global)."""
     resolved = _resolve_paths(cwd)
-    selected = _select_tools("Select agent tool(s) to install graphlint prompt:", resolved)
+
+    updated_names: List[str] = []
+    for tool_id, display_name, rel_path, full_path, desc in resolved:
+        if _prompt_installed_in(full_path):
+            installed_version = _read_prompt_version(full_path)
+            if installed_version != __version__:
+                try:
+                    with open(full_path, encoding="utf-8") as f:
+                        content = f.read()
+                    start = content.index(MARKER_START)
+                    end = content.index(MARKER_END) + len(MARKER_END)
+                    content = content[:start] + _prompt_block() + content[end:]
+                    with open(full_path, "w", encoding="utf-8") as f:
+                        f.write(content)
+                    updated_names.append(display_name)
+                except (OSError, ValueError):
+                    pass
+
+    if updated_names and _t is not None:
+        print(_t("cli.install.auto_updated"))
+        for name in updated_names:
+            print(f"  - {name}")
+
+    selected = _select_tools(resolved, _t)
     if not selected:
         return "No tools selected."
     results = []
     for tool_id, display_name, rel_path, full_path, desc in selected:
-        if _write_prompt(full_path):
+        status = _write_prompt(full_path)
+        if status == "installed":
             results.append(f"  ✓ {display_name} -> {full_path}")
+        elif status == "uptodate":
+            results.append(f"  - {display_name} ({rel_path}) — already installed")
         else:
             if _prompt_installed_in(full_path):
                 results.append(f"  - {display_name} ({rel_path}) — already installed")
@@ -218,7 +278,21 @@ def install_tools(cwd: Optional[str] = None) -> str:
     return "Install results:\n" + "\n".join(results)
 
 
-def uninstall_tools(cwd: Optional[str] = None) -> str:
+def copy_prompt_to_clipboard() -> bool:
+    """Copy AGENT_PROMPT content to the system clipboard."""
+    try:
+        if sys.platform == "win32":
+            subprocess.run(["clip"], input=AGENT_PROMPT, text=True, check=True)
+        elif sys.platform == "darwin":
+            subprocess.run(["pbcopy"], input=AGENT_PROMPT, text=True, check=True)
+        else:
+            subprocess.run(["xclip", "-selection", "clipboard"], input=AGENT_PROMPT, text=True, check=True)
+        return True
+    except (subprocess.SubprocessError, FileNotFoundError):
+        return False
+
+
+def uninstall_tools(cwd: Optional[str] = None, _t=None) -> str:
     """Interactively uninstall graphlint prompt from selected agent tools."""
     resolved = _resolve_paths(cwd)
     installed = [
@@ -226,35 +300,17 @@ def uninstall_tools(cwd: Optional[str] = None) -> str:
     ]
     if not installed:
         return "No agent tools with graphlint prompt found."
-    print("\nDetected installations:\n")
+    print("\nDetected installations:")
     for i, (tool_id, display_name, rel_path, full_path, desc) in enumerate(
         installed, 1
     ):
         print(f"  [{i}] {display_name:<20} {rel_path}")
-    print()
-    while True:
-        try:
-            raw = input(
-                "Enter numbers to uninstall (comma separated) or 'all': "
-            ).strip()
-            if raw.lower() == "all":
-                selected = list(installed)
-                break
-            if not raw:
-                print("No selection. Aborting.")
-                return "No tools selected."
-            indices = [int(x.strip()) for x in raw.split(",")]
-            selected = []
-            for idx in indices:
-                if 1 <= idx <= len(installed):
-                    selected.append(installed[idx - 1])
-                else:
-                    print(f"  Invalid number: {idx}")
-                    break
-            else:
-                break
-        except (ValueError, KeyboardInterrupt):
-            print("Invalid input. Try again.")
+    prompt = (
+        _t("cli.uninstall.select_prompt")
+        if _t is not None
+        else "Enter numbers to uninstall (comma separated), 'all' or leave empty to cancel: "
+    )
+    selected = _prompt_selection(installed, prompt)
     if not selected:
         return "No tools selected."
     results = []

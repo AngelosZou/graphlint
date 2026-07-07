@@ -32,8 +32,24 @@ class IndexLock:
         self._fd = open(self.lock_path, "w")
         if sys.platform == "win32":
             import msvcrt
+            import time
 
-            msvcrt.locking(self._fd.fileno(), msvcrt.LK_LOCK, 1)
+            for attempt in range(5):
+                try:
+                    msvcrt.locking(self._fd.fileno(), msvcrt.LK_NBLCK, 1)
+                    break
+                except OSError as e:
+                    if e.errno != 36:  # EDEADLOCK
+                        raise
+                    if attempt < 4:
+                        time.sleep(0.3)
+                        continue
+                    print(
+                        "[graphlint] Index lock held by another process. "
+                        "Use --no-scan to skip rebuild, or wait and retry.",
+                        file=sys.stderr,
+                    )
+                    raise
         elif fcntl is not None:
             fcntl.flock(self._fd, fcntl.LOCK_EX)
         return self
@@ -48,8 +64,13 @@ class IndexLock:
                     msvcrt.locking(self._fd.fileno(), msvcrt.LK_UNLCK, 1)
                 elif fcntl is not None:
                     fcntl.flock(self._fd, fcntl.LOCK_UN)
-            except (OSError, ValueError):
-                pass
+            except OSError:
+                import sys as _sys
+
+                print(
+                    "[graphlint] Warning: failed to release index lock file.",
+                    file=_sys.stderr,
+                )
             finally:
                 self._fd.close()
                 self._fd = None

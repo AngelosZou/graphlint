@@ -65,7 +65,12 @@ def query(
 
     # Auto incremental build (filesystem scan only if unchanged)
     if not no_scan:
-        _auto_build(root_dir, config)
+        if not _auto_build(root_dir, config):
+            print(
+                "[graphlint] Warning: index may be stale. "
+                "Run 'graphlint build --force' to rebuild.",
+                file=sys.stderr,
+            )
 
     engine = QueryEngine(os.path.join(root_dir, ".graphlint", "db.sqlite"), root_dir)
 
@@ -326,6 +331,8 @@ def _quick_changed_check(root_dir: str) -> bool:
 
 def _auto_build(root_dir: str, config: dict[str, Any]) -> bool:
     """Run auto build. Returns True on success. Builds from scratch if files changed."""
+    if not _quick_changed_check(root_dir):
+        return True
     db = None
     try:
         db = Database(root_dir)
