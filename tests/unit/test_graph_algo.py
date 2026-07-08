@@ -111,7 +111,7 @@ class TestFindConnectedComponents:
         node_id_map = {n.id: n for n in nodes}
         entries = [_make_entry(1), _make_entry(3)]
 
-        comp_map, comps = find_connected_components(
+        _, comps = find_connected_components(
             nodes, edges, node_id_map, entries,
         )
 
@@ -135,7 +135,7 @@ class TestFindConnectedComponents:
         node_id_map = {n.id: n for n in nodes}
         entries = [_make_entry(1)]
 
-        comp_map, comps = find_connected_components(
+        comp_map, _ = find_connected_components(
             nodes, edges, node_id_map, entries,
         )
 
@@ -151,7 +151,7 @@ class TestFindConnectedComponents:
         node_id_map = {n.id: n for n in nodes}
         entries = [_make_entry(1)]
 
-        comp_map, comps = find_connected_components(
+        comp_map, _ = find_connected_components(
             nodes, edges, node_id_map, entries,
         )
 
@@ -210,7 +210,7 @@ class TestFindConnectedComponents:
         node_id_map = {n.id: n for n in nodes}
         entries = [_make_entry(1)]
 
-        comp_map, comps = find_connected_components(
+        comp_map, _ = find_connected_components(
             nodes, edges, node_id_map, entries,
         )
 

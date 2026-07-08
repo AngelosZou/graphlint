@@ -360,9 +360,7 @@ class EntryPointDetector:
         if not has_test:
             return []
 
-        # File-level entry: all nodes in this file are reachable
-        # no_propagate: test entry points do not propagate reachability
-        # to non-test code called from tests
+        # File-level entry: all nodes reachable; test entries do not propagate.
         return [
             EntryInfo(
                 rule_name="pytest_test",

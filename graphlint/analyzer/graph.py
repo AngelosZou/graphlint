@@ -13,7 +13,6 @@ from graphlint.analyzer._graph_algo import (
     find_connected_components,
 )
 from graphlint.analyzer._types import ComponentInfo, EdgeInfo, NodeInfo, ParseResult
-from graphlint.analyzer.decorators import DecoratorResolver
 from graphlint.analyzer.entry_detect import EntryInfo, EntryPointDetector
 from graphlint.analyzer.warnings import (
     WarningCollector,
@@ -52,8 +51,23 @@ def _resolve_symbol(
     node_id_map: dict[int, NodeInfo],
     resolve_cache: Optional[dict] = None,
     scope_suffix_index: Optional[dict[tuple[str, str], list[int]]] = None,
+    class_scope: str = "",
 ) -> list[int]:
-    """Resolve a symbol by exact match first, then suffix match."""
+    """Resolve a symbol by exact match first, then suffix match.
+
+    Args:
+        qname: The symbol simple name to resolve (e.g. ``"field_name"``).
+        scope: Qualified name of the calling scope (e.g. ``"pkg.mod.MyClass.method"``).
+        symbol_index: Exact qualified-name lookup table.
+        suffix_index: Suffix-based lookup for partial matches.
+        node_id_map: Global node ID to NodeInfo mapping.
+        resolve_cache: Optional cache keyed by ``(qname, scope)``.
+        scope_suffix_index: Optional ``(scope, simple_name)`` lookup table.
+        class_scope: Fallback scope for class-level field resolution.
+
+    Returns:
+        List of node IDs matching the symbol. Empty list when no match is found.
+    """
     cache_key = (qname, scope)
     if resolve_cache is not None and cache_key in resolve_cache:
         cached = resolve_cache[cache_key]
@@ -65,10 +79,12 @@ def _resolve_symbol(
             resolve_cache[cache_key] = result if result else []
         return result
 
-    # Scope-qualified suffix lookup (O(1)) — fast path, avoids suffix scan
+    # Scope-qualified suffix lookup (O(1))
     if scope and scope_suffix_index:
         key = (scope, qname)
         r = scope_suffix_index.get(key)
+        if r is None and class_scope:
+            r = scope_suffix_index.get((class_scope, qname))
         if r is not None:
             if resolve_cache is not None:
                 resolve_cache[cache_key] = list(r)
@@ -84,8 +100,7 @@ def _resolve_symbol(
                 if node_id_map.get(i, NodeInfo()).qualified_name.startswith(scope)
             ]
             if scoped:
-                # When scope filters to only the caller itself, include
-                # all suffix candidates for cross-class call dispatch.
+                # Scoped result is only the caller itself; retain scoped match.
                 only_self = (
                     len(scoped) == 1
                     and node_id_map.get(scoped[0], NodeInfo()).qualified_name == scope
@@ -94,6 +109,9 @@ def _resolve_symbol(
                     if resolve_cache is not None:
                         resolve_cache[cache_key] = scoped
                     return scoped
+                if resolve_cache is not None:
+                    resolve_cache[cache_key] = scoped
+                return scoped
         if resolve_cache is not None:
             resolve_cache[cache_key] = result
         return result
@@ -121,7 +139,13 @@ def _build_file_edges_worker(
     resolve_cache: Optional[dict] = None,
     scope_suffix_index: Optional[dict[tuple[str, str], list[int]]] = None,
 ) -> list[EdgeInfo]:
-    """Build edges from structured references — no AST walk needed."""
+    """Build directed edges from pre-collected references (no AST re-walk).
+
+    For each reference in the parse result, resolves the target symbol
+    and creates a directed edge between the source and target nodes.
+    Module-level references from unregistered source nodes are assigned
+    to the module pseudo-node (id=0).
+    """
     module_qname = _file_to_module_qname(fp)
     edges: list[EdgeInfo] = []
     for ref in pr.references:
@@ -131,12 +155,19 @@ def _build_file_edges_worker(
                 source_id = 0
             else:
                 continue
-        scope = node_id_map.get(source_id, NodeInfo()).qualified_name if source_id else ""
+        source_node = node_id_map.get(source_id) if source_id else None
+        scope = source_node.qualified_name if source_node else ""
+        class_scope = ""
+        if source_node and source_node.parent_node_id:
+            parent = node_id_map.get(source_node.parent_node_id)
+            if parent:
+                class_scope = parent.qualified_name
         target_ids = _resolve_symbol(
             ref.target_name, scope,
             symbol_index, suffix_index, node_id_map,
             resolve_cache=resolve_cache,
             scope_suffix_index=scope_suffix_index,
+            class_scope=class_scope,
         )
         for tid in target_ids:
             if tid != source_id:
@@ -169,7 +200,6 @@ class GraphBuilder:
         self.warning_collector = warning_collector
         self.config = config or {}
         self.entry_detector = EntryPointDetector(self.config)
-        self.decorator_resolver = DecoratorResolver()
 
     def add_node(self, node: NodeInfo, preserve_id: bool = False) -> int:
         """Add a node and return its assigned ID."""
@@ -258,8 +288,7 @@ class GraphBuilder:
             for old_id, (qn, fp) in old_changed_node_ids.items():
                 qn_fp_to_old[(qn, fp)] = old_id
 
-        # Start new node IDs above the max preserved ID from unchanged files
-        # to prevent ID collisions when unique IDs collide with preserved DB IDs
+        # Start new node IDs above max preserved ID from unchanged files.
         max_preserved_id = 0
         for fp, pr in parse_results.items():
             if fp not in changed_files:
@@ -325,8 +354,7 @@ class GraphBuilder:
             changed_list, parse_results, fid_map, fnodes_map,
         )
 
-        # Add synthetic module-level edges to connect all top-level nodes
-        # through the module pseudo-node (id=0) for correct connectivity.
+        # Add synthetic module-level edges through the module pseudo-node (id=0).
         for fp in parse_results:
             _fid = fid_map.get(fp, 0)
             if _fid:
@@ -469,8 +497,7 @@ class GraphBuilder:
                     and self._node_id_map[nid].name != "_"
                     and nid not in special_method_nids
                 ]
-                # If every node in the component is either a public API
-                # dunder or a special method overload, skip entirely.
+                # Skip only-dunder components.
                 if not non_dunder_nids and not special_method_nids:
                     continue
                 # Warn about dead code for non-dunder nodes (classes, functions, etc.)
@@ -487,11 +514,8 @@ class GraphBuilder:
                             line=node.line_start,
                             node_id=nid,
                         )
-                # Warn about dead special method overloads ONLY when
-                # the component has no non-dunder nodes (e.g. a lone
-                # dunder with no parent class in this component).
-                # When a parent class is already flagged as dead code,
-                # its special methods are implicitly covered.
+                # Warn about isolated special methods when component has no
+                # non-dunder nodes.
                 if special_method_nids and not non_dunder_nids:
                     for nid in sorted(special_method_nids)[:2]:
                         node = self._node_id_map.get(nid)

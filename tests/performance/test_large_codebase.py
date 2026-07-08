@@ -76,7 +76,7 @@ class TestLargeCodebasePerformance:
         from graphlint.api import build
 
         build(root_dir=self.tmpdir, force_rebuild=True, parallel=4)
-        current, peak = tracemalloc.get_traced_memory()
+        _, peak = tracemalloc.get_traced_memory()
         tracemalloc.stop()
         peak_mb = peak / (1024 * 1024)
         assert peak_mb < 500, f"Peak memory {peak_mb:.1f}MB, exceeds 500MB limit"

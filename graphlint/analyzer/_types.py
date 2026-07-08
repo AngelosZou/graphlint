@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Shared types for graph construction — avoids circular imports."""
+"""Shared types for graph construction."""
 
 from __future__ import annotations
 
@@ -47,7 +47,7 @@ class ParseResult:
 
 @dataclass
 class ReferenceInfo:
-    """A structured reference collected during AST parse — replaces the second tree walk."""
+    """A structured reference collected during AST parse."""
 
     source_qname: str = ""
     target_name: str = ""

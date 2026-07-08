@@ -28,11 +28,9 @@ WARN_TYPE_VALUES: frozenset[str] = frozenset(
     }
 )
 
-# Keep in sync with params.py
 VALID_WARN_TYPES: frozenset[str] = WARN_TYPE_VALUES
 
-# Module-level dunder names that are semantically meaningful Python conventions
-# even when never explicitly read/written within the module's own code.
+# Module-level dunder names with well-defined Python semantics.
 _PUBLIC_API_DUNDERS: frozenset[str] = frozenset(
     {
         "__all__",
@@ -44,10 +42,7 @@ _PUBLIC_API_DUNDERS: frozenset[str] = frozenset(
     }
 )
 
-# Class special method names (Python data model / magic methods) whose
-# overload should be treated as belonging to the parent class even when
-# no explicit CALL path exists — they may be invoked implicitly by the
-# interpreter via syntactic constructs (with, str(), len(), etc.).
+# Special method names (Python data model) that may be invoked implicitly.
 _SPECIAL_METHOD_DUNDERS: frozenset[str] = frozenset(
     {
         # Object lifecycle

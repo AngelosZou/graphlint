@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.10] - 2026-07-09
+
+### Fixed
+- Assignment target context resolution now correctly distinguishes class fields
+  (`self.xxx` / `cls.xxx`), method-local variables, and module-level variables,
+  preventing misclassification of `self.x = y` inside methods as local variables
+- Class fields assigned across multiple methods (e.g. `__init__` + `set_x`) are
+  now deduplicated to a single node, eliminating duplicate field nodes
+
+### Changed
+- Attribute-write edges (`self.xxx = value`) now also emit a `read` edge on
+  the parent object (`self`), ensuring proper usage tracking of the containing
+  class instance
+
 ## [0.1.9] - 2026-07-08
 
 ### Fixed

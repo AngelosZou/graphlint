@@ -51,10 +51,12 @@ class ASTVisitor(ast.NodeVisitor):
         self.references: List[ReferenceInfo] = []
 
         self._context: List[str] = [module_qualified]
+        self._class_qualified: str = ""
         self._current_class_id: int = 0
         self._current_func_id: int = 0
         self._node_id: int = 1
         self._global_names: Set[str] = set()
+        self._field_qnames: Set[str] = set()
 
     # ------------------------------------------------------------------
     # Source qualified name at current position
@@ -137,7 +139,7 @@ class ASTVisitor(ast.NodeVisitor):
     # ------------------------------------------------------------------
 
     def visit_Call(self, node: ast.Call) -> None:
-        """Process a function call — add call edge, visit args/keywords."""
+        """Emit a call-edge reference and visit the call expression, args, and keywords."""
         sq = self._current_qname()
         cname = _call_name(node.func)
         if cname:
@@ -147,8 +149,7 @@ class ASTVisitor(ast.NodeVisitor):
                 edge_type="call",
                 line=node.lineno or 0,
             ))
-        if isinstance(node.func, ast.Attribute):
-            self.visit(node.func.value)
+        self.visit(node.func)
         for arg in node.args:
             self.visit(arg)
         for kw in node.keywords:
@@ -190,7 +191,9 @@ class ASTVisitor(ast.NodeVisitor):
         )
         class_node_id = self._add_node(class_node)
         prev_class_id = self._current_class_id
+        prev_class_qualified = self._class_qualified
         self._current_class_id = class_node_id
+        self._class_qualified = qualified
         self._context.append(node.name)
 
         for base in node.bases:
@@ -219,6 +222,7 @@ class ASTVisitor(ast.NodeVisitor):
             self.visit(item)
 
         self._context.pop()
+        self._class_qualified = prev_class_qualified
         self._current_class_id = prev_class_id
 
     # ------------------------------------------------------------------
@@ -297,7 +301,6 @@ class ASTVisitor(ast.NodeVisitor):
         prev_class_id = self._current_class_id
         prev_func_id = self._current_func_id
         prev_global_names = self._global_names
-        self._current_class_id = 0
         self._current_func_id = func_node_id
         self._global_names = set()
         self._context.append(node.name)
@@ -312,41 +315,55 @@ class ASTVisitor(ast.NodeVisitor):
     # Variable / field
     # ------------------------------------------------------------------
 
-    def visit_Assign(self, node: ast.Assign) -> None:
-        """Process assignment statements (module-level or class fields)."""
-        is_class_level = self._current_class_id != 0
-        is_func_level = not is_class_level and self._current_func_id != 0
-        node_type = "field" if is_class_level else "variable"
-        if is_class_level:
-            parent_id = self._current_class_id
-        elif is_func_level:
-            parent_id = self._current_func_id
-        else:
-            parent_id = 0
+    def _resolve_target_context(self, target: ast.expr) -> tuple[int, str]:
+        """Determine parent_id and node_type for an assignment target.
 
+        - ``self.xxx`` / ``cls.xxx`` targets inside a class → field of the class
+        - plain ``Name`` targets at class body level → field of the class
+        - plain ``Name`` targets inside a method → local variable of the method
+        - plain ``Name`` targets at module level → module variable
+        """
+        has_class = self._current_class_id != 0
+        has_func = self._current_func_id != 0
+
+        if isinstance(target, ast.Attribute) and has_class:
+            return self._current_class_id, "field"
+        if isinstance(target, ast.Name):
+            if has_class and not has_func:
+                return self._current_class_id, "field"
+            if has_func:
+                return self._current_func_id, "variable"
+            return 0, "variable"
+        if isinstance(target, (ast.Tuple, ast.List)):
+            for elt in target.elts:
+                if isinstance(elt, ast.Attribute) and has_class:
+                    return self._current_class_id, "field"
+            if has_class and not has_func:
+                return self._current_class_id, "field"
+            if has_func:
+                return self._current_func_id, "variable"
+            return 0, "variable"
+        return 0, "variable"
+
+    def visit_Assign(self, node: ast.Assign) -> None:
+        """Emit write references and extract variable/field nodes from targets."""
         sq = self._current_qname()
         for target in node.targets:
+            parent_id, node_type = self._resolve_target_context(target)
             if parent_id != 0:
                 self._add_write_ref(target, sq, node.lineno or 0)
             self._extract_target(target, node_type, parent_id, node)
+            self._visit_target_subexpr(target)
 
         self.visit(node.value)
 
     def visit_AnnAssign(self, node: ast.AnnAssign) -> None:
-        """Process annotated assignment statements."""
+        """Emit write references and extract annotated variable/field nodes."""
         if node.target is None:
             self.generic_visit(node)
             return
 
-        is_class_level = self._current_class_id != 0
-        is_func_level = not is_class_level and self._current_func_id != 0
-        node_type = "field" if is_class_level else "variable"
-        if is_class_level:
-            parent_id = self._current_class_id
-        elif is_func_level:
-            parent_id = self._current_func_id
-        else:
-            parent_id = 0
+        parent_id, node_type = self._resolve_target_context(node.target)
 
         type_ann = ""
         if node.annotation:
@@ -440,6 +457,12 @@ class ASTVisitor(ast.NodeVisitor):
                 edge_type="write",
                 line=node.lineno or 0,
             ))
+            self.references.append(ReferenceInfo(
+                source_qname=sq,
+                target_name=node.target.attr,
+                edge_type="read",
+                line=node.lineno or 0,
+            ))
             self.name_usages.add(node.target.attr)
             self.visit(node.target.value)
         self.visit(node.value)
@@ -481,6 +504,22 @@ class ASTVisitor(ast.NodeVisitor):
     # Target extraction helpers
     # ------------------------------------------------------------------
 
+    def _visit_target_subexpr(self, target: ast.expr) -> None:
+        """Visit sub-expressions in assignment targets to collect name usages."""
+        if isinstance(target, ast.Subscript):
+            self.visit(target.value)
+            if isinstance(target.slice, ast.expr):
+                self.visit(target.slice)
+            elif isinstance(target.slice, ast.Tuple):
+                for elt in target.slice.elts:
+                    if isinstance(elt, ast.expr):
+                        self.visit(elt)
+        elif isinstance(target, ast.Attribute):
+            self.visit(target.value)
+        elif isinstance(target, (ast.Tuple, ast.List)):
+            for elt in target.elts:
+                self._visit_target_subexpr(elt)
+
     def _extract_target(
         self,
         target: ast.expr,
@@ -508,7 +547,10 @@ class ASTVisitor(ast.NodeVisitor):
         elif isinstance(target, ast.Attribute):
             if isinstance(target.value, ast.Attribute):
                 return
-            qualified = ".".join(self._context + [target.attr])
+            if node_type == "field" and self._class_qualified:
+                qualified = self._class_qualified + "." + target.attr
+            else:
+                qualified = ".".join(self._context + [target.attr])
             self._add_node(
                 NodeInfo(
                     file_id=0,
@@ -554,7 +596,10 @@ class ASTVisitor(ast.NodeVisitor):
         elif isinstance(target, ast.Attribute):
             if isinstance(target.value, ast.Attribute):
                 return
-            qualified = ".".join(self._context + [target.attr])
+            if node_type == "field" and self._class_qualified:
+                qualified = self._class_qualified + "." + target.attr
+            else:
+                qualified = ".".join(self._context + [target.attr])
             self._add_node(
                 NodeInfo(
                     file_id=0,
@@ -574,7 +619,16 @@ class ASTVisitor(ast.NodeVisitor):
     # ------------------------------------------------------------------
 
     def _add_node(self, node: NodeInfo) -> int:
-        """Add a node and return its ID."""
+        """Add a node and return its ID.
+
+        Field nodes are deduplicated by qualified_name: when the same
+        class field is assigned in multiple methods, only the first
+        occurrence produces a node (subsequent occurrences are no-ops).
+        """
+        if node.node_type == "field" and node.qualified_name:
+            if node.qualified_name in self._field_qnames:
+                return 0
+            self._field_qnames.add(node.qualified_name)
         node_id = self._node_id
         self._node_id += 1
         node.id = node_id

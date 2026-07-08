@@ -58,7 +58,6 @@ class SourceParser:
                 )
             )
             return result
-        result.tree = tree
         module_q = self._file_to_module(rel_path)
         visitor = ASTVisitor(
             module_qualified=module_q,
@@ -127,7 +126,7 @@ class SourceParser:
         return path.replace("/", ".").replace("\\", ".")
 
 
-# Module-level worker function for ProcessPoolExecutor (must be picklable)
+# ProcessPoolExecutor worker (module-level for picklability).
 def _parse_file_worker(
     file_path: str, root_dir: str, config: dict[str, Any]
 ) -> ParseResult:

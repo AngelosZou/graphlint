@@ -82,19 +82,14 @@ def compute_entry_reachability(
                 reachable.add(target)
                 queue.append(target)
 
-        # Class reachability also propagates to all special methods
-        # (__init__, __enter__, __exit__, __str__, __len__, etc.)
-        # because they may be invoked implicitly by the interpreter
-        # (with / str() / len() / for / + / etc.) without an explicit
-        # CALL edge in the source code.
+        # Propagate class reachability to all special methods.
         if current in class_special_map:
             for sm_nid in class_special_map[current]:
                 if sm_nid not in reachable:
                     reachable.add(sm_nid)
                     queue.append(sm_nid)
 
-    # Test-file nodes are alive but their CALL edges do not propagate
-    # reachability to non-test code.
+    # Test-file nodes are alive but do not propagate reachability.
     reachable.update(noprop_ids)
 
     # Expand: variables/fields whose parent is reachable are alive
@@ -120,8 +115,7 @@ def _split_unreachable_by_call(
             call_adj.setdefault(edge.source_id, set()).add(edge.target_id)
             call_adj.setdefault(edge.target_id, set()).add(edge.source_id)
 
-    # Also include synthetic containment edges for special methods,
-    # so they stay in the same component as their parent class.
+    # Include synthetic containment edges for special methods.
     if node_id_map:
         for nid, ninfo in node_id_map.items():
             if (
@@ -186,9 +180,7 @@ def find_connected_components(
         adj.setdefault(edge.source_id, set()).add(edge.target_id)
         adj.setdefault(edge.target_id, set()).add(edge.source_id)
 
-    # Add synthetic containment edges for special method overloads so
-    # they share the same undirected component as their parent class
-    # and are never isolated as separate components.
+    # Add synthetic containment edges for special method overloads.
     if node_id_map:
         for nid, ninfo in node_id_map.items():
             if ninfo.name in _SPECIAL_METHOD_DUNDERS and ninfo.parent_node_id:
@@ -196,9 +188,7 @@ def find_connected_components(
                 adj.setdefault(nid, set()).add(parent)
                 adj.setdefault(parent, set()).add(nid)
 
-    # Connect public API dunders (__all__, __version__, etc.) to their
-    # file's first non-dunder node so they stay in the same component as
-    # other symbols from their module — they are module metadata, not dead code.
+    # Connect public API dunders to their file's first non-dunder node.
     if node_id_map:
         _fid_first: dict[int, int] = {}
         for _ninfo in node_id_map.values():
@@ -254,11 +244,8 @@ def find_connected_components(
         comp_reachable = {nid for nid in comp_nodes if nid in reachable}
         comp_unreachable = comp_nodes - comp_reachable
 
-        # BFS expansion: traverse all undirected edges from reachable seed set,
-        # picking up nodes connected via any edge type (read, call, write, etc.)
-        # Node 0 (module pseudo-node) is handled specially: we only expand from 0
-        # to nodes that have at least one read/call edge from 0 (indicating
-        # module-level usage), not nodes with only write edges (unused variables).
+        # BFS expansion from reachable seed set via undirected edges.
+        # Node 0 (module pseudo-node): only expand via read/call edges.
         seed = comp_reachable
         if noprop_ids:
             seed = seed - noprop_ids
@@ -286,8 +273,7 @@ def find_connected_components(
                         comp_unreachable.discard(sm_nid)
                         q.append(sm_nid)
 
-        # Nodes reachable from module pseudo-node (id=0) via read/call
-        # edges are alive only if they also have a non-synthetic edge.
+        # Nodes reachable from module pseudo-node (id=0) via read/call edges.
         has_real: set[int] = set()
         zero_src: defaultdict[int, int] = defaultdict(int)
         for e in edges:
@@ -309,9 +295,7 @@ def find_connected_components(
                     comp_reachable.add(e.source_id)
                     comp_unreachable.discard(e.source_id)
 
-        # Public API dunders (__all__, __version__, etc.) in an unreachable
-        # component that shares its file with a reachable component are merged
-        # into the reachable component — they are module metadata, not dead code.
+        # Merge public API dunders into reachable components from the same file.
         if comp_reachable and comp_unreachable and node_id_map:
             reachable_fids: set[int] = set()
             for _nid in comp_reachable:
@@ -347,7 +331,7 @@ def find_connected_components(
             component_map.update(sub_map)
             components.extend(sub_comps)
 
-    # Post-processing: merge dead code sub-components into connected live components
+    # Post-process: merge dead code sub-components into live components.
     x_edges: dict[int, set[int]] = {}
     for e in edges:
         if e.edge_type not in ("inherit", "decorate"):
