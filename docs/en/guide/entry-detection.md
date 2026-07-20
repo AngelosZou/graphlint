@@ -119,7 +119,7 @@ Detects Celery async task application entry points.
 
 Detects Python package entry points (`__init__.py` files).
 
-- **Match Pattern**: Filename is `__init__.py` (non-test packages)
+- **Match Pattern**: Filename is `__init__.py`
 - **Match Files**: `**/__init__.py`
 - **Example**:
   ```python
@@ -171,7 +171,9 @@ Detects Pytest test cases as entry points.
 
 Add custom entry detection rules via the `entry_rules` configuration.
 
-### Custom AST Patterns
+### Unified AST Patterns
+
+All rules (built-in and custom) use the same prefix syntax, supporting OR combinations with ` | `.
 
 | Prefix | Description | Example |
 |--------|-------------|---------|
@@ -180,6 +182,8 @@ Add custom entry detection rules via the `entry_rules` configuration.
 | `decorator:<name>` | Match a decorator by name | `"decorator:app.route"` |
 | `class_instantiation:<name>` | Match a class instantiation by name | `"class_instantiation:MyApp"` |
 | `file_match:<pattern>` | Match a filename pattern | `"file_match:**/startup.py"` |
+| `if_name_main` | Match `if __name__ == '__main__'` | `"if_name_main"` |
+| `test_file` | Match test files (uses `test_patterns` config) | `"test_file"` |
 
 ### Custom Rule Examples
 

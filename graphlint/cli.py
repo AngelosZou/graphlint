@@ -247,14 +247,12 @@ def _args_to_kwargs(args: argparse.Namespace, category: str) -> dict[str, Any]:
             kwargs["rule_name"] = args.name
         if hasattr(args, "exclude_pattern") and args.exclude_pattern:
             kwargs["exclude_pattern"] = args.exclude_pattern
-    for p in PARAM_DEFS:
-        if p.category == category and not p.cli_only:
-            # Skip config_action since it's passed via the action parameter
-            if p.name == "config_action":
-                continue
-            val = getattr(args, p.name, p.default)
-            if val is not None or p.type == ParamType.FLAG:
-                kwargs[p.name] = val
+    if category != "config":
+        for p in PARAM_DEFS:
+            if p.category == category and not p.cli_only:
+                val = getattr(args, p.name, p.default)
+                if val is not None or p.type == ParamType.FLAG:
+                    kwargs[p.name] = val
     # Always pass lang through to all commands
     lang_val = getattr(args, "lang", "system")
     if lang_val is not None:

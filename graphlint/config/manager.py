@@ -89,7 +89,7 @@ class ConfigManager:
 
     def add_entry_rule(self, rule: dict[str, Any]) -> None:
         """Add an entry rule."""
-        required = {"name", "file_pattern", "ast_pattern"}
+        required = {"name", "file_pattern"}
         if not required.issubset(rule.keys()):
             raise ValueError(
                 f"Entry rule must contain fields: {', '.join(sorted(required))}"

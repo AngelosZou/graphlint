@@ -119,7 +119,7 @@ graphlint 内置 10 种入口点检测规则，并支持自定义规则扩展。
 
 检测 Python 包入口点（`__init__.py` 文件）。
 
-- **匹配模式**：文件名为 `__init__.py` 的非测试包
+- **匹配模式**：文件名为 `__init__.py`
 - **匹配文件**：`**/__init__.py`
 - **示例**：
   ```python
@@ -171,7 +171,9 @@ graphlint 内置 10 种入口点检测规则，并支持自定义规则扩展。
 
 通过 `entry_rules` 配置添加自定义入口检测规则。
 
-### 自定义 AST 模式
+### 统一 AST 模式
+
+所有规则（内置和自定义）使用相同的前缀语法，支持 ` | ` 分隔的 OR 组合。
 
 | 前缀 | 说明 | 示例 |
 |------|------|------|
@@ -180,6 +182,8 @@ graphlint 内置 10 种入口点检测规则，并支持自定义规则扩展。
 | `decorator:<name>` | 匹配指定名称的装饰器 | `"decorator:app.route"` |
 | `class_instantiation:<name>` | 匹配指定名称的类实例化 | `"class_instantiation:MyApp"` |
 | `file_match:<pattern>` | 匹配文件名模式 | `"file_match:**/startup.py"` |
+| `if_name_main` | 匹配 `if __name__ == '__main__'` | `"if_name_main"` |
+| `test_file` | 匹配测试文件（使用 `test_patterns` 配置） | `"test_file"` |
 
 ### 自定义规则示例
 

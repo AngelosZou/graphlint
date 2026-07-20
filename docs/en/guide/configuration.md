@@ -7,16 +7,16 @@ graphlint's configuration file is located at `.graphlint/config.json` in the pro
 ```json
 {
   "entry_rules": [
-    {"name": "python_main",      "ast_pattern": "if __name__ == '__main__'",        "file_pattern": "**/*.py",         "enabled": true},
-    {"name": "python_package",   "ast_pattern": "file-level: all module-level nodes",  "file_pattern": "**/__init__.py","enabled": true},
-    {"name": "fastapi_app",      "ast_pattern": "FastAPI instantiation OR uvicorn.run call", "file_pattern": "**/*.py", "enabled": true},
-    {"name": "flask_app",        "ast_pattern": "Flask instantiation OR app.run call", "file_pattern": "**/*.py",      "enabled": true},
-    {"name": "django_manage",    "ast_pattern": "execute_from_command_line call",    "file_pattern": "**/manage.py",    "enabled": true},
-    {"name": "click_command",    "ast_pattern": "click.command or click.group decorator", "file_pattern": "**/*.py",  "enabled": true},
-    {"name": "typer_app",        "ast_pattern": "typer.Typer instantiation",         "file_pattern": "**/*.py",         "enabled": true},
-    {"name": "celery_app",       "ast_pattern": "celery.Celery instantiation",       "file_pattern": "**/*.py",         "enabled": true},
-    {"name": "pytest_plugin",    "ast_pattern": "pytest_addoption or pytest.fixture", "file_pattern": "**/conftest.py", "enabled": true},
-    {"name": "pytest_test",      "ast_pattern": "test_* functions / Test* classes in test files", "file_pattern": "**/*.py", "enabled": true}
+    {"name": "python_main",      "ast_pattern": "if_name_main",                      "file_pattern": "**/*.py",         "enabled": true},
+    {"name": "python_package",   "ast_pattern": "file_match:**/__init__.py",         "file_pattern": "**/__init__.py",  "enabled": true},
+    {"name": "fastapi_app",      "ast_pattern": "class_instantiation:FastAPI | function_call:uvicorn.run", "file_pattern": "**/*.py", "enabled": true},
+    {"name": "flask_app",        "ast_pattern": "class_instantiation:Flask | class_instantiation:flask.Flask | function_call:*.run", "file_pattern": "**/*.py", "enabled": true},
+    {"name": "django_manage",    "ast_pattern": "function_call:execute_from_command_line", "file_pattern": "**/manage.py", "enabled": true},
+    {"name": "click_command",    "ast_pattern": "decorator:click.command | decorator:click.group", "file_pattern": "**/*.py", "enabled": true},
+    {"name": "typer_app",        "ast_pattern": "class_instantiation:typer.Typer | decorator:*.command", "file_pattern": "**/*.py", "enabled": true},
+    {"name": "celery_app",       "ast_pattern": "class_instantiation:Celery | class_instantiation:celery.Celery", "file_pattern": "**/*.py", "enabled": true},
+    {"name": "pytest_plugin",    "ast_pattern": "function_def:pytest_addoption | decorator:pytest.fixture", "file_pattern": "**/conftest.py", "enabled": true},
+    {"name": "pytest_test",      "ast_pattern": "test_file",                         "file_pattern": "**/*.py",         "enabled": true, "no_propagate": true}
   ],
   "exclude_patterns": {
     "always_exclude": ["__pycache__/", ".mypy_cache/", ".pytest_cache/", ".tox/", ".venv/", "venv/", "env/", "virtualenv/", ".env/", "node_modules/", ".git/", ".svn/", ".hg/", ".idea/", ".vscode/", ".vs/", ".graphlint/", "build/", "dist/", "*.egg-info/", "*.pyc", "*.pyo"],
@@ -52,22 +52,25 @@ Defines how code entry points are auto-detected. Each rule contains:
 | Field | Type | Description |
 |-------|------|-------------|
 | `name` | `string` | Unique rule name |
-| `ast_pattern` | `string` | AST match pattern (descriptive text for built-in rules, prefix-based for custom rules) |
+| `ast_pattern` | `string` | AST match pattern (unified prefix syntax for all rules) |
 | `file_pattern` | `string` | Glob pattern to match filenames |
 | `description` | `string` | Rule description (optional) |
 | `enabled` | `boolean` | Whether the rule is enabled |
+| `no_propagate` | `boolean` | Entry does not propagate reachability (default `false`, e.g. pytest test rules set to `true`) |
 
-#### Custom AST Pattern Prefixes
+#### AST Pattern Prefixes
 
-Custom rules support the following prefix patterns:
+All rules use the same prefix pattern syntax, supporting OR combinations with ` | `:
 
 | Prefix | Match Target | Example |
 |--------|-------------|---------|
 | `function_call:` | Function call | `"function_call:my_entry"` |
-| `function_def:` | Function name match (supports glob) | `"function_def:run_*"` |
+| `function_def:` | Function definition name (supports glob) | `"function_def:run_*"` |
 | `decorator:` | Decorator | `"decorator:app.route"` |
 | `class_instantiation:` | Class instantiation | `"class_instantiation:MyApp"` |
 | `file_match:` | Filename match | `"file_match:**/main.py"` |
+| `if_name_main` | `if __name__ == '__main__'` check | `"if_name_main"` |
+| `test_file` | Test file detection (uses `test_patterns` config) | `"test_file"` |
 
 ### exclude_patterns — Exclude Patterns
 

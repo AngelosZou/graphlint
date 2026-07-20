@@ -2,6 +2,31 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.11] - 2026-07-21
+
+### Changed
+- Entry point detection now uses a unified pattern-driven architecture — all
+  rules (built-in and custom) share the same `_detect_custom` code path
+- Built-in detectors replaced with declarative `ast_pattern` expressions using
+  the existing prefix syntax (`function_call:`, `decorator:`, `if_name_main`,
+  `file_match:`, `test_file`)
+- `ast_pattern` supports OR combinations with ` | ` separator (e.g.
+  `class_instantiation:FastAPI | function_call:uvicorn.run`)
+- `ast_pattern` field is no longer required for entry rules — rules without
+  it are silently skipped instead of failing validation
+- Decorator matching uses `fnmatch` instead of substring `in`, providing
+  precise glob matching and eliminating false positives from partial name
+  overlaps
+- `function_call:` and `class_instantiation:` patterns now support `fnmatch`
+  globs (was exact match only)
+
+### Fixed
+- `file_match:` pattern now correctly checks the file path at rule level
+  instead of a non-existent `node.filename` attribute, fixing the bug where
+  `file_match:` rules never matched
+- `graphlint config copy-from` no longer picks up irrelevant query/analyzer
+  parameters, fixing the config copy command exception
+
 ## [0.1.10] - 2026-07-09
 
 ### Fixed

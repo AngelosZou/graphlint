@@ -7,16 +7,16 @@ graphlint 的配置文件位于项目根目录的 `.graphlint/config.json`，使
 ```json
 {
   "entry_rules": [
-    {"name": "python_main",      "ast_pattern": "if __name__ == '__main__'",        "file_pattern": "**/*.py",         "enabled": true},
-    {"name": "python_package",   "ast_pattern": "file-level: all module-level nodes",  "file_pattern": "**/__init__.py","enabled": true},
-    {"name": "fastapi_app",      "ast_pattern": "FastAPI instantiation OR uvicorn.run call", "file_pattern": "**/*.py", "enabled": true},
-    {"name": "flask_app",        "ast_pattern": "Flask instantiation OR app.run call", "file_pattern": "**/*.py",      "enabled": true},
-    {"name": "django_manage",    "ast_pattern": "execute_from_command_line call",    "file_pattern": "**/manage.py",    "enabled": true},
-    {"name": "click_command",    "ast_pattern": "click.command or click.group decorator", "file_pattern": "**/*.py",  "enabled": true},
-    {"name": "typer_app",        "ast_pattern": "typer.Typer instantiation",         "file_pattern": "**/*.py",         "enabled": true},
-    {"name": "celery_app",       "ast_pattern": "celery.Celery instantiation",       "file_pattern": "**/*.py",         "enabled": true},
-    {"name": "pytest_plugin",    "ast_pattern": "pytest_addoption or pytest.fixture", "file_pattern": "**/conftest.py", "enabled": true},
-    {"name": "pytest_test",      "ast_pattern": "test_* functions / Test* classes in test files", "file_pattern": "**/*.py", "enabled": true}
+    {"name": "python_main",      "ast_pattern": "if_name_main",                      "file_pattern": "**/*.py",         "enabled": true},
+    {"name": "python_package",   "ast_pattern": "file_match:**/__init__.py",         "file_pattern": "**/__init__.py",  "enabled": true},
+    {"name": "fastapi_app",      "ast_pattern": "class_instantiation:FastAPI | function_call:uvicorn.run", "file_pattern": "**/*.py", "enabled": true},
+    {"name": "flask_app",        "ast_pattern": "class_instantiation:Flask | class_instantiation:flask.Flask | function_call:*.run", "file_pattern": "**/*.py", "enabled": true},
+    {"name": "django_manage",    "ast_pattern": "function_call:execute_from_command_line", "file_pattern": "**/manage.py", "enabled": true},
+    {"name": "click_command",    "ast_pattern": "decorator:click.command | decorator:click.group", "file_pattern": "**/*.py", "enabled": true},
+    {"name": "typer_app",        "ast_pattern": "class_instantiation:typer.Typer | decorator:*.command", "file_pattern": "**/*.py", "enabled": true},
+    {"name": "celery_app",       "ast_pattern": "class_instantiation:Celery | class_instantiation:celery.Celery", "file_pattern": "**/*.py", "enabled": true},
+    {"name": "pytest_plugin",    "ast_pattern": "function_def:pytest_addoption | decorator:pytest.fixture", "file_pattern": "**/conftest.py", "enabled": true},
+    {"name": "pytest_test",      "ast_pattern": "test_file",                         "file_pattern": "**/*.py",         "enabled": true, "no_propagate": true}
   ],
   "exclude_patterns": {
     "always_exclude": ["__pycache__/", ".mypy_cache/", ".pytest_cache/", ".tox/", ".venv/", "venv/", "env/", "virtualenv/", ".env/", "node_modules/", ".git/", ".svn/", ".hg/", ".idea/", ".vscode/", ".vs/", ".graphlint/", "build/", "dist/", "*.egg-info/", "*.pyc", "*.pyo"],
@@ -52,22 +52,25 @@ graphlint 的配置文件位于项目根目录的 `.graphlint/config.json`，使
 | 字段 | 类型 | 说明 |
 |------|------|------|
 | `name` | `string` | 规则唯一名称 |
-| `ast_pattern` | `string` | AST 匹配模式（内置规则使用描述文本，自定义规则使用前缀模式） |
+| `ast_pattern` | `string` | AST 匹配模式（使用统一前缀语法，内置规则与自定义规则一致） |
 | `file_pattern` | `string` | 匹配文件名的 glob 模式 |
 | `description` | `string` | 规则描述（可选） |
 | `enabled` | `boolean` | 是否启用 |
+| `no_propagate` | `boolean` | 入口点不传播可达性（默认 `false`，如 pytest 测试规则设为 `true`） |
 
-#### 自定义 AST 模式前缀
+#### AST 模式前缀
 
-自定义规则支持以下前缀模式：
+所有规则使用统一的前缀模式语法，支持 ` | ` 分隔的 OR 组合：
 
 | 前缀 | 匹配目标 | 示例 |
 |------|----------|------|
 | `function_call:` | 函数调用 | `"function_call:my_entry"` |
-| `function_def:` | 函数名匹配（支持 glob） | `"function_def:run_*"` |
+| `function_def:` | 函数定义名（支持 glob） | `"function_def:run_*"` |
 | `decorator:` | 装饰器 | `"decorator:app.route"` |
 | `class_instantiation:` | 类实例化 | `"class_instantiation:MyApp"` |
 | `file_match:` | 文件名匹配 | `"file_match:**/main.py"` |
+| `if_name_main` | `if __name__ == '__main__'` 检测 | `"if_name_main"` |
+| `test_file` | 测试文件检测（使用 `test_patterns` 配置） | `"test_file"` |
 
 ### exclude_patterns — 排除模式
 
