@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.12] - 2026-07-21
+
+### Added
+- `query --fail-on <warn-types>` option: returns exit code `2` when matching
+  warning types are found in query results, enabling CI pipeline integration
+- `graphlint config` subcommands now return exit code `1` on error (previously
+  always returned `0`)
+
 ## [0.1.11] - 2026-07-21
 
 ### Changed

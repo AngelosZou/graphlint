@@ -59,6 +59,9 @@ graphlint query --json
 # 查看指定图详情
 graphlint query -g 1 --detail full
 
+# 检测到死代码或循环引用时返回非零退出码（用于 CI）
+graphlint query --json --fail-on dead_code,circular_ref
+
 # 重建索引
 graphlint build --force
 
@@ -66,6 +69,16 @@ graphlint build --force
 graphlint config show
 graphlint config set --key lang --value zh_CN
 ```
+
+### 退出码
+
+| 码 | 含义 |
+|------|---------|
+| `0` | 成功 — 未匹配到 `--fail-on` 指定的警告 |
+| `1` | 错误 — 参数无效、异常或配置错误 |
+| `2` | 发现警告 — `--fail-on` 匹配到指定警告类型 |
+
+使用 `--fail-on`（逗号分隔的警告类型列表）可使 `graphlint query` 在匹配到指定警告时返回退出码 `2`。这样即可在 CI pipeline 中集成死代码检测，而不会被非关键警告误拦。
 
 ### Python API
 

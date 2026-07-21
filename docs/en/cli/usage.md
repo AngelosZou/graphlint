@@ -45,6 +45,7 @@ graphlint query -j                 # JSON format output
 | `--file-limit` | — | int | `10` | Max files shown in graph detail (0=unlimited) |
 | `--node-limit` | — | int | `30` | Max nodes shown in graph detail (0=unlimited) |
 | `--no-scan` | — | flag | `false` | Skip auto-scan/build, query existing index only |
+| `--fail-on` | — | string | — | Exit non-zero if matching warning types found (comma-separated) |
 
 ### Examples
 
@@ -60,6 +61,26 @@ graphlint query -w "circular_ref"
 
 # No auto-scan mode (for read-only queries)
 graphlint query --no-scan
+
+# Fail with exit code 2 when dead code or circular refs found
+graphlint query --json --fail-on dead_code,circular_ref
+```
+
+### Exit Codes
+
+The `query` subcommand returns the following exit codes:
+
+| Code | Meaning |
+|------|---------|
+| `0` | Success — no warnings matched `--fail-on` |
+| `1` | Error — invalid parameters, exception, or config error |
+| `2` | Warnings found — `--fail-on` matched specified warning types |
+
+Use `--fail-on` with a comma-separated list of warning types to fail the command when matching warnings exist. This enables CI pipeline integration:
+
+```bash
+# CI pipeline: fail if dead code or circular refs found
+graphlint query --json --fail-on dead_code,circular_ref || exit 1
 ```
 
 ## install — Install Agent Prompt (Global)

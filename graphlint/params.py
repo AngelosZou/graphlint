@@ -237,6 +237,16 @@ PARAM_DEFS: List[ParamDef] = [
         help_key="help.param.no_scan",
         category="query",
     ),
+    ParamDef(
+        name="fail_on",
+        cli_flags=["--fail-on"],
+        type=ParamType.STR,
+        default=None,
+        help="Exit non-zero if matching warning types found (comma-separated)",
+        help_key="help.param.fail_on",
+        category="query",
+        cli_only=True,
+    ),
     # -------- Build parameters --------
     ParamDef(
         name="force_rebuild",

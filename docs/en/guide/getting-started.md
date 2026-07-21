@@ -62,6 +62,9 @@ graphlint query --sort-by nodes
 
 # Filter by warning types
 graphlint query --warn-types "circular_ref,unused_import"
+
+# CI pipeline: exit non-zero when dead code found
+graphlint query --json --fail-on dead_code,circular_ref
 ```
 
 ### Build / Rebuild Index

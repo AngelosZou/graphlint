@@ -62,6 +62,9 @@ graphlint query --sort-by nodes
 
 # 过滤警告类型
 graphlint query --warn-types "circular_ref,unused_import"
+
+# CI pipeline：检测到死代码时返回非零退出码
+graphlint query --json --fail-on dead_code,circular_ref
 ```
 
 ### 构建/重建索引

@@ -45,6 +45,7 @@ graphlint query -j                 # JSON 格式输出
 | `--file-limit` | — | 整数 | `10` | 单图详情最大显示的文件数（0=不限制） |
 | `--node-limit` | — | 整数 | `30` | 单图详情最大显示的节点数（0=不限制） |
 | `--no-scan` | — | 标志 | `false` | 跳过自动扫描/构建，直接查询已有索引 |
+| `--fail-on` | — | 字符串 | — | 若匹配到指定警告类型则返回非零退出码（逗号分隔） |
 
 ### 示例
 
@@ -60,6 +61,26 @@ graphlint query -w "circular_ref"
 
 # 无自动扫描模式（适用于只读查询）
 graphlint query --no-scan
+
+# 检测到死代码或循环引用时返回退出码 2
+graphlint query --json --fail-on dead_code,circular_ref
+```
+
+### 退出码
+
+`query` 子命令返回以下退出码：
+
+| 码 | 含义 |
+|------|---------|
+| `0` | 成功 — 未匹配到 `--fail-on` 指定的警告 |
+| `1` | 错误 — 参数无效、异常或配置错误 |
+| `2` | 发现警告 — `--fail-on` 匹配到指定警告类型 |
+
+使用 `--fail-on`（逗号分隔的警告类型列表）可在匹配到警告时使命令失败。这支持在 CI pipeline 中集成：
+
+```bash
+# CI pipeline：检测到死代码或循环引用时失败
+graphlint query --json --fail-on dead_code,circular_ref || exit 1
 ```
 
 ## install — 安装 Agent 提示词（全局）

@@ -59,6 +59,9 @@ graphlint query --json
 # View a specific graph detail
 graphlint query -g 1 --detail full
 
+# Exit non-zero when dead code or circular refs found (for CI)
+graphlint query --json --fail-on dead_code,circular_ref
+
 # Rebuild index
 graphlint build --force
 
@@ -66,6 +69,16 @@ graphlint build --force
 graphlint config show
 graphlint config set --key lang --value en
 ```
+
+### Exit Codes
+
+| Code | Meaning |
+|------|---------|
+| `0` | Success — no warnings matched `--fail-on` |
+| `1` | Error — invalid parameters, exception, or config error |
+| `2` | Warnings found — `--fail-on` matched specified warning types |
+
+Use `--fail-on` with a comma-separated list of warning types to make `graphlint query` return exit code `2` when matching warnings are found. This enables CI pipeline integration without blocking on non-critical warnings.
 
 ### Python API
 

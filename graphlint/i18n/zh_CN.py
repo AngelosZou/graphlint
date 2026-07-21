@@ -85,6 +85,7 @@ STRINGS: dict[str, str] = {
     "help.param.file_limit": "单图详情最大显示的文件数（0=不限制）",
     "help.param.node_limit": "单图详情最大显示的节点数（0=不限制）",
     "help.param.no_scan": "仅从已有索引查询，不自动扫描/构建",
+    "help.param.fail_on": "若查询结果包含匹配的警告类型则返回非零退出码（逗号分隔）",
     "help.param.force_rebuild": "强制全量重建索引（忽略增量）",
     "help.param.parallel": "并行 worker 数（0=自动检测 CPU 核心数，最大 64）",
     "help.param.config_action": "配置操作",

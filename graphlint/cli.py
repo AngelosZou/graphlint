@@ -147,11 +147,17 @@ def main() -> int:
 
     try:
         if command == "query":
-            result = _run_query(args)
-        elif command == "build":
-            result = _run_build(args)
+            result, exit_code = _run_query(args)
+            _print_result(result)
+            return exit_code
         elif command == "config":
             result = _run_config(args)
+            _print_result(result)
+            if isinstance(result, dict) and result.get("status") == "error":
+                return 1
+            return 0
+        elif command == "build":
+            result = _run_build(args)
         elif command == "install":
             result = _run_install(i18n)
         elif command == "uninstall":
@@ -162,15 +168,43 @@ def main() -> int:
             parser.print_help()
             return 1
 
-        if isinstance(result, dict):
-            print(json.dumps(result, indent=2, ensure_ascii=False))
-        else:
-            print(result)
+        _print_result(result)
         return 0
 
     except Exception as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return 1
+
+
+def _print_result(result: Any) -> None:
+    """Print result to stdout."""
+    if isinstance(result, dict):
+        print(json.dumps(result, indent=2, ensure_ascii=False))
+    else:
+        print(result)
+
+
+def _check_json_warnings(json_result: Any, fail_types: set[str]) -> bool:
+    """Check if JSON query result contains any warnings matching fail_types."""
+    if not isinstance(json_result, dict):
+        return False
+    # List mode: check warnings_summary
+    result_data = json_result.get("result", {})
+    warnings_summary = result_data.get("warnings_summary", {})
+    for ft in fail_types:
+        if warnings_summary.get(ft, 0) > 0:
+            return True
+    # Per-graph is_dead_code flag (separate from warnings_summary entries)
+    if "dead_code" in fail_types:
+        for g in result_data.get("graphs", []):
+            if isinstance(g, dict) and g.get("is_dead_code"):
+                return True
+    # Detail mode (--graph-id): check graph.warnings
+    graph = json_result.get("graph", {})
+    for w in graph.get("warnings", []):
+        if isinstance(w, dict) and w.get("warn_type", "") in fail_types:
+            return True
+    return False
 
 
 def _run_install(i18n: I18nManager) -> str:
@@ -200,12 +234,29 @@ def _run_uninstall(i18n: I18nManager) -> str:
     return uninstall_tools(_t=i18n.t)
 
 
-def _run_query(args: argparse.Namespace) -> Any:
-    """Execute the query command."""
-    from graphlint.api import query
+def _run_query(args: argparse.Namespace) -> tuple[Any, int]:
+    """Execute the query command. Returns (output, exit_code)."""
+    from graphlint.api import query as api_query
 
     kwargs = _args_to_kwargs(args, "query")
-    return query(**kwargs)
+    fail_on_str: str | None = getattr(args, "fail_on", None)
+
+    if not fail_on_str:
+        return api_query(**kwargs), 0
+
+    fail_types = set(w.strip() for w in fail_on_str.split(",") if w.strip())
+    if not fail_types:
+        return api_query(**kwargs), 0
+
+    json_kwargs = {**kwargs, "json_output": True}
+    json_result = api_query(**json_kwargs)
+    exit_code = 2 if _check_json_warnings(json_result, fail_types) else 0
+
+    if kwargs.get("json_output"):
+        return json_result, exit_code
+    else:
+        text_result = api_query(**kwargs)
+        return text_result, exit_code
 
 
 def _run_build(args: argparse.Namespace) -> Any:
