@@ -1,6 +1,6 @@
 # 入口点检测参考
 
-graphlint 内置 10 种入口点检测规则，并支持自定义规则扩展。
+graphlint 内置 10 种入口点检测规则，并支持自定义规则扩展。首次运行 `graphlint build` 时，这些规则作为模板写入 `.graphlint/config.json` 中，此后配置文件即为唯一入口规则来源——你可以通过 `graphlint config` 命令或直接编辑配置文件来添加、删除或修改规则。
 
 ## 内置规则
 

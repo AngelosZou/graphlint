@@ -7,7 +7,7 @@ import tempfile
 import pytest
 
 from graphlint.analyzer._types import ParseResult
-from graphlint.analyzer.parser import SourceParser
+from graphlint.analyzer.language.python.parser import SourceParser
 
 
 def _make_file(tmpdir, rel_path, content):

@@ -11,6 +11,8 @@ from typing import Any, Optional, Union
 import sys
 import traceback
 
+from graphlint.analyzer.language.python import PythonAdapter
+from graphlint.analyzer.language.registry import LanguageRegistry
 from graphlint.analyzer.warnings import WarningCollector
 from graphlint.config.manager import ConfigManager
 from graphlint.exceptions import InvalidParamError, InvalidPathError
@@ -21,6 +23,18 @@ from graphlint.query.engine import QueryEngine, QueryFilters
 from graphlint.query.formatter import TextFormatter
 from graphlint.query.volume import VolumeStrategy
 from graphlint.storage.db import Database
+
+# ---------------------------------------------------------------------------
+# Language registry
+# ---------------------------------------------------------------------------
+
+
+def _build_registry() -> LanguageRegistry:
+    """Build the default language registry with all built-in adapters."""
+    registry = LanguageRegistry()
+    registry.register(PythonAdapter())
+    return registry
+
 
 # ---------------------------------------------------------------------------
 # query
@@ -58,6 +72,7 @@ def query(
     wt_list = _parse_warn_types(warn_types)
     cm = ConfigManager(root_dir)
     config = cm.load()
+    registry = _build_registry()
     i18n = I18nManager(lang if lang != "system" else config.get("lang", "system"))
     formatter = TextFormatter(i18n, path_format, root_dir)
 
@@ -65,7 +80,7 @@ def query(
 
     # Auto incremental build (filesystem scan only if unchanged)
     if not no_scan:
-        if not _auto_build(root_dir, config):
+        if not _auto_build(root_dir, config, registry):
             print(
                 "[graphlint] Warning: index may be stale. "
                 "Run 'graphlint build --force' to rebuild.",
@@ -140,12 +155,14 @@ def build(
     if parallel > 64:
         parallel = 64
 
-    _ = ConfigManager(root_dir).load()
+    cm = ConfigManager(root_dir)
+    cm.load()
+    registry = _build_registry()
     db = Database(root_dir)
     wc = WarningCollector()
 
     try:
-        indexer = IncrementalIndexer(root_dir, db, parallel)
+        indexer = IncrementalIndexer(root_dir, db, parallel, registry=registry)
         result = indexer.run(force_rebuild=force_rebuild, warning_collector=wc)
         return {
             "status": "ok",
@@ -276,12 +293,10 @@ def _parse_warn_types(warn_types: Optional[str]) -> Optional[list[str]]:
     return items
 
 
-def _scan_current(root_dir: str) -> tuple[bool, dict[str, int]]:
-    """Scan .py files and detect changes against the last saved stamp.
-
-    Returns (changed, current_files) where current_files maps
-    each .py file's relative path to its mtime_ns.
-    """
+def _scan_current(root_dir: str, registry: LanguageRegistry | None = None) -> tuple[bool, dict[str, int]]:
+    """Detect file changes against the last saved scan stamp."""
+    if registry is None:
+        registry = _build_registry()
     stamp_file = os.path.join(root_dir, ".graphlint", ".last_scan_stamp")
     stamp_ok = True
     try:
@@ -292,45 +307,28 @@ def _scan_current(root_dir: str) -> tuple[bool, dict[str, int]]:
         stamp_ok = False
     saved_files = saved.get("files", {})
 
-    exclude = {
-        "__pycache__", ".mypy_cache", ".pytest_cache", ".tox",
-        ".venv", "venv", "env", "virtualenv", ".env",
-        "node_modules", ".git", ".svn", ".hg", ".idea",
-        ".vscode", ".vs", ".graphlint", "build", "dist",
-    }
-    current_files = {}
-    changed = False
-    for dp, dns, fns in os.walk(root_dir, topdown=True, followlinks=False):
-        dns[:] = [d for d in dns if d not in exclude
-                  and not d.endswith(".egg-info") and not d.startswith(".")]
-        for fn in fns:
-            if fn.endswith(".py") and not fn.endswith((".pyc", ".pyo")) and not fn.startswith("."):
-                rel = os.path.relpath(os.path.join(dp, fn), root_dir).replace(os.sep, "/")
-                try:
-                    mtime = os.stat(os.path.join(dp, fn)).st_mtime_ns
-                except OSError:
-                    changed = True
-                    continue
-                current_files[rel] = mtime
-                saved_mtime = saved_files.get(rel)
-                if saved_mtime is None or saved_mtime != mtime:
-                    changed = True
+    scanned = registry.scan_files(root_dir)
+    current_files = {rel: mtime for rel, mtime in scanned}
 
-    # Detect file deletions
+    changed = not stamp_ok
+    for rel, mtime in current_files.items():
+        saved_mtime = saved_files.get(rel)
+        if saved_mtime is None or saved_mtime != mtime:
+            changed = True
+
     for path in saved_files:
         if path not in current_files:
             changed = True
             break
 
-    if not stamp_ok:
-        changed = True
-
     return changed, current_files
 
 
-def _auto_build(root_dir: str, config: dict[str, Any]) -> bool:
-    """Run auto build. Returns True on success. Builds from scratch if files changed."""
-    changed, current_files = _scan_current(root_dir)
+def _auto_build(root_dir: str, config: dict[str, Any], registry: LanguageRegistry | None = None) -> bool:
+    """Run auto build. Returns True on success."""
+    if registry is None:
+        registry = _build_registry()
+    changed, current_files = _scan_current(root_dir, registry)
     if not changed:
         return True
     db = None
@@ -338,8 +336,8 @@ def _auto_build(root_dir: str, config: dict[str, Any]) -> bool:
         db = Database(root_dir)
         wc = WarningCollector()
         parallel = config.get("performance", {}).get("parallel_workers", 0)
-        indexer = IncrementalIndexer(root_dir, db, parallel)
-        indexer.run(force_rebuild=False, warning_collector=wc, pre_scanned_files=current_files)
+        indexer = IncrementalIndexer(root_dir, db, parallel, registry=registry)
+        indexer.run(force_rebuild=True, warning_collector=wc, pre_scanned_files=current_files)
         return True
     except Exception as exc:
         msg = str(exc)
@@ -357,7 +355,7 @@ def _auto_build(root_dir: str, config: dict[str, Any]) -> bool:
                         pass
                 db2 = Database(root_dir)
                 wc2 = WarningCollector()
-                indexer2 = IncrementalIndexer(root_dir, db2, parallel)
+                indexer2 = IncrementalIndexer(root_dir, db2, parallel, registry=registry)
                 indexer2.run(force_rebuild=True, warning_collector=wc2)
                 return True
             except Exception as exc2:

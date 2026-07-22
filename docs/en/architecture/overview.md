@@ -26,14 +26,14 @@ graphlint uses a layered modular architecture with clear responsibilities and de
 ├───────┴─────────────┴─────────────────┴──────────┤
 │               Analysis Engine Layer                 │
 │  ┌─────────┐ ┌────────┐ ┌─────────┐ ┌─────────┐ │
-│  │Source   │ │Graph   │ │EntryPt  │ │Warning  │ │
-│  │Parser   │ │Builder │ │Detector │ │Collector│ │
+│  │Language │ │Graph   │ │EntryPt  │ │Warning  │ │
+│  │Registry │ │Builder │ │Detector │ │Collector│ │
 │  └────┬────┘ └───┬────┘ └────┬────┘ └────┬────┘ │
 │       │          │            │            │      │
-│  ┌────┴────┐ ┌───┴────┐ ┌────┴────┐       │      │
-│  │ AST     │ │ Graph  │ │Import   │       │      │
-│  │Visitor  │ │ Algo   │ │Analyzer │       │      │
-│  └─────────┘ └────────┘ └─────────┘       │      │
+│  ┌────┴─────────┐ ┌───┴────┐      │       │      │
+│  │Language      │ │ Graph  │      │       │      │
+│  │Adapter (multi)│ │ Algo   │      │       │      │
+│  └──────────────┘ └────────┘      │       │      │
 ├────────────────────────────────────────────┴─────┤
 │               Storage / Persistence Layer           │
 │  ┌──────────┐  ┌──────────┐  ┌───────────────┐   │
@@ -76,20 +76,24 @@ Command-line interface built on `argparse`:
 
 ### 4. Analysis Engine Layer
 
-- **`SourceParser`** (`graphlint/analyzer/parser.py`) — Recursively scans directories, performs AST parsing on each `.py` file
+- **`LanguageRegistry`** (`graphlint/analyzer/language/registry.py`) — Language adapter registry, routes files to backends by extension, laying the foundation for future multi-language support
+- **`LanguageAdapter`** (`graphlint/analyzer/language/base.py`) — Abstract base class for language backends, defining unified interfaces for parsing, entry detection, node matching, etc.; the current Python implementation lives in `language/python/`
+- **`SourceParser`** (`graphlint/analyzer/language/python/parser.py`) — Recursively scans directories, performs AST parsing on each `.py` file
 - **`GraphBuilder`** (`graphlint/analyzer/graph.py`) — Builds the dependency graph from parse results, including nodes, edges, and connected component analysis. Edges are built in parallel per file from structured `ReferenceInfo` collected during AST parsing — no second AST walk is needed.
-- **`EntryPointDetector`** (`graphlint/analyzer/entry_detect.py`) — 10 built-in entry detection rules + custom rule support
+- **`EntryPointDetector`** (`graphlint/analyzer/language/python/entry.py`) — 10 built-in entry detection rules + custom rule support
 - **`WarningCollector`** (`graphlint/analyzer/warnings.py`) — Warning collection, deduplication, filtering, and statistics
-- **`ImportAnalyzer`** (`graphlint/analyzer/imports.py`) — Import statement parsing and unused import detection
-- **`DecoratorResolver`** (`graphlint/analyzer/decorators.py`) — Decorator resolution
+- **`ImportAnalyzer`** (`graphlint/analyzer/language/python/imports.py`) — Import statement parsing and unused import detection
 
 #### AST Parsing & Edge Building Flow
 
 ```
-Source File (.py)
+Source File (.py, etc.)
     │
     ▼
-AST Parse (ast.parse)
+LanguageRegistry route → LanguageAdapter dispatch
+    │
+    ▼
+AST Parse (ast.parse / other language parser)
     │
     ▼
 ASTVisitor Traversal (single pass)

@@ -2,6 +2,35 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.0] - 2026-07-22
+
+### Added
+- Multi-language architecture: `LanguageAdapter` abstract base class and
+  `LanguageRegistry` for extension-based routing of source files to language
+  backends, laying the foundation for future multi-language support
+- `language/python/` package: Python-specific adapter, parser, entry detector,
+  imports analyzer, decorators resolver, and constants — decoupled from the
+  core framework
+- Per-language `constants.py`: configurable public API dunders, special
+  methods, and test-file detection
+- Type annotation awareness in AST visitor: automatically resolves unpacked
+  variable types (e.g., loop bindings, tuple unpacking) for more accurate
+  read/write edge tracking
+
+### Changed
+- **[Breaking]** Analyzer modules reorganized: `parser.py`, `entry_detect.py`,
+  `imports.py`, `decorators.py`, `visitor.py` moved into `language/python/` —
+  direct imports of old module paths will break
+- Entry point rules now serve as initialization template only: rules are
+  written to `.graphlint/config.json` on first build, after which the config
+  file is the single source of truth
+- Default entry strategy simplified: entry rules are no longer hardcoded in
+  the indexer; they come solely from runtime configuration
+- `GraphBuilder` no longer owns entry detection — entry points are resolved
+  through the language adapter
+- `WarningCollector` simplified: language-specific constant tables moved to
+  `language/python/constants.py`
+
 ## [0.1.12] - 2026-07-21
 
 ### Added

@@ -4,6 +4,7 @@
 import pytest
 
 from graphlint.analyzer._types import EdgeInfo, NodeInfo
+from graphlint.analyzer.language.python.constants import _PYTHON_PUBLIC_API_DUNDERS
 from graphlint.analyzer.warnings import (
     WarningCollector,
     detect_file_too_large,
@@ -141,7 +142,7 @@ class TestDetectFunctions:
             line_end=2,
             col_offset=0,
         )
-        warnings = detect_write_only_nodes([node], [])
+        warnings = detect_write_only_nodes([node], [], public_api_names=_PYTHON_PUBLIC_API_DUNDERS)
         assert len(warnings) == 0
 
     def test_dunder_version_skipped(self):
@@ -162,5 +163,5 @@ class TestDetectFunctions:
             line=1,
             context='__version__ = "0.1.0"',
         )
-        warnings = detect_write_only_nodes([node], [edge])
+        warnings = detect_write_only_nodes([node], [edge], public_api_names=_PYTHON_PUBLIC_API_DUNDERS)
         assert len(warnings) == 0

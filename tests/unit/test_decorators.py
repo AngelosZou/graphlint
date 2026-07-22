@@ -5,7 +5,7 @@ import ast
 
 import pytest
 
-from graphlint.analyzer.decorators import DecoratorInfo, DecoratorResolver
+from graphlint.analyzer.language.python.decorators import DecoratorInfo, DecoratorResolver
 
 
 def _parse_expr(code: str) -> ast.expr:

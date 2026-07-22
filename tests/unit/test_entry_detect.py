@@ -4,7 +4,7 @@
 import pytest
 
 from graphlint.analyzer._types import NodeInfo, ParseResult
-from graphlint.analyzer.entry_detect import EntryPointDetector
+from graphlint.analyzer.language.python.entry import EntryPointDetector
 
 
 def _make_node(nid, name, node_type="function", line=1, is_entry=False):
@@ -388,7 +388,7 @@ class TestEntryPointDetector:
 
     def test_update_output(self):
         """update_output marks matching nodes as entry points."""
-        from graphlint.analyzer.entry_detect import EntryInfo
+        from graphlint.analyzer._types import EntryInfo
         node = _make_node(1, "main", node_type="function")
         entries = [EntryInfo(
             rule_name="test",

@@ -7,6 +7,9 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "version": 1,
     "lang": "system",
     # -------- Entry rules --------
+    # These are the initial template written to .graphlint/config.json on
+    # first run.  Once the config file exists, it is the single source of
+    # truth — users may add, remove, or modify rules via `graphlint config`.
     "entry_rules": [
         {
             "name": "python_main",

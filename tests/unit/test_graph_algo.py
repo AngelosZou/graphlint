@@ -8,9 +8,10 @@ import pytest
 
 from graphlint.analyzer._types import (
     EdgeInfo,
+    EntryInfo,
     NodeInfo,
 )
-from graphlint.analyzer.entry_detect import EntryInfo
+from graphlint.analyzer.language.python.constants import _PYTHON_SPECIAL_METHOD_DUNDERS
 
 
 def _make_node(nid: int, name: str = "", node_type: str = "function") -> NodeInfo:
@@ -212,6 +213,7 @@ class TestFindConnectedComponents:
 
         comp_map, _ = find_connected_components(
             nodes, edges, node_id_map, entries,
+            special_method_names=_PYTHON_SPECIAL_METHOD_DUNDERS,
         )
 
         # Both nodes should belong to the same component (synthetic containment edges)

@@ -5,37 +5,25 @@ from __future__ import annotations
 
 from collections import defaultdict
 from concurrent.futures import ProcessPoolExecutor, as_completed
-from dataclasses import dataclass, field
 from typing import Any, Optional
 
 from graphlint.analyzer._graph_algo import (
     detect_circular_refs,
     find_connected_components,
 )
-from graphlint.analyzer._types import ComponentInfo, EdgeInfo, NodeInfo, ParseResult
-from graphlint.analyzer.entry_detect import EntryInfo, EntryPointDetector
+from graphlint.analyzer._types import (
+    ComponentInfo,
+    EdgeInfo,
+    EntryInfo,
+    GraphBuildResult,
+    NodeInfo,
+    ParseResult,
+)
+from graphlint.analyzer.language.registry import LanguageRegistry
 from graphlint.analyzer.warnings import (
     WarningCollector,
-    WarningInfo,
-    _PUBLIC_API_DUNDERS,
-    _SPECIAL_METHOD_DUNDERS,
     detect_write_only_nodes,
 )
-
-
-@dataclass
-class GraphBuildResult:
-    """Complete output of GraphBuilder.build()."""
-
-    nodes: list[NodeInfo] = field(default_factory=list)
-    edges: list[EdgeInfo] = field(default_factory=list)
-    warnings: list[WarningInfo] = field(default_factory=list)
-    files: list[str] = field(default_factory=list)
-    files_data: dict[str, ParseResult] = field(default_factory=dict)
-    entry_info_list: list[EntryInfo] = field(default_factory=list)
-    component_map: dict[int, int] = field(default_factory=dict)
-    components: list[ComponentInfo] = field(default_factory=list)
-    node_id_map: dict[int, Any] = field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------
@@ -120,18 +108,12 @@ def _resolve_symbol(
     return []
 
 
-def _file_to_module_qname(path: str) -> str:
-    """Convert file path to module qualified name."""
-    if path.endswith(".py"):
-        path = path[:-3]
-    return path.replace("/", ".").replace("\\", ".")
-
-
 def _build_file_edges_worker(
     fp: str,
     pr: ParseResult,
     fnodes: dict[str, int],
     fid: int,
+    module_qname: str,
     symbol_index: dict[str, list[int]],
     suffix_index: dict[str, list[int]],
     node_id_map: dict[int, NodeInfo],
@@ -146,7 +128,6 @@ def _build_file_edges_worker(
     Module-level references from unregistered source nodes are assigned
     to the module pseudo-node (id=0).
     """
-    module_qname = _file_to_module_qname(fp)
     edges: list[EdgeInfo] = []
     for ref in pr.references:
         source_id = fnodes.get(ref.source_qname, 0)
@@ -187,6 +168,7 @@ class GraphBuilder:
     def __init__(
         self,
         warning_collector: WarningCollector,
+        registry: Optional[LanguageRegistry] = None,
         config: dict[str, Any] | None = None,
     ) -> None:
         self._nodes: list[NodeInfo] = []
@@ -199,7 +181,7 @@ class GraphBuilder:
         self._old_to_new: dict[tuple[str, str], int] = {}
         self.warning_collector = warning_collector
         self.config = config or {}
-        self.entry_detector = EntryPointDetector(self.config)
+        self.registry = registry
 
     def add_node(self, node: NodeInfo, preserve_id: bool = False) -> int:
         """Add a node and return its assigned ID."""
@@ -341,14 +323,31 @@ class GraphBuilder:
             if fid and fid in file_nodes_by_fid:
                 fnodes_map[fp] = {n.qualified_name: n.id for n in file_nodes_by_fid[fid]}
 
-        entries = self.entry_detector.detect(
-            parse_results,
-            self._nodes,
-            self._node_id_map,
-        )
+        # Detect entries via language adapters
+        entries: list[EntryInfo] = []
+        if self.registry:
+            for adapter in self.registry.all_adapters():
+                entries.extend(
+                    adapter.detect_entries(
+                        parse_results, self._nodes, self._node_id_map, self.config
+                    )
+                )
         for e in entries:
             if e.node_id and e.node_id in self._node_id_map:
                 self._node_id_map[e.node_id].is_entry = True
+
+        # Resolve function_def:/decorator: entries (node_id=0) to
+        # their global node IDs by file path + line number.  Entries
+        # with unresolved node_id are treated as file-level entries.
+        for e in entries:
+            if e.node_id == 0 and e.line > 0 and e.file_path:
+                e_fid = fid_map.get(e.file_path, 0)
+                if e_fid:
+                    for n in self._nodes:
+                        if n.file_id == e_fid and n.line_start == e.line:
+                            e.node_id = n.id
+                            self._node_id_map[n.id].is_entry = True
+                            break
 
         self._edges = self._build_edges_batch(
             changed_list, parse_results, fid_map, fnodes_map,
@@ -388,6 +387,8 @@ class GraphBuilder:
             self._node_id_map,
             entries,
             fid_map,
+            public_api_names=self._get_public_api_names(),
+            special_method_names=self._get_special_names(),
         )
         file_id_to_path = {v: k for k, v in fid_map.items()}
         self._add_warnings(comps, file_id_to_path)
@@ -420,10 +421,13 @@ class GraphBuilder:
                 for fp in changed_list:
                     pr = parse_results[fp]
                     fnodes = fnodes_map.get(fp, {})
+                    # Pre-compute module_qname via adapter
+                    module_qname = self._module_qname_for(fp)
+
                     futs[
                         ex.submit(
                             _build_file_edges_worker,
-                            fp, pr, fnodes, fid_map[fp],
+                            fp, pr, fnodes, fid_map[fp], module_qname,
                             self._symbol_index, self._suffix_index,
                             self._node_id_map, self.config,
                             {},  # Per-worker independent resolve cache
@@ -440,9 +444,10 @@ class GraphBuilder:
                 pr = parse_results[fp]
                 fnodes = fnodes_map.get(fp, {})
                 fid = fid_map.get(fp, 0)
+                module_qname = self._module_qname_for(fp)
                 all_edges.extend(
                     _build_file_edges_worker(
-                        fp, pr, fnodes, fid,
+                        fp, pr, fnodes, fid, module_qname,
                         self._symbol_index, self._suffix_index,
                         self._node_id_map, self.config,
                         {},
@@ -450,6 +455,24 @@ class GraphBuilder:
                     )
                 )
         return all_edges
+
+    def _module_qname_for(self, file_path: str) -> str:
+        """Convert file path to module qname using the registered language adapter."""
+        if self.registry:
+            adapter = self.registry.adapter_for_file(file_path)
+            if adapter:
+                return adapter.file_to_module(file_path)
+        return file_path
+
+    def _get_public_api_names(self) -> frozenset[str]:
+        if self.registry:
+            return self.registry.public_api_names()
+        return frozenset()
+
+    def _get_special_names(self) -> frozenset[str]:
+        if self.registry:
+            return self.registry.special_names()
+        return frozenset()
 
     def _add_warnings(
         self,
@@ -459,8 +482,17 @@ class GraphBuilder:
         """Collect all warning types."""
         if file_id_to_path is None:
             file_id_to_path = {}
+
+        # Gather language-specific special names from adapters
+        public_api_names: frozenset[str] = frozenset()
+        special_names: frozenset[str] = frozenset()
+        if self.registry:
+            public_api_names = self.registry.public_api_names()
+            special_names = self.registry.special_names()
+
         for w in detect_write_only_nodes(
-            self._nodes, self._edges, self._node_id_map, file_id_to_path
+            self._nodes, self._edges, self._node_id_map, file_id_to_path,
+            public_api_names=public_api_names,
         ):
             self.warning_collector.add(
                 w.warn_type,
@@ -487,13 +519,13 @@ class GraphBuilder:
                     nid
                     for nid in comp.node_ids
                     if nid in self._node_id_map
-                    and self._node_id_map[nid].name in _SPECIAL_METHOD_DUNDERS
+                    and self._node_id_map[nid].name in special_names
                 ]
                 non_dunder_nids = [
                     nid
                     for nid in comp.node_ids
                     if nid in self._node_id_map
-                    and self._node_id_map[nid].name not in _PUBLIC_API_DUNDERS
+                    and self._node_id_map[nid].name not in public_api_names
                     and self._node_id_map[nid].name != "_"
                     and nid not in special_method_nids
                 ]
@@ -533,41 +565,16 @@ class GraphBuilder:
                             )
         self.warning_collector.deduplicate()
 
-    # ------------------------------------------------------------------
-    # Edge building (delegates to module-level functions)
-    # ------------------------------------------------------------------
-
-    def _build_edges(
-        self,
-        fp: str,
-        pr: ParseResult,
-        fid: int,
-        fnodes: dict[str, int] | None = None,
-    ) -> None:
-        """Build edges for a single file from structured references."""
-        if fnodes is None:
-            fnodes = {}
-            for n in self._nodes:
-                if n.file_id == fid:
-                    fnodes[n.qualified_name] = n.id
-        self._edges.extend(
-            _build_file_edges_worker(
-                fp, pr, fnodes, fid,
-                self._symbol_index, self._suffix_index,
-                self._node_id_map, self.config,
-                resolve_cache={},
-                scope_suffix_index=self._scope_suffix_index,
-            )
-        )
-
     def get_all_data(self) -> GraphBuildResult:
-        """Return all built data."""
+        """Return all built data (used by tests)."""
         cm, cs = find_connected_components(
             self._nodes,
             self._edges,
             self._node_id_map,
             [],
             {},
+            public_api_names=self._get_public_api_names(),
+            special_method_names=self._get_special_names(),
         )
         return GraphBuildResult(
             nodes=list(self._nodes),

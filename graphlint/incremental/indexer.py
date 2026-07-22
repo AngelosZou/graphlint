@@ -12,7 +12,8 @@ from typing import Any, Optional
 
 from graphlint.analyzer._types import NodeInfo, ParseResult
 from graphlint.analyzer.graph import GraphBuilder
-from graphlint.analyzer.parser import _parse_file_worker
+from graphlint.analyzer.language.python.parser import _parse_file_worker
+from graphlint.analyzer.language.registry import LanguageRegistry
 from graphlint.analyzer.warnings import WarningCollector, WarningInfo
 from graphlint.config.manager import ConfigManager
 from graphlint.incremental._db_ops import (
@@ -49,6 +50,7 @@ class IncrementalIndexer:
         root_dir: str,
         db: Database,
         parallel_workers: int = 0,
+        registry: Optional[LanguageRegistry] = None,
     ) -> None:
         self.root_dir = os.path.realpath(root_dir)
         self.db = db
@@ -57,6 +59,7 @@ class IncrementalIndexer:
         )
         self.config_manager = ConfigManager(self.root_dir)
         self.config = self.config_manager.load()
+        self.registry = registry
 
     def run(
         self,
@@ -110,7 +113,6 @@ class IncrementalIndexer:
                     unchanged.add(fp)
                     continue
             if needs_full:
-                # parser computes hash — skip redundant computation here
                 if fp not in db_files_info:
                     added.append(fp)
                 else:
@@ -191,6 +193,7 @@ class IncrementalIndexer:
             )
             update_snapshots(self.db, br)
 
+        self.db.execute("PRAGMA wal_checkpoint(TRUNCATE)")
         self._update_scan_stamp(disk_files, file_mtimes)
         return IndexResult(
             files_scanned=len(disk_files),
@@ -228,51 +231,10 @@ class IncrementalIndexer:
             json.dump({"files": files}, f)
 
     def _scan_with_mtime(self) -> list[tuple[str, int]]:
-        """Scan all .py files, returning (rel_path, mtime_ns) pairs."""
-        result: list[tuple[str, int]] = []
-        exclude = {
-            "__pycache__",
-            ".mypy_cache",
-            ".pytest_cache",
-            ".tox",
-            ".venv",
-            "venv",
-            "env",
-            "virtualenv",
-            ".env",
-            "node_modules",
-            ".git",
-            ".svn",
-            ".hg",
-            ".idea",
-            ".vscode",
-            ".vs",
-            ".graphlint",
-            "build",
-            "dist",
-        }
-        for dp, dns, fns in os.walk(self.root_dir, topdown=True, followlinks=False):
-            dns[:] = [
-                d
-                for d in dns
-                if d not in exclude
-                and not d.endswith(".egg-info")
-                and not d.startswith(".")
-            ]
-            for fn in fns:
-                if (
-                    fn.endswith(".py")
-                    and not fn.endswith((".pyc", ".pyo"))
-                    and not fn.startswith(".")
-                ):
-                    fp = os.path.join(dp, fn)
-                    rel = os.path.relpath(fp, self.root_dir).replace(os.sep, "/")
-                    try:
-                        mtime = os.stat(fp).st_mtime_ns
-                    except OSError:
-                        continue
-                    result.append((rel, mtime))
-        return result
+        """Scan source files via the language registry."""
+        if self.registry:
+            return self.registry.scan_files(self.root_dir)
+        return []
 
     # -- Parallel parsing -------------------------------------------------
 
@@ -356,7 +318,7 @@ class IncrementalIndexer:
     def _create_builder(self, wc: WarningCollector) -> GraphBuilder:
         cfg: dict[str, Any] = dict(self.config)
         cfg["_root_dir"] = self.root_dir
-        return GraphBuilder(warning_collector=wc, config=cfg)
+        return GraphBuilder(warning_collector=wc, config=cfg, registry=self.registry)
 
 
 def _row_to_node(row: Any) -> NodeInfo:

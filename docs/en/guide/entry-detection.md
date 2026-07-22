@@ -1,6 +1,6 @@
 # Entry Point Detection Reference
 
-graphlint has 10 built-in entry point detection rules and supports custom rule extension.
+graphlint has 10 built-in entry point detection rules and supports custom rule extension. On first `graphlint build`, these rules are written as a template into `.graphlint/config.json`; thereafter the config file is the single source of truth — you may add, remove, or modify rules via `graphlint config` or by editing the file directly.
 
 ## Built-in Rules
 

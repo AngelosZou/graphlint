@@ -35,10 +35,8 @@ class ConfigManager:
                     user_config = json.load(fh)
                 config = self._deep_merge(config, user_config)
             except (json.JSONDecodeError, OSError):
-                # Corrupted config: fall back to defaults
                 pass
         else:
-            # Write default config
             self._ensure_meta_dir()
             self._write_atomic(self.config_path, DEFAULT_CONFIG)
         return config

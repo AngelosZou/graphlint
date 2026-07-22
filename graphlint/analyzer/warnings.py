@@ -30,137 +30,6 @@ WARN_TYPE_VALUES: frozenset[str] = frozenset(
 
 VALID_WARN_TYPES: frozenset[str] = WARN_TYPE_VALUES
 
-# Module-level dunder names with well-defined Python semantics.
-_PUBLIC_API_DUNDERS: frozenset[str] = frozenset(
-    {
-        "__all__",
-        "__version__",
-        "__author__",
-        "__copyright__",
-        "__license__",
-        "__credits__",
-    }
-)
-
-# Special method names (Python data model) that may be invoked implicitly.
-_SPECIAL_METHOD_DUNDERS: frozenset[str] = frozenset(
-    {
-        # Object lifecycle
-        "__new__",
-        "__init__",
-        "__del__",
-        # String representation
-        "__repr__",
-        "__str__",
-        "__format__",
-        "__bytes__",
-        # Container methods
-        "__len__",
-        "__getitem__",
-        "__setitem__",
-        "__delitem__",
-        "__contains__",
-        "__iter__",
-        "__next__",
-        "__reversed__",
-        # Callable
-        "__call__",
-        # Context manager
-        "__enter__",
-        "__exit__",
-        "__aenter__",
-        "__aexit__",
-        # Attribute access
-        "__getattr__",
-        "__setattr__",
-        "__delattr__",
-        "__getattribute__",
-        # Descriptor
-        "__get__",
-        "__set__",
-        "__delete__",
-        "__set_name__",
-        # Numeric operators
-        "__add__",
-        "__sub__",
-        "__mul__",
-        "__matmul__",
-        "__truediv__",
-        "__floordiv__",
-        "__mod__",
-        "__divmod__",
-        "__pow__",
-        "__lshift__",
-        "__rshift__",
-        "__and__",
-        "__xor__",
-        "__or__",
-        # Reflected numeric
-        "__radd__",
-        "__rsub__",
-        "__rmul__",
-        "__rmatmul__",
-        "__rtruediv__",
-        "__rfloordiv__",
-        "__rmod__",
-        "__rdivmod__",
-        "__rpow__",
-        "__rlshift__",
-        "__rrshift__",
-        "__rand__",
-        "__rxor__",
-        "__ror__",
-        # In-place operators
-        "__iadd__",
-        "__isub__",
-        "__imul__",
-        "__imatmul__",
-        "__itruediv__",
-        "__ifloordiv__",
-        "__imod__",
-        "__ipow__",
-        "__ilshift__",
-        "__irshift__",
-        "__iand__",
-        "__ixor__",
-        "__ior__",
-        # Unary operators
-        "__neg__",
-        "__pos__",
-        "__abs__",
-        "__invert__",
-        # Type conversion
-        "__int__",
-        "__float__",
-        "__complex__",
-        "__bool__",
-        "__index__",
-        # Comparison
-        "__lt__",
-        "__le__",
-        "__eq__",
-        "__ne__",
-        "__gt__",
-        "__ge__",
-        "__hash__",
-        # Async
-        "__await__",
-        "__aiter__",
-        "__anext__",
-        # Class protocols
-        "__init_subclass__",
-        "__class_getitem__",
-        # Pickle / copy
-        "__reduce__",
-        "__reduce_ex__",
-        "__getnewargs__",
-        "__getstate__",
-        "__setstate__",
-        "__copy__",
-        "__deepcopy__",
-    }
-)
-
 
 # ---------------------------------------------------------------------------
 # Data structures
@@ -284,11 +153,14 @@ def detect_write_only_nodes(
     edges: list[Any],
     node_id_map: dict[int, Any] | None = None,
     file_id_to_path: dict[int, Any] | None = None,
+    public_api_names: frozenset[str] | None = None,
 ) -> list[WarningInfo]:
     """Detect write-only and unused variables."""
     warnings: list[WarningInfo] = []
     if node_id_map is None:
         node_id_map = {}
+    if public_api_names is None:
+        public_api_names = frozenset()
 
     node_edges: dict[int, set[Any]] = {}
     for edge in edges:
@@ -300,7 +172,7 @@ def detect_write_only_nodes(
         edge_types = node_edges.get(node.id, set())
         fp = _node_file_path(node, file_id_to_path)
 
-        if node.name in _PUBLIC_API_DUNDERS:
+        if node.name in public_api_names:
             continue
 
         if node.name == "_":

@@ -9,12 +9,23 @@ import json
 import os
 from typing import Any, Optional
 
-from graphlint.analyzer._types import EdgeInfo, NodeInfo
-from graphlint.analyzer.graph import GraphBuildResult
+from graphlint.analyzer._types import EdgeInfo, NodeInfo, GraphBuildResult
 from graphlint.storage.db import Database
 from graphlint.storage.hashing import compute_file_hash, is_test_file
 
 _UTC = datetime.timezone.utc
+
+
+def _is_test_entry(e: Any) -> bool:
+    """Check whether *e* (an EntryInfo) points to a test file."""
+    fp = getattr(e, "file_path", "") or ""
+    basename = os.path.basename(fp)
+    return (
+        basename.startswith("test_")
+        or basename.endswith("_test.py")
+        or basename == "conftest.py"
+        or "tests/" in fp.replace(os.sep, "/")
+    )
 
 
 def load_prebuilt_edges(
@@ -349,11 +360,10 @@ def _snapshot_values(
     """Return snapshot VALUES tuple."""
     entry_file, entry_line, entry_type = None, None, ""
     if comp.entry_info:
-        # Prefer python_package and python_main entries over
-        # framework-detected entries from test files.
-        priority = ("python_package", "python_main")
-        preferred = [e for e in comp.entry_info if e.rule_name in priority]
-        best = preferred[0] if preferred else comp.entry_info[0]
+        # Prefer entries with non-test entry_file so the main component
+        # is visible when include_tests=False.
+        non_test = [e for e in comp.entry_info if not _is_test_entry(e)]
+        best = non_test[0] if non_test else comp.entry_info[0]
         entry_file = best.file_path
         entry_line = best.line
         entry_type = best.rule_name

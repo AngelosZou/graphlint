@@ -6,8 +6,16 @@ import tempfile
 
 import pytest
 
+from graphlint.analyzer.language.python import PythonAdapter
+from graphlint.analyzer.language.registry import LanguageRegistry
 from graphlint.incremental.indexer import IncrementalIndexer
 from graphlint.storage.db import Database
+
+
+def _make_registry() -> LanguageRegistry:
+    r = LanguageRegistry()
+    r.register(PythonAdapter())
+    return r
 
 
 def _make_file(tmpdir, rel_path, content):
@@ -40,7 +48,7 @@ main()
 """,
             )
             self.db = Database(self.tmpdir)
-            self.indexer = IncrementalIndexer(self.tmpdir, self.db, parallel_workers=1)
+            self.indexer = IncrementalIndexer(self.tmpdir, self.db, parallel_workers=1, registry=_make_registry())
             yield
             self.db.close()
 

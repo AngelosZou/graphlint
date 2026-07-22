@@ -14,9 +14,10 @@ AI agents generate code rapidly, leaving behind dead and redundant code that pol
 ## Features
 
 - **Dead code detection** — finds components unreachable from any entry point via graph traversal
-- **AST parsing** — extracts classes, functions, methods, variables, and fields
+- **AST parsing** — extracts classes, functions, methods, variables, and fields; aware of type annotations and unpacked variables (e.g., loop bindings)
 - **Dependency graph** — builds directed edges: `read`, `write`, `call`, `inherit`, `decorate`
 - **Entry point detection** — 10 built-in rules (main, FastAPI, Flask, Django, Click, Typer, Celery, pytest, plus package and test entries) and custom rules
+- **Multi-language architecture** — language adapter abstraction layer, laying the foundation for future multi-language support
 - **Warning detection** — 11 warning types including circular references, unused imports, write-only variables, and more
 - **Python API + CLI** — integrate into any Tool, CI pipeline, or let agents self-analyze and self-clean
 
@@ -46,6 +47,8 @@ graphlint uninstall
 ```
 
 Run `graphlint install` and select the tools you use — the prompt (usage scenarios, essential commands, and parameters) will be added to their global configuration. For details, see [Agent Integration](https://github.com/AngelosZou/graphlint/blob/main/docs/en/guide/agent-integration.md).
+
+If your agent tool is not listed in `install`, run `graphlint prompt` to copy the prompt to your clipboard and provide it to your agent manually. For tools you'd like native support for, feel free to submit an [issue](https://github.com/AngelosZou/graphlint/issues) — these requests are typically handled quickly.
 
 ### CLI
 
@@ -79,6 +82,8 @@ graphlint config set --key lang --value en
 | `2` | Warnings found — `--fail-on` matched specified warning types |
 
 Use `--fail-on` with a comma-separated list of warning types to make `graphlint query` return exit code `2` when matching warnings are found. This enables CI pipeline integration without blocking on non-critical warnings.
+
+Graphlint is static-analysis based and cannot recognize certain Python dynamic references (e.g., `getattr`, `importlib`), which may produce unexpected exit codes. Only use `--fail-on` for CI blocking behavior when you're confident in your configuration. Agents are better suited for logic that requires contextual judgment. See [Limitations](#limitations) for details.
 
 ### Python API
 

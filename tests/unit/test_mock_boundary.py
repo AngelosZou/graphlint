@@ -6,10 +6,11 @@ from unittest.mock import patch
 import pytest
 
 from graphlint.analyzer._types import (
+    GraphBuildResult,
     NodeInfo,
     ParseResult,
 )
-from graphlint.analyzer.graph import GraphBuilder, GraphBuildResult
+from graphlint.analyzer.graph import GraphBuilder
 from graphlint.analyzer.warnings import WarningCollector
 
 
@@ -117,7 +118,7 @@ class TestMockBoundary:
         unused = [w for w in wc.get_all() if w.warn_type == "unused_import"]
         assert isinstance(unused, list)
 
-    @patch("graphlint.analyzer.entry_detect.os.walk")
+    @patch("graphlint.analyzer.language.python.entry.os.walk")
     def test_mock_filesystem_entry(self, mock_walk):
         """Mock os.walk to return specific file list."""
 

@@ -6,13 +6,11 @@ from __future__ import annotations
 from collections import defaultdict, deque
 from typing import Optional
 
-from graphlint.analyzer._types import ComponentInfo, EdgeInfo, NodeInfo
-from graphlint.analyzer.entry_detect import EntryInfo
-from graphlint.analyzer.warnings import (
-    WarningInfo,
-    _PUBLIC_API_DUNDERS,
-    _SPECIAL_METHOD_DUNDERS,
-)
+from graphlint.analyzer._types import ComponentInfo, EdgeInfo, EntryInfo, NodeInfo
+from graphlint.analyzer.warnings import WarningInfo
+
+
+_EMPTY_FROZENSET: frozenset[str] = frozenset()
 
 
 def compute_entry_reachability(
@@ -21,6 +19,7 @@ def compute_entry_reachability(
     node_id_map: Optional[dict[int, NodeInfo]] = None,
     file_id_map: Optional[dict[str, int]] = None,
     call_graph: Optional[dict[int, list[int]]] = None,
+    special_method_names: frozenset[str] = _EMPTY_FROZENSET,
 ) -> tuple[set[int], set[int]]:
     """Directed reachability analysis from entry points via CALL edges.
 
@@ -72,7 +71,7 @@ def compute_entry_reachability(
     class_special_map: dict[int, list[int]] = {}
     if node_id_map:
         for nid, ninfo in node_id_map.items():
-            if ninfo.name in _SPECIAL_METHOD_DUNDERS and ninfo.parent_node_id:
+            if ninfo.name in special_method_names and ninfo.parent_node_id:
                 class_special_map.setdefault(ninfo.parent_node_id, []).append(nid)
 
     while queue:
@@ -107,6 +106,7 @@ def _split_unreachable_by_call(
     edges: list[EdgeInfo],
     comp_id_start: int,
     node_id_map: Optional[dict[int, NodeInfo]] = None,
+    special_method_names: frozenset[str] = _EMPTY_FROZENSET,
 ) -> tuple[dict[int, int], list[ComponentInfo], int]:
     """Split unreachable nodes by CALL edges (undirected) into potential dead code components."""
     call_adj: dict[int, set[int]] = {nid: set() for nid in unreachable}
@@ -119,7 +119,7 @@ def _split_unreachable_by_call(
     if node_id_map:
         for nid, ninfo in node_id_map.items():
             if (
-                ninfo.name in _SPECIAL_METHOD_DUNDERS
+                ninfo.name in special_method_names
                 and ninfo.parent_node_id
                 and nid in unreachable
                 and ninfo.parent_node_id in unreachable
@@ -169,6 +169,8 @@ def find_connected_components(
     node_id_map: dict[int, NodeInfo],
     entries: list[EntryInfo],
     file_id_map: Optional[dict[str, int]] = None,
+    public_api_names: frozenset[str] = _EMPTY_FROZENSET,
+    special_method_names: frozenset[str] = _EMPTY_FROZENSET,
 ) -> tuple[dict[int, int], list[ComponentInfo]]:
     """Find all connected components via undirected BFS, split by CALL reachability."""
     adj: dict[int, set[int]] = {}
@@ -183,7 +185,7 @@ def find_connected_components(
     # Add synthetic containment edges for special method overloads.
     if node_id_map:
         for nid, ninfo in node_id_map.items():
-            if ninfo.name in _SPECIAL_METHOD_DUNDERS and ninfo.parent_node_id:
+            if ninfo.name in special_method_names and ninfo.parent_node_id:
                 parent = ninfo.parent_node_id
                 adj.setdefault(nid, set()).add(parent)
                 adj.setdefault(parent, set()).add(nid)
@@ -192,10 +194,10 @@ def find_connected_components(
     if node_id_map:
         _fid_first: dict[int, int] = {}
         for _ninfo in node_id_map.values():
-            if _ninfo.name not in _PUBLIC_API_DUNDERS and _ninfo.file_id not in _fid_first:
+            if _ninfo.name not in public_api_names and _ninfo.file_id not in _fid_first:
                 _fid_first[_ninfo.file_id] = _ninfo.id
         for _ninfo in node_id_map.values():
-            if _ninfo.name in _PUBLIC_API_DUNDERS and _ninfo.node_type in ("variable", "field"):
+            if _ninfo.name in public_api_names and _ninfo.node_type in ("variable", "field"):
                 _first = _fid_first.get(_ninfo.file_id)
                 if _first is not None:
                     adj.setdefault(_ninfo.id, set()).add(_first)
@@ -214,6 +216,7 @@ def find_connected_components(
     reachable, noprop_ids = compute_entry_reachability(
         edges, entries, node_id_map, file_id_map,
         call_graph=call_graph,
+        special_method_names=special_method_names,
     )
 
     visited: set[int] = set()
@@ -253,7 +256,7 @@ def find_connected_components(
         class_special_map: dict[int, list[int]] = {}
         if node_id_map:
             for _nid, _ninfo in node_id_map.items():
-                if _ninfo.name in _SPECIAL_METHOD_DUNDERS and _ninfo.parent_node_id:
+                if _ninfo.name in special_method_names and _ninfo.parent_node_id:
                     class_special_map.setdefault(_ninfo.parent_node_id, []).append(_nid)
         while q:
             cur = q.popleft()
@@ -304,7 +307,7 @@ def find_connected_components(
                     reachable_fids.add(_info.file_id)
             for _nid in list(comp_unreachable):
                 _info = node_id_map.get(_nid)
-                if _info and _info.file_id in reachable_fids and _info.name in _PUBLIC_API_DUNDERS:
+                if _info and _info.file_id in reachable_fids and _info.name in public_api_names:
                     comp_reachable.add(_nid)
                     comp_unreachable.discard(_nid)
 
@@ -327,6 +330,7 @@ def find_connected_components(
                 edges,
                 comp_id,
                 node_id_map,
+                special_method_names=special_method_names,
             )
             component_map.update(sub_map)
             components.extend(sub_comps)

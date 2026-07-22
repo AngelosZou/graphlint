@@ -5,7 +5,7 @@ import tempfile
 
 import pytest
 
-from graphlint.analyzer.imports import ImportAnalyzer, ImportInfo
+from graphlint.analyzer.language.python.imports import ImportAnalyzer, ImportInfo
 
 
 @pytest.mark.timeout(30)
