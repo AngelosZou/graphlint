@@ -45,7 +45,7 @@ dev = [
     "pytest-cov>=4",
 ]
 rust = [
-    "tree-sitter>=0.22,<0.25",
+    "tree-sitter>=0.22,<0.27",
     "tree-sitter-rust>=0.22,<0.25",
 ]
 
