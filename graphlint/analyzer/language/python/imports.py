@@ -73,6 +73,19 @@ class ImportAnalyzer:
         # Simple literal -> absolute
         return "absolute"
 
+    def _is_name_used(self, name: str, name_usages: Set[str]) -> bool:
+        """Check if an imported name appears in ``name_usages``.
+
+        For ``import X.Y.Z`` the AST visitor stores only the top-level name
+        *X* in ``name_usages``, while the import is recorded as the full
+        dotted path ``X.Y.Z``.  Check both.
+        """
+        if name in name_usages:
+            return True
+        # Dotted import: only the top-level component is tracked
+        top = name.split(".")[0]
+        return top != name and top in name_usages
+
     # ------------------------------------------------------------------
     # Unused import detection
     # ------------------------------------------------------------------
@@ -95,7 +108,7 @@ class ImportAnalyzer:
                 continue
 
             # Check if imported names are used
-            used_names = [n for n in imp.imported_names if n in name_usages]
+            used_names = [n for n in imp.imported_names if self._is_name_used(n, name_usages)]
             if not used_names:
                 names_str = ", ".join(imp.imported_names)
                 msg = f"'{names_str}' imported but not used"
