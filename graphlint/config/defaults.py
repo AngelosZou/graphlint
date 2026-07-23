@@ -83,6 +83,13 @@ DEFAULT_CONFIG: Dict[str, Any] = {
             "no_propagate": True,
         },
         {
+            "name": "rust_default_bin_path",
+            "file_pattern": "**/*.rs",
+            "ast_pattern": "file_match:src/main.rs | file_match:src/bin/*.rs",
+            "enabled": True,
+            "description": "Rust default binary entry paths (src/main.rs, src/bin/*.rs)",
+        },
+        {
             "name": "rust_main",
             "file_pattern": "**/*.rs",
             "ast_pattern": "function_def:main",

@@ -22,7 +22,10 @@ import os
 from typing import Any, Optional
 
 from graphlint.analyzer._types import EntryInfo, NodeInfo, ParseResult
-from graphlint.analyzer.language.rust.constants import _TREE_SITTER_AVAILABLE
+from graphlint.analyzer.language.rust.constants import (
+    _TREE_SITTER_AVAILABLE,
+    _parse_cargo_bin_paths,
+)
 
 
 class RustEntryPointDetector:
@@ -53,9 +56,29 @@ class RustEntryPointDetector:
     ) -> list[EntryInfo]:
         """Detect entry points across all parsed Rust files."""
         entries: list[EntryInfo] = []
+
+        # Parse Cargo.toml for explicit [[bin]] path declarations.
+        # Default paths are handled by the rust_default_bin_path entry rule
+        root_dir = self.config.get("_root_dir", os.getcwd())
+        cargo_explicit_paths = set(_parse_cargo_bin_paths(root_dir))
+
         for file_path, pr in parse_results.items():
             if not file_path.endswith(".rs"):
                 continue
+
+            # -- Cargo.toml [[bin]] explicit path detection --
+            normalized = file_path.replace("\\", "/")
+            if normalized in cargo_explicit_paths:
+                entries.append(
+                    EntryInfo(
+                        rule_name="cargo_bin_target",
+                        file_path=file_path,
+                        line=1,
+                        description=f"Cargo [[bin]] target: {file_path}",
+                        no_propagate=False,
+                    )
+                )
+
             for rule in self._rules:
                 rule_name = rule.get("name", "")
                 if not rule_name:
@@ -108,17 +131,22 @@ class RustEntryPointDetector:
 
         # ---- file_match: (no AST needed) ----
         if pattern.startswith("file_match:"):
-            glob_part = pattern.split(":", 1)[1]
-            if fnmatch.fnmatch(file_path, glob_part):
-                return [
-                    EntryInfo(
-                        rule_name=rule_name,
-                        file_path=file_path,
-                        line=1,
-                        description=description,
-                        no_propagate=no_propagate,
-                    )
-                ]
+            # Support OR operator for file_match patterns
+            # e.g. "file_match:src/main.rs | file_match:src/bin/*.rs"
+            or_parts = [p.strip() for p in pattern.split(" | ")]
+            for or_part in or_parts:
+                if or_part.startswith("file_match:"):
+                    glob_val = or_part.split(":", 1)[1]
+                    if fnmatch.fnmatch(file_path, glob_val):
+                        return [
+                            EntryInfo(
+                                rule_name=rule_name,
+                                file_path=file_path,
+                                line=1,
+                                description=description,
+                                no_propagate=no_propagate,
+                            )
+                        ]
             return []
 
         # ---- test_file: uses test_patterns config ----

@@ -236,6 +236,65 @@ def _is_test_file(file_path: str, config: dict[str, Any]) -> bool:
 
 
 # ---------------------------------------------------------------------------
+# Cargo.toml parsing
+# ---------------------------------------------------------------------------
+
+
+def _parse_cargo_bin_paths(root_dir: str) -> list[str]:
+    """Parse ``Cargo.toml`` and return the list of explicitly declared binary
+    source paths from ``[[bin]]`` sections.
+
+    Only ``path`` fields are collected — targets without an explicit
+    ``path`` are covered by the default ``rust_default_bin_path`` entry rule
+    (``src/main.rs`` and ``src/bin/*.rs``).
+
+    Returns an empty list when ``Cargo.toml`` is missing, unreadable, or
+    contains no ``[[bin]]`` sections with an explicit path.
+    """
+    cargo_path = os.path.join(root_dir, "Cargo.toml")
+    if not os.path.isfile(cargo_path):
+        return []
+
+    paths: list[str] = []
+    in_bin = False
+
+    try:
+        with open(cargo_path, "r", encoding="utf-8") as fh:
+            for line in fh:
+                stripped = line.strip()
+
+                if not stripped or stripped.startswith("#"):
+                    continue
+
+                if stripped == "[[bin]]":
+                    in_bin = True
+                    continue
+
+                # Any other section header terminates the [[bin]] block
+                if stripped.startswith("["):
+                    in_bin = False
+                    continue
+
+                if in_bin and "=" in stripped:
+                    key, _, value = stripped.partition("=")
+                    if key.strip() == "path":
+                        value = value.strip()
+                        if value.startswith('"') and value.endswith('"'):
+                            value = value[1:-1]
+                        elif value.startswith("'") and value.endswith("'"):
+                            value = value[1:-1]
+                        # Strip inline comments
+                        if "#" in value:
+                            value = value.split("#")[0].strip()
+                        if value:
+                            paths.append(value.replace("\\", "/"))
+    except (OSError, UnicodeDecodeError):
+        return []
+
+    return paths
+
+
+# ---------------------------------------------------------------------------
 # Tree-sitter Language singleton (lazy, per-process)
 # ---------------------------------------------------------------------------
 
