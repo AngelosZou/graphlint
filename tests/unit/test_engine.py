@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """Query engine tests using in-memory SQLite."""
 
+import json
 import sqlite3
 import tempfile
 
@@ -273,3 +274,88 @@ class TestWarnSummaryCache:
         _ = self.engine.list_graphs(QueryFilters())
         assert self.engine._warn_summary_cache is not None
         assert "circular_ref" in self.engine._warn_summary_cache
+
+
+def _create_large_db():
+    """Create in-memory SQLite database with >1000 nodes to test batching."""
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+
+    from graphlint.storage.schema import create_tables
+
+    create_tables(conn)
+
+    # One file
+    conn.execute(
+        "INSERT INTO files (id, path, hash, size_bytes, mtime_ns) "
+        "VALUES (1, 'big.rs', 'abc', 100, 0)"
+    )
+
+    # 1500 nodes — enough to exceed SQLite's 999-variable limit
+    root_ids: list[int] = []
+    for nid in range(1, 1501):
+        conn.execute(
+            "INSERT INTO nodes (id, file_id, name, qualified_name, node_type, "
+            "line_start, line_end, col_offset) "
+            "VALUES (?, 1, ?, ?, 'variable', 1, 1, 0)",
+            (nid, f"v{nid}", f"crate::v{nid}"),
+        )
+        root_ids.append(nid)
+
+    # One snapshot referencing all nodes
+    conn.execute(
+        "INSERT INTO graph_snapshots (id, snapshot_time, entry_file, "
+        "node_count, variable_count, edge_count, warning_count, root_node_ids) "
+        "VALUES (1, '2025-01-01T00:00:00', 'big.rs', 1500, 1500, 0, 0, ?)",
+        (json.dumps(root_ids),),
+    )
+
+    conn.commit()
+    return conn
+
+
+@pytest.mark.timeout(10)
+class TestLargeGraphDetail:
+    """get_graph_detail on graphs exceeding SQLite's 999-variable limit."""
+
+    @pytest.fixture(autouse=True)
+    def setup(self):
+        self.conn = _create_large_db()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self.engine = QueryEngine(self.conn, root_dir=tmpdir)
+            yield
+            self.engine.close()
+        self.conn.close()
+
+    def test_detail_large_graph_no_crash(self):
+        """get_graph_detail with >1000 nodes does not raise 'too many SQL variables'."""
+        try:
+            detail = self.engine.get_graph_detail(1)
+        except Exception as exc:
+            pytest.fail(
+                f"get_graph_detail raised {type(exc).__name__}: {exc} — "
+                f"SQL batching may be insufficient"
+            )
+        assert detail is not None
+        assert len(detail.nodes) == 1500, (
+            f"Expected 1500 nodes, got {len(detail.nodes)}"
+        )
+
+    def test_detail_large_graph_no_crash_edges(self):
+        """get_graph_detail with >1000 nodes and edges does not crash."""
+        # Add edges connecting node pairs
+        for i in range(1, 1001, 2):
+            self.conn.execute(
+                "INSERT INTO edges (id, source_id, target_id, edge_type, file_id, line) "
+                "VALUES (?, ?, ?, 'call', 1, 1)",
+                (i // 2 + 1, i, i + 1),
+            )
+            self.conn.commit()
+
+        try:
+            detail = self.engine.get_graph_detail(1)
+        except Exception as exc:
+            pytest.fail(
+                f"get_graph_detail with edges raised {type(exc).__name__}: {exc}"
+            )
+        assert detail is not None
