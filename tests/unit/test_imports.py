@@ -20,7 +20,7 @@ class TestImportAnalyzer:
             yield
 
     def test_absolute_import(self):
-        """'import os' with os.path usage → is_used=True."""
+        """import os' with os.path usage → is_used=True."""
         imp = ImportInfo(
             module_path="os",
             imported_names=["os"],
@@ -33,7 +33,7 @@ class TestImportAnalyzer:
         assert len(unused) == 0
 
     def test_unused_import(self):
-        """'import json' never used → is_used=False with warning."""
+        """import json' never used → is_used=False with warning."""
         imp = ImportInfo(
             module_path="json",
             imported_names=["json"],
@@ -45,7 +45,7 @@ class TestImportAnalyzer:
         assert unused[0][0].module_path == "json"
 
     def test_star_import(self):
-        """'from os import *' → imported_names=['*']."""
+        """from os import *' → imported_names=['*']."""
         imp = ImportInfo(
             module_path="os",
             imported_names=["*"],
@@ -93,7 +93,7 @@ class TestImportAnalyzer:
         assert "sys" not in unused_modules
 
     def test_dotted_import_used_via_top_level(self):
-        """"import urllib.request" used as urllib.request.urlopen → not unused."""
+        """import urllib.request" used as urllib.request.urlopen → not unused."""
         imp = ImportInfo(
             module_path="urllib.request",
             imported_names=["urllib.request"],
@@ -108,7 +108,7 @@ class TestImportAnalyzer:
         )
 
     def test_dotted_import_used_via_deep_chain(self):
-        """"import mcp.server.stdio" used via deep attribute → not unused."""
+        """import mcp.server.stdio" used via deep attribute → not unused."""
         imp = ImportInfo(
             module_path="mcp.server.stdio",
             imported_names=["mcp.server.stdio"],
@@ -123,7 +123,7 @@ class TestImportAnalyzer:
         )
 
     def test_dotted_import_truly_unused(self):
-        """"import xmlrpc.client" never used → still flagged."""
+        """import xmlrpc.client" never used → still flagged."""
         imp = ImportInfo(
             module_path="xmlrpc.client",
             imported_names=["xmlrpc.client"],
