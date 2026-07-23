@@ -124,6 +124,27 @@ class TestDeadCodeRef:
     dead_graph_id: int = 0
 
 
+# Maximum SQL variables per batch — well below SQLite's 999 limit
+_BATCH_SIZE = 500
+
+
+def _batch_in_params(items: list[int]) -> list[tuple[str, tuple[int, ...]]]:
+    """Split a list of IDs into batched ``(placeholders, params)`` pairs.
+
+    SQLite has a hard limit of 999 variables per statement
+    (``SQLITE_MAX_VARIABLE_NUMBER``).  Large queries that generate
+    ``WHERE id IN (?, ?, ..., ?)`` with thousands of values will fail.
+    This helper produces batches of at most ``_BATCH_SIZE`` values
+    so callers can loop over them.
+    """
+    batches: list[tuple[str, tuple[int, ...]]] = []
+    for start in range(0, len(items), _BATCH_SIZE):
+        batch = items[start:start + _BATCH_SIZE]
+        ph = ",".join("?" for _ in batch)
+        batches.append((ph, tuple(batch)))
+    return batches
+
+
 class QueryEngine:
     """SQLite query engine."""
 
@@ -265,14 +286,17 @@ class QueryEngine:
         root_ids = json.loads(root_json)
         if not root_ids:
             return set(), []
-        ph = ",".join("?" for _ in root_ids)
-        node_rows = self.db.fetchall(
-            f"SELECT n.*, f.path as fpath FROM nodes n "
-            f"JOIN files f ON n.file_id=f.id WHERE n.id IN ({ph})",
-            tuple(root_ids),
-        )
-        nid_set = {r["id"] for r in node_rows}
-        return nid_set, node_rows
+        nid_set: set[int] = set()
+        all_rows: list[Any] = []
+        for ph, params in _batch_in_params(root_ids):
+            rows = self.db.fetchall(
+                f"SELECT n.*, f.path as fpath FROM nodes n "
+                f"JOIN files f ON n.file_id=f.id WHERE n.id IN ({ph})",
+                params,
+            )
+            all_rows.extend(rows)
+            nid_set.update(r["id"] for r in rows)
+        return nid_set, all_rows
 
     def _build_node_details(self, node_rows: list[Any]) -> list[NodeDetail]:
         """Convert node rows to NodeDetail list."""
@@ -295,17 +319,19 @@ class QueryEngine:
     def _build_edge_details(self, nid_set: set[int]) -> list[EdgeDetail]:
         """Build edge detail list."""
         nid_list = list(nid_set)
-        ph = ",".join("?" for _ in nid_list)
-        edge_rows = self.db.fetchall(
-            f"""
-            SELECT e.*, s.qualified_name as sname, t.qualified_name as tname,
-                   f.path as fpath
-            FROM edges e JOIN nodes s ON e.source_id=s.id
-            JOIN nodes t ON e.target_id=t.id JOIN files f ON e.file_id=f.id
-            WHERE e.source_id IN ({ph}) OR e.target_id IN ({ph})
-        """,
-            tuple(nid_list) + tuple(nid_list),
-        )
+        edge_rows: list[Any] = []
+        for ph, params in _batch_in_params(nid_list):
+            rows = self.db.fetchall(
+                f"""
+                SELECT e.*, s.qualified_name as sname, t.qualified_name as tname,
+                       f.path as fpath
+                FROM edges e JOIN nodes s ON e.source_id=s.id
+                JOIN nodes t ON e.target_id=t.id JOIN files f ON e.file_id=f.id
+                WHERE e.source_id IN ({ph}) OR e.target_id IN ({ph})
+            """,
+                params + params,
+            )
+            edge_rows.extend(rows)
         return [
             EdgeDetail(
                 source_name=r["sname"],
@@ -320,15 +346,17 @@ class QueryEngine:
     def _build_warn_details(self, nid_set: set[int]) -> list[WarningDetail]:
         """Build warning detail list."""
         nid_list = list(nid_set)
-        ph = ",".join("?" for _ in nid_list)
-        warn_rows = self.db.fetchall(
-            f"SELECT w.*, f.path as fpath FROM warnings w "
-            f"LEFT JOIN files f ON w.file_id=f.id "
-            f"WHERE w.node_id IN ({ph}) "
-            f"OR ((w.node_id IS NULL OR w.node_id = 0) AND w.file_id IN "
-            f"(SELECT file_id FROM nodes WHERE id IN ({ph})))",
-            tuple(nid_list) + tuple(nid_list),
-        )
+        warn_rows: list[Any] = []
+        for ph, params in _batch_in_params(nid_list):
+            rows = self.db.fetchall(
+                f"SELECT w.*, f.path as fpath FROM warnings w "
+                f"LEFT JOIN files f ON w.file_id=f.id "
+                f"WHERE w.node_id IN ({ph}) "
+                f"OR ((w.node_id IS NULL OR w.node_id = 0) AND w.file_id IN "
+                f"(SELECT file_id FROM nodes WHERE id IN ({ph})))",
+                params + params,
+            )
+            warn_rows.extend(rows)
         return [
             WarningDetail(
                 warn_type=r["warn_type"],
