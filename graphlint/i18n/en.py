@@ -85,6 +85,7 @@ STRINGS: dict[str, str] = {
     "help.param.file_limit": "Max files shown in detail view (0=unlimited)",
     "help.param.node_limit": "Max nodes shown in detail view (0=unlimited)",
     "help.param.no_scan": "Query from existing index only, skip auto scan/build",
+    "help.param.public_as_entry": "Treat public methods (e.g. Rust pub) as execution entry points (lib mode)",
     "help.param.fail_on": "Exit non-zero if matching warning types found (comma-separated)",
     "help.param.force_rebuild": "Force full index rebuild (ignore incremental)",
     "help.param.parallel": "Parallel workers (0=auto-detect CPU count, max 64)",

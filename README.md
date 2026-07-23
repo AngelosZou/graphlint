@@ -4,20 +4,31 @@
 [![Python](https://img.shields.io/pypi/pyversions/graphlint)](https://pypi.org/project/graphlint/)
 [![License](https://img.shields.io/pypi/l/graphlint)](https://github.com/AngelosZou/graphlint/blob/main/LICENSE)
 
-[![en](https://img.shields.io/badge/lang-en-red.svg)](README.md)
-[![zh](https://img.shields.io/badge/lang-zh--CN-blue.svg)](docs/zh/README.md)
+[English](README.md) | [简体中文](docs/zh/README.md)
 
-**Dead code detection for AI-generated Python codebases.**
+**Dead code detection for AI-generated codebases.**
 
-AI agents generate code rapidly, leaving behind dead and redundant code that pollutes the LLM's context window and dilutes attention. Graphlint analyzes your Python codebase's dependency graph to identify entry points and **detect dead code** — components unreachable from any entry point — so agents can self-clean and keep the codebase lean.
+AI agents generate code rapidly, leaving behind dead and redundant code that pollutes the LLM's context window and dilutes attention. Graphlint analyzes your codebase's dependency graph to identify entry points and **detect dead code** — components unreachable from any entry point — so agents can self-clean and keep the codebase lean.
+
+## Supported Languages
+
+| Language | Status | Parser | Features |
+|----------|--------|--------|----------|
+| **Python** (`.py`) | Built-in | `ast` (stdlib) | Decorators, type annotations, dynamic imports, framework-aware entry detection |
+| **Rust** (`.rs`) | Built-in (opt-in deps) | `tree-sitter` | Attribute macros, traits, `pub` visibility, `macro_rules!` |
+
+Install with Rust support: `pip install graphlint[rust]` (adds `tree-sitter` and `tree-sitter-rust`).
 
 ## Features
 
 - **Dead code detection** — finds components unreachable from any entry point via graph traversal
-- **AST parsing** — extracts classes, functions, methods, variables, and fields; aware of type annotations and unpacked variables (e.g., loop bindings)
+- **Multi-language support** — Python and Rust backends via a language adapter abstraction; Python uses stdlib `ast`, Rust uses `tree-sitter`
+- **Language-specific awareness** — Python decorators, Rust attribute macros (`#[tokio::main]`, `#[test]`), trait implementations, `pub` visibility, and more
+- **AST/CST parsing** — extracts functions, methods, structs, enums, traits, impls, macros, variables, and fields; aware of type annotations and unpacked variables
 - **Dependency graph** — builds directed edges: `read`, `write`, `call`, `inherit`, `decorate`
-- **Entry point detection** — 10 built-in rules (main, FastAPI, Flask, Django, Click, Typer, Celery, pytest, plus package and test entries) and custom rules
-- **Multi-language architecture** — language adapter abstraction layer, laying the foundation for future multi-language support
+- **Entry point detection** — 17 built-in rules covering Python frameworks (FastAPI, Flask, Django, Click, Typer, Celery, pytest) and Rust conventions (main, async runtimes, WASM, proc macros, FFI, tests, pub API) plus custom rules
+- **Configurable entry templates** — add custom entry rules via `ast_pattern` prefixes including `function_call:`, `function_def:`, `decorator:`, `file_match:`, `visibility:pub` (Rust), `trait_impl:` (Rust), `macro_def:` (Rust), and more
+- **`--public-as-entry` flag** — treat all public items (Rust `pub`) as entry points for library-crate analysis
 - **Warning detection** — 11 warning types including circular references, unused imports, write-only variables, and more
 - **Python API + CLI** — integrate into any Tool, CI pipeline, or let agents self-analyze and self-clean
 
@@ -28,6 +39,12 @@ pip install graphlint
 ```
 
 **Requirements:** Python >= 3.9
+
+For Rust support (`.rs` files), install the optional `tree-sitter` dependencies:
+
+```bash
+pip install graphlint[rust]
+```
 
 ## Quick Start
 
@@ -64,6 +81,9 @@ graphlint query -g 1 --detail full
 
 # Exit non-zero when dead code or circular refs found (for CI)
 graphlint query --json --fail-on dead_code,circular_ref
+
+# Treat all public items as entry points (library-crate mode)
+graphlint query --public-as-entry
 
 # Rebuild index
 graphlint build --force
@@ -162,7 +182,10 @@ Full documentation is available in the [docs/](docs/) directory:
 
 ## Limitations
 
-- **Static analysis only** — graphlint performs static analysis and cannot detect runtime linkage such as `getattr`, `importlib`, or dynamic dispatch patterns, which may result in false positives. **Mitigation:** add custom entry rules matching your codebase's conventions. For example, graphlint's own codebase uses `function_def:_detect_*` and `function_def:visit_*` patterns to prevent functions discovered via `getattr` from being flagged as dead.
+- **Static analysis only** — graphlint performs static analysis and cannot detect runtime linkage such as `getattr`, `importlib`, or dynamic dispatch patterns, which may result in false positives. This primarily affects Python; Rust's static dispatch model produces fewer false positives. **Mitigation:** add custom entry rules matching your codebase's conventions. For example, graphlint's own codebase uses `function_def:_detect_*` and `function_def:visit_*` patterns to prevent functions discovered via `getattr` from being flagged as dead.
+- **Python dynamic imports** — due to Python's dynamic import mechanisms (`importlib`, `getattr`, metaclasses, etc.), the default entry templates may produce false positives in codebases that rely heavily on runtime dispatch. Users should tune the `entry_rules` configuration to match their project's conventions.
+- **Rust macro expansion** — tree-sitter parses unexpanded source; procedural macros and `macro_rules!` bodies appear as opaque token trees. Some macro-generated call paths may be missed. `#[derive]` attributes are partially recognized via implicit `inherit` edges.
+- **`--public-as-entry` scope** — this flag only applies to languages with `public` visibility declarations (Rust `pub`). It has no effect on Python files. Toggling this flag triggers a full re-index. For long-term library-crate analysis, prefer enabling the `rust_pub_api` entry rule via `graphlint config` to persist the setting.
 - **Large codebase build time** — on a large codebase with 700+ `.py` files, 1,000+ classes, and 14,000+ functions, a full rebuild takes approximately 200 seconds (actual performance depends on hardware). Small projects (~60 files) complete in ~1 second. **Best practice:** run `query` before making changes to plan your work, and avoid invoking `query` during refactoring to prevent unnecessary index rebuilds.
 
 ## License

@@ -82,10 +82,72 @@ DEFAULT_CONFIG: Dict[str, Any] = {
             "description": "Pytest test collection entry",
             "no_propagate": True,
         },
+        {
+            "name": "rust_main",
+            "file_pattern": "**/*.rs",
+            "ast_pattern": "function_def:main",
+            "enabled": True,
+            "description": "Rust fn main() binary entry point",
+        },
+        {
+            "name": "rust_async_main",
+            "file_pattern": "**/*.rs",
+            "ast_pattern": (
+                "decorator:tokio::main | "
+                "decorator:actix_rt::main | "
+                "decorator:actix_web::main | "
+                "decorator:async_std::main | "
+                "decorator:rocket::main | "
+                "decorator:rocket::launch | "
+                "decorator:main"
+            ),
+            "enabled": True,
+            "description": "Rust async runtime main attribute (tokio, actix, async-std, rocket)",
+        },
+        {
+            "name": "rust_wasm_entry",
+            "file_pattern": "**/*.rs",
+            "ast_pattern": "decorator:wasm_bindgen",
+            "enabled": True,
+            "description": "Rust WASM exports via #[wasm_bindgen]",
+        },
+        {
+            "name": "rust_proc_macro",
+            "file_pattern": "**/*.rs",
+            "ast_pattern": (
+                "decorator:proc_macro | "
+                "decorator:proc_macro_derive | "
+                "decorator:proc_macro_attribute"
+            ),
+            "enabled": True,
+            "description": "Rust proc macro entry points — called by the compiler",
+        },
+        {
+            "name": "rust_ffi_export",
+            "file_pattern": "**/*.rs",
+            "ast_pattern": "decorator:no_mangle | decorator:export_name",
+            "enabled": True,
+            "description": "Rust FFI exports via #[no_mangle] / #[export_name]",
+        },
+        {
+            "name": "rust_test",
+            "file_pattern": "**/*.rs",
+            "ast_pattern": "test_file",
+            "enabled": True,
+            "description": "Rust test files and #[test] functions",
+            "no_propagate": True,
+        },
+        {
+            "name": "rust_pub_api",
+            "file_pattern": "**/*.rs",
+            "ast_pattern": "visibility:pub",
+            "enabled": False,
+            "description": "Rust public API entry (library crate pub items)",
+        },
     ],
     # -------- Test file patterns --------
     "test_patterns": {
-        "file_patterns": ["test_*.py", "*_test.py"],
+        "file_patterns": ["test_*.py", "*_test.py", "test_*.rs", "*_test.rs"],
         "dir_patterns": ["tests/", "test/", "__tests__/"],
         "config_files": ["conftest.py"],
         "function_patterns": ["test_*"],
@@ -112,6 +174,8 @@ DEFAULT_CONFIG: Dict[str, Any] = {
             ".graphlint/",
             "build/",
             "dist/",
+            "target/",
+            ".cargo/",
             "*.egg-info/",
             "*.pyc",
             "*.pyo",

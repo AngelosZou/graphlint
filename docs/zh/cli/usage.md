@@ -45,6 +45,7 @@ graphlint query -j                 # JSON 格式输出
 | `--file-limit` | — | 整数 | `10` | 单图详情最大显示的文件数（0=不限制） |
 | `--node-limit` | — | 整数 | `30` | 单图详情最大显示的节点数（0=不限制） |
 | `--no-scan` | — | 标志 | `false` | 跳过自动扫描/构建，直接查询已有索引 |
+| `--public-as-entry` | — | 标志 | `false` | 将公开方法（Rust `pub`）视为执行入口点 — 详见[入口点检测](../guide/entry-detection.md#-public-as-entry-标志) |
 | `--fail-on` | — | 字符串 | — | 若匹配到指定警告类型则返回非零退出码（逗号分隔） |
 
 ### 示例

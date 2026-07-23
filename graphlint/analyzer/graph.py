@@ -41,7 +41,7 @@ def _resolve_symbol(
     scope_suffix_index: Optional[dict[tuple[str, str], list[int]]] = None,
     class_scope: str = "",
 ) -> list[int]:
-    """Resolve a symbol by exact match first, then suffix match.
+    """Resolve a symbol by exact qualified-name match, then suffix fallback.
 
     Args:
         qname: The symbol simple name to resolve (e.g. ``"field_name"``).
@@ -67,18 +67,23 @@ def _resolve_symbol(
             resolve_cache[cache_key] = result if result else []
         return result
 
+    # Normalise Rust "::" → "." for unified suffix / scope indexing
+    _q = qname.replace("::", ".")
+    _s = scope.replace("::", ".")
+    _cs = class_scope.replace("::", ".")
+
     # Scope-qualified suffix lookup (O(1))
-    if scope and scope_suffix_index:
-        key = (scope, qname)
+    if _s and scope_suffix_index:
+        key = (_s, _q)
         r = scope_suffix_index.get(key)
-        if r is None and class_scope:
-            r = scope_suffix_index.get((class_scope, qname))
+        if r is None and _cs:
+            r = scope_suffix_index.get((_cs, _q))
         if r is not None:
             if resolve_cache is not None:
                 resolve_cache[cache_key] = list(r)
             return list(r)
 
-    r = suffix_index.get(qname)
+    r = suffix_index.get(_q)
     if r:
         result = list(r)
         if scope and len(result) > 1:
@@ -216,7 +221,10 @@ class GraphBuilder:
         qname = node.qualified_name
         if qname:
             self._symbol_index[qname].append(nid)
-            parts = qname.split(".")
+            # Normalize multi-language separators (Python "." / Rust "::")
+            # to "." for unified suffix-index lookups.
+            normalized = qname.replace("::", ".")
+            parts = normalized.split(".")
             for i in range(len(parts)):
                 suffix = ".".join(parts[i:])
                 self._suffix_index[suffix].append(nid)

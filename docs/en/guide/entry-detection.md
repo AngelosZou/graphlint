@@ -1,8 +1,10 @@
 # Entry Point Detection Reference
 
-graphlint has 10 built-in entry point detection rules and supports custom rule extension. On first `graphlint build`, these rules are written as a template into `.graphlint/config.json`; thereafter the config file is the single source of truth — you may add, remove, or modify rules via `graphlint config` or by editing the file directly.
+graphlint has 17 built-in entry point detection rules (10 for Python, 7 for Rust) and supports custom rule extension. On first `graphlint build`, these rules are written as a template into `.graphlint/config.json`; thereafter the config file is the single source of truth — you may add, remove, or modify rules via `graphlint config` or by editing the file directly.
 
 ## Built-in Rules
+
+### Python Rules
 
 ### 1. python_main
 
@@ -167,6 +169,117 @@ Detects Pytest test cases as entry points.
           pass
   ```
 
+### Rust Rules
+
+### 11. rust_main
+
+Detects the Rust binary crate entry point `fn main()`.
+
+- **Match Pattern**: `function_def:main`
+- **Match Files**: `**/*.rs`
+- **Example**:
+  ```rust
+  fn main() {
+      println!("Hello, world!");
+  }
+  ```
+
+### 12. rust_async_main
+
+Detects async runtime `#[...]` attributes that decorate `main`.
+
+- **Match Pattern**: `decorator:tokio::main | decorator:actix_rt::main | decorator:actix_web::main | decorator:async_std::main | decorator:rocket::main | decorator:rocket::launch | decorator:main`
+- **Match Files**: `**/*.rs`
+- **Note**: Rust attribute macros (`#[...]`) are compile-time and do **not** create `decorate` edges in the dependency graph (unlike Python decorators).
+- **Example**:
+  ```rust
+  #[tokio::main]
+  async fn main() {
+      // ...
+  }
+  ```
+
+### 13. rust_wasm_entry
+
+Detects WebAssembly exports.
+
+- **Match Pattern**: `decorator:wasm_bindgen`
+- **Match Files**: `**/*.rs`
+- **Example**:
+  ```rust
+  use wasm_bindgen::prelude::*;
+
+  #[wasm_bindgen]
+  pub fn greet(name: &str) {
+      // ...
+  }
+  ```
+
+### 14. rust_proc_macro
+
+Detects Rust procedural macro entry points called by the compiler.
+
+- **Match Pattern**: `decorator:proc_macro | decorator:proc_macro_derive | decorator:proc_macro_attribute`
+- **Match Files**: `**/*.rs`
+- **Example**:
+  ```rust
+  #[proc_macro]
+  pub fn my_macro(input: TokenStream) -> TokenStream {
+      // ...
+  }
+  ```
+
+### 15. rust_ffi_export
+
+Detects FFI exports via `#[no_mangle]` or `#[export_name]`.
+
+- **Match Pattern**: `decorator:no_mangle | decorator:export_name`
+- **Match Files**: `**/*.rs`
+- **Example**:
+  ```rust
+  #[no_mangle]
+  pub extern "C" fn my_export() {
+      // ...
+  }
+  ```
+
+### 16. rust_test
+
+Detects Rust test files and `#[test]` functions.
+
+- **Match Pattern**: `test_file`
+- **Match Files**: `**/*.rs`
+- **Note**: Test entry points do not propagate reachability to non-test code under test.
+- **Example**:
+  ```rust
+  #[test]
+  fn test_addition() {
+      assert_eq!(2 + 2, 4);
+  }
+  ```
+
+### 17. rust_pub_api
+
+Treats all `pub` items in Rust library crates as entry points.
+
+- **Match Pattern**: `visibility:pub`
+- **Match Files**: `**/*.rs`
+- **Note**: Disabled by default (`"enabled": false`). Use `--public-as-entry` to activate it at query time, or enable the rule in config for persistent library-crate analysis.
+
+## `--public-as-entry` Flag
+
+The `--public-as-entry` flag provides an alternative way to treat public items as entry points without modifying the config:
+
+```bash
+graphlint query --public-as-entry
+```
+
+This flag:
+- Only applies to languages with `public` visibility declarations (Rust `pub`); has no effect on Python files.
+- Toggles independently from the `rust_pub_api` config entry rule — the two are orthogonal mechanisms.
+- **Triggers a full re-index** when switched on or off (detected via the scan stamp).
+- For long-term library-crate analysis, prefer enabling `rust_pub_api` in `.graphlint/config.json` to persist the setting and avoid repeated rebuilds.
+
 ## Custom Rules
 
 Add custom entry detection rules via the `entry_rules` configuration.
@@ -175,15 +288,18 @@ Add custom entry detection rules via the `entry_rules` configuration.
 
 All rules (built-in and custom) use the same prefix syntax, supporting OR combinations with ` | `.
 
-| Prefix | Description | Example |
-|--------|-------------|---------|
-| `function_call:<name>` | Match a function call by name | `"function_call:start_app"` |
-| `function_def:<pattern>` | Match a function definition by name (supports glob) | `"function_def:run_*"` |
-| `decorator:<name>` | Match a decorator by name | `"decorator:app.route"` |
-| `class_instantiation:<name>` | Match a class instantiation by name | `"class_instantiation:MyApp"` |
-| `file_match:<pattern>` | Match a filename pattern | `"file_match:**/startup.py"` |
-| `if_name_main` | Match `if __name__ == '__main__'` | `"if_name_main"` |
-| `test_file` | Match test files (uses `test_patterns` config) | `"test_file"` |
+| Prefix | Description | Example | Applicable |
+|--------|-------------|---------|------------|
+| `function_call:<name>` | Match a function call by name | `"function_call:start_app"` | Python |
+| `function_def:<pattern>` | Match a function definition by name (supports glob) | `"function_def:run_*"` | Python, Rust |
+| `decorator:<name>` | Match a decorator (Python) or attribute macro (Rust `#[...]`) by name | `"decorator:app.route"` / `"decorator:tokio::main"` | Python, Rust |
+| `class_instantiation:<name>` | Match a class instantiation by name | `"class_instantiation:MyApp"` | Python |
+| `file_match:<pattern>` | Match a filename pattern | `"file_match:**/startup.py"` | Python, Rust |
+| `if_name_main` | Match `if __name__ == '__main__'` | `"if_name_main"` | Python |
+| `test_file` | Match test files (uses `test_patterns` config) | `"test_file"` | Python, Rust |
+| `visibility:pub` | Match items with `pub` visibility modifier | `"visibility:pub"` | Rust |
+| `trait_impl:<pattern>` | Match `impl Trait for Type` blocks | `"trait_impl:Default"` | Rust |
+| `macro_def:<pattern>` | Match `macro_rules!` definitions | `"macro_def:my_macro"` | Rust |
 
 ### Custom Rule Examples
 

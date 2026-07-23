@@ -10,7 +10,13 @@ graphlint 提供 **Python API**（可集成到任何 Tool 开发中）和 **CLI*
 pip install graphlint
 ```
 
-要求：Python ≥ 3.9，零第三方依赖。
+要求：Python ≥ 3.9
+
+如需支持 Rust（`.rs` 文件），安装可选的 `tree-sitter` 依赖：
+
+```bash
+pip install graphlint[rust]
+```
 
 ## Agent 集成
 

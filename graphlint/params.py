@@ -238,6 +238,15 @@ PARAM_DEFS: List[ParamDef] = [
         category="query",
     ),
     ParamDef(
+        name="public_as_entry",
+        cli_flags=["--public-as-entry"],
+        type=ParamType.FLAG,
+        default=False,
+        help="Treat public methods/functions as execution entry points (lib mode)",
+        help_key="help.param.public_as_entry",
+        category="query",
+    ),
+    ParamDef(
         name="fail_on",
         cli_flags=["--fail-on"],
         type=ParamType.STR,

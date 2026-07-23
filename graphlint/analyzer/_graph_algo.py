@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from collections import defaultdict, deque
+from collections import deque
 from typing import Optional
 
 from graphlint.analyzer._types import ComponentInfo, EdgeInfo, EntryInfo, NodeInfo
@@ -179,6 +179,8 @@ def find_connected_components(
         adj.setdefault(nid, set())
 
     for edge in edges:
+        if edge.source_id == 0 or edge.target_id == 0:
+            continue  # exclude module pseudo-node — avoids cross-file merging
         adj.setdefault(edge.source_id, set()).add(edge.target_id)
         adj.setdefault(edge.target_id, set()).add(edge.source_id)
 
@@ -218,6 +220,17 @@ def find_connected_components(
         call_graph=call_graph,
         special_method_names=special_method_names,
     )
+
+    # Pre-compute globally reachable file IDs (excluding test-only nodes)
+    # so that isolated module-level variables in reachable files can be
+    # pulled into their file's component via node-0 expansion.
+    global_reachable_fids: set[int] = set()
+    if node_id_map:
+        _non_noprop_reachable = reachable - noprop_ids if noprop_ids else reachable
+        for _nid in _non_noprop_reachable:
+            _ninfo = node_id_map.get(_nid)
+            if _ninfo:
+                global_reachable_fids.add(_ninfo.file_id)
 
     visited: set[int] = set()
     component_map: dict[int, int] = {}
@@ -276,27 +289,29 @@ def find_connected_components(
                         comp_unreachable.discard(sm_nid)
                         q.append(sm_nid)
 
-        # Nodes reachable from module pseudo-node (id=0) via read/call edges.
-        has_real: set[int] = set()
-        zero_src: defaultdict[int, int] = defaultdict(int)
-        for e in edges:
-            if e.source_id and e.target_id:
-                has_real.add(e.source_id)
-                has_real.add(e.target_id)
-            elif e.source_id == 0 and e.target_id:
-                zero_src[e.target_id] += 1
-        for nid, cnt in zero_src.items():
-            if cnt > 1:
-                has_real.add(nid)
-        for e in edges:
-            if e.source_id == 0 and e.target_id in comp_unreachable:
-                if e.edge_type in ("read", "call") and e.target_id in has_real:
-                    comp_reachable.add(e.target_id)
-                    comp_unreachable.discard(e.target_id)
-            elif e.target_id == 0 and e.source_id in comp_unreachable:
-                if e.edge_type in ("read", "call") and e.source_id in has_real:
-                    comp_reachable.add(e.source_id)
-                    comp_unreachable.discard(e.source_id)
+        # Expand via module pseudo-node (id=0) edges for components
+        # with non-test reachable nodes or isolated vars in reachable
+        # files.  Skip test-only (noprop) components.
+        _non_noprop = (
+            comp_reachable - noprop_ids
+            if noprop_ids and comp_reachable
+            else comp_reachable
+        )
+        _expand_via_module = bool(_non_noprop) or not comp_reachable
+        if _expand_via_module:
+            for e in edges:
+                if e.source_id == 0 and e.target_id in comp_unreachable:
+                    if e.edge_type in ("read", "call"):
+                        tgt_info = node_id_map.get(e.target_id, NodeInfo()) if node_id_map else None
+                        if _non_noprop or (tgt_info and tgt_info.file_id in global_reachable_fids):
+                            comp_reachable.add(e.target_id)
+                            comp_unreachable.discard(e.target_id)
+                elif e.target_id == 0 and e.source_id in comp_unreachable:
+                    if e.edge_type in ("read", "call"):
+                        src_info = node_id_map.get(e.source_id, NodeInfo()) if node_id_map else None
+                        if _non_noprop or (src_info and src_info.file_id in global_reachable_fids):
+                            comp_reachable.add(e.source_id)
+                            comp_unreachable.discard(e.source_id)
 
         # Merge public API dunders into reachable components from the same file.
         if comp_reachable and comp_unreachable and node_id_map:

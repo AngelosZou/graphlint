@@ -16,10 +16,17 @@ graphlint 的配置文件位于项目根目录的 `.graphlint/config.json`，使
     {"name": "typer_app",        "ast_pattern": "class_instantiation:typer.Typer | decorator:*.command", "file_pattern": "**/*.py", "enabled": true},
     {"name": "celery_app",       "ast_pattern": "class_instantiation:Celery | class_instantiation:celery.Celery", "file_pattern": "**/*.py", "enabled": true},
     {"name": "pytest_plugin",    "ast_pattern": "function_def:pytest_addoption | decorator:pytest.fixture", "file_pattern": "**/conftest.py", "enabled": true},
-    {"name": "pytest_test",      "ast_pattern": "test_file",                         "file_pattern": "**/*.py",         "enabled": true, "no_propagate": true}
+    {"name": "pytest_test",      "ast_pattern": "test_file",                         "file_pattern": "**/*.py",         "enabled": true, "no_propagate": true},
+    {"name": "rust_main",        "ast_pattern": "function_def:main",                 "file_pattern": "**/*.rs",         "enabled": true},
+    {"name": "rust_async_main",  "ast_pattern": "decorator:tokio::main | decorator:actix_rt::main | decorator:actix_web::main | decorator:async_std::main | decorator:rocket::main | decorator:rocket::launch | decorator:main", "file_pattern": "**/*.rs", "enabled": true},
+    {"name": "rust_wasm_entry",  "ast_pattern": "decorator:wasm_bindgen",            "file_pattern": "**/*.rs",         "enabled": true},
+    {"name": "rust_proc_macro",  "ast_pattern": "decorator:proc_macro | decorator:proc_macro_derive | decorator:proc_macro_attribute", "file_pattern": "**/*.rs", "enabled": true},
+    {"name": "rust_ffi_export",  "ast_pattern": "decorator:no_mangle | decorator:export_name", "file_pattern": "**/*.rs", "enabled": true},
+    {"name": "rust_test",        "ast_pattern": "test_file",                         "file_pattern": "**/*.rs",         "enabled": true, "no_propagate": true},
+    {"name": "rust_pub_api",     "ast_pattern": "visibility:pub",                    "file_pattern": "**/*.rs",         "enabled": false}
   ],
   "exclude_patterns": {
-    "always_exclude": ["__pycache__/", ".mypy_cache/", ".pytest_cache/", ".tox/", ".venv/", "venv/", "env/", "virtualenv/", ".env/", "node_modules/", ".git/", ".svn/", ".hg/", ".idea/", ".vscode/", ".vs/", ".graphlint/", "build/", "dist/", "*.egg-info/", "*.pyc", "*.pyo"],
+    "always_exclude": ["__pycache__/", ".mypy_cache/", ".pytest_cache/", ".tox/", ".venv/", "venv/", "env/", "virtualenv/", ".env/", "node_modules/", ".git/", ".svn/", ".hg/", ".idea/", ".vscode/", ".vs/", ".graphlint/", "build/", "dist/", "target/", ".cargo/", "*.egg-info/", "*.pyc", "*.pyo"],
     "user_exclude": []
   },
   "lang": "system",
@@ -36,7 +43,7 @@ graphlint 的配置文件位于项目根目录的 `.graphlint/config.json`，使
   "test_patterns": {
     "config_files": ["conftest.py"],
     "dir_patterns": ["tests/", "test/", "__tests__/"],
-    "file_patterns": ["test_*.py", "*_test.py"],
+    "file_patterns": ["test_*.py", "*_test.py", "test_*.rs", "*_test.rs"],
     "function_patterns": ["test_*"]
   },
   "version": 1
@@ -58,19 +65,36 @@ graphlint 的配置文件位于项目根目录的 `.graphlint/config.json`，使
 | `enabled` | `boolean` | 是否启用 |
 | `no_propagate` | `boolean` | 入口点不传播可达性（默认 `false`，如 pytest 测试规则设为 `true`） |
 
+**注意：** `rust_pub_api` 规则（模式 `visibility:pub`，仅限 Rust）**默认禁用**（`"enabled": false`）。在查询时使用 `--public-as-entry`，或手动在配置中设为 `"enabled": true` 以实现持久的库代码分析。
+
+### --public-as-entry 标志
+
+`--public-as-entry` CLI 标志（或 API 参数 `public_as_entry=True`）将所有公开项视为执行入口点：
+
+```bash
+graphlint query --public-as-entry
+```
+
+- **适用范围：** 仅影响具有 `public` 可见性声明的语言（Rust `pub`），对 Python 文件无效。
+- **重新索引：** 开关此标志会触发全量重建（标志值存储在扫描戳中）。长期使用建议启用 `rust_pub_api` 配置规则或添加自定义 `visibility:pub` 入口规则，以避免反复重建。
+- **配置交互：** 与 `rust_pub_api` 配置规则独立——两者是正交的机制，互不干扰。
+
 #### AST 模式前缀
 
 所有规则使用统一的前缀模式语法，支持 ` | ` 分隔的 OR 组合：
 
-| 前缀 | 匹配目标 | 示例 |
-|------|----------|------|
-| `function_call:` | 函数调用 | `"function_call:my_entry"` |
-| `function_def:` | 函数定义名（支持 glob） | `"function_def:run_*"` |
-| `decorator:` | 装饰器 | `"decorator:app.route"` |
-| `class_instantiation:` | 类实例化 | `"class_instantiation:MyApp"` |
-| `file_match:` | 文件名匹配 | `"file_match:**/main.py"` |
-| `if_name_main` | `if __name__ == '__main__'` 检测 | `"if_name_main"` |
-| `test_file` | 测试文件检测（使用 `test_patterns` 配置） | `"test_file"` |
+| 前缀 | 匹配目标 | 示例 | 适用语言 |
+|------|----------|------|----------|
+| `function_call:` | 函数调用 | `"function_call:my_entry"` | Python |
+| `function_def:` | 函数定义名（支持 glob） | `"function_def:run_*"` | Python、Rust |
+| `decorator:` | 装饰器或属性宏（`#[...]`） | `"decorator:app.route"` / `"decorator:tokio::main"` | Python、Rust |
+| `class_instantiation:` | 类实例化 | `"class_instantiation:MyApp"` | Python |
+| `file_match:` | 文件名匹配 | `"file_match:**/main.py"` | Python、Rust |
+| `if_name_main` | `if __name__ == '__main__'` 检测 | `"if_name_main"` | Python |
+| `test_file` | 测试文件检测（使用 `test_patterns` 配置） | `"test_file"` | Python、Rust |
+| `visibility:pub` | 匹配具有 `pub` 可见性修饰符的项目 | `"visibility:pub"` | Rust |
+| `trait_impl:` | 匹配 `impl Trait for Type` 实现块 | `"trait_impl:Default"` | Rust |
+| `macro_def:` | 匹配 `macro_rules!` 定义 | `"macro_def:my_macro"` | Rust |
 
 ### exclude_patterns — 排除模式
 

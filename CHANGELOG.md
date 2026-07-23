@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.3.0] - 2026-07-23
+
+### Added
+- Experimental Rust language analysis via `tree-sitter-rust` (opt-in via `[rust]`
+  optional dependency group)
+- `query --public-as-entry` option: treats all public functions/methods as entry
+  points for dead-code reachability analysis
+- `pub_api` entry rule template (disabled by default) for projects that want
+  public API surface as the primary entry
+
+
 ## [0.2.0] - 2026-07-22
 
 ### Added

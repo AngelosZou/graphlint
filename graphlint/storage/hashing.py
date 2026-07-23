@@ -29,7 +29,10 @@ def is_test_file(file_path: str, test_patterns: dict[str, list[str]]) -> bool:
     dirname = os.path.dirname(file_path).replace(os.sep, "/")
 
     # Check file name patterns
-    file_patterns = test_patterns.get("file_patterns", ["test_*.py", "*_test.py"])
+    file_patterns = test_patterns.get(
+        "file_patterns",
+        ["test_*.py", "*_test.py", "test_*.rs", "*_test.rs"],
+    )
     for pattern in file_patterns:
         if fnmatch.fnmatch(basename, pattern):
             return True

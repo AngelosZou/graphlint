@@ -12,7 +12,6 @@ from typing import Any, Optional
 
 from graphlint.analyzer._types import NodeInfo, ParseResult
 from graphlint.analyzer.graph import GraphBuilder
-from graphlint.analyzer.language.python.parser import _parse_file_worker
 from graphlint.analyzer.language.registry import LanguageRegistry
 from graphlint.analyzer.warnings import WarningCollector, WarningInfo
 from graphlint.config.manager import ConfigManager
@@ -51,6 +50,7 @@ class IncrementalIndexer:
         db: Database,
         parallel_workers: int = 0,
         registry: Optional[LanguageRegistry] = None,
+        public_as_entry: bool = False,
     ) -> None:
         self.root_dir = os.path.realpath(root_dir)
         self.db = db
@@ -60,6 +60,7 @@ class IncrementalIndexer:
         self.config_manager = ConfigManager(self.root_dir)
         self.config = self.config_manager.load()
         self.registry = registry
+        self.public_as_entry = public_as_entry
 
     def run(
         self,
@@ -228,7 +229,7 @@ class IncrementalIndexer:
         stamp_path = os.path.join(self.root_dir, ".graphlint", ".last_scan_stamp")
         os.makedirs(os.path.dirname(stamp_path), exist_ok=True)
         with open(stamp_path, "w") as f:
-            json.dump({"files": files}, f)
+            json.dump({"files": files, "public_as_entry": self.public_as_entry}, f)
 
     def _scan_with_mtime(self) -> list[tuple[str, int]]:
         """Scan source files via the language registry."""
@@ -239,16 +240,38 @@ class IncrementalIndexer:
     # -- Parallel parsing -------------------------------------------------
 
     def _parse_batch(self, fps: list[str]) -> list[tuple[str, ParseResult]]:
-        """Parse files in parallel using ProcessPoolExecutor."""
-        results = []
+        """Parse files in parallel using ProcessPoolExecutor.
+
+        Routes each file to its language adapter's worker function
+        so that .py and .rs files can be parsed concurrently.
+        """
+        results: list[tuple[str, ParseResult]] = []
         workers = min(self.parallel_workers, len(fps), 64) or 1
         with ProcessPoolExecutor(max_workers=workers) as ex:
             futs = {}
             for fp in fps:
+                full_path = os.path.join(self.root_dir, fp)
+                adapter = self.registry.adapter_for_file(fp) if self.registry else None
+                if not adapter:
+                    results.append((
+                        fp,
+                        ParseResult(
+                            file_path=fp,
+                            warnings=[
+                                WarningInfo(
+                                    warn_type="syntax_error",
+                                    severity="error",
+                                    message=f"No language adapter for: {fp}",
+                                    file_path=fp,
+                                )
+                            ],
+                        ),
+                    ))
+                    continue
                 futs[
                     ex.submit(
-                        _parse_file_worker,
-                        os.path.join(self.root_dir, fp),
+                        adapter.worker_function,
+                        full_path,
                         self.root_dir,
                         self.config,
                     )
@@ -318,7 +341,21 @@ class IncrementalIndexer:
     def _create_builder(self, wc: WarningCollector) -> GraphBuilder:
         cfg: dict[str, Any] = dict(self.config)
         cfg["_root_dir"] = self.root_dir
+        _apply_public_as_entry(cfg, self.public_as_entry)
         return GraphBuilder(warning_collector=wc, config=cfg, registry=self.registry)
+
+
+def _apply_public_as_entry(config: dict[str, Any], public_as_entry: bool) -> None:
+    """Signal to language adapters that public items should be treated as entry points.
+
+    This flag is independent of the configured entry rules — when True,
+    adapters detect public items (e.g. Rust ``pub fn``) as additional
+    entry points regardless of whether a ``visibility:pub`` rule exists.
+
+    When False (default), only explicitly configured entry rules apply.
+    """
+    if public_as_entry:
+        config["_public_as_entry"] = True
 
 
 def _row_to_node(row: Any) -> NodeInfo:

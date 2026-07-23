@@ -203,7 +203,7 @@ class TestUpdateScanStamp:
             stamp_path = tmp_path / ".graphlint" / ".last_scan_stamp"
             assert stamp_path.exists()
             data = json.loads(stamp_path.read_text(encoding="utf-8"))
-            assert data == {"files": {}}
+            assert data == {"files": {}, "public_as_entry": False}
         finally:
             db.close()
 

@@ -452,6 +452,15 @@ class ASTVisitor(ast.NodeVisitor):
         self._current_func_id = func_node_id
         self._global_names = set()
         self._context.append(node.name)
+        # Visit default parameter values with function scope so that
+        # read references (e.g. ``def f(x = _EMPTY_FROZENSET)``) are
+        # attributed to the function, not the module.
+        if hasattr(node, "args") and isinstance(node.args, ast.arguments):
+            for default in node.args.defaults:
+                self.visit(default)
+            for d in node.args.kw_defaults:
+                if d is not None:
+                    self.visit(d)
         for item in node.body:
             self.visit(item)
         self._context.pop()
@@ -466,10 +475,10 @@ class ASTVisitor(ast.NodeVisitor):
     def _resolve_target_context(self, target: ast.expr) -> tuple[int, str]:
         """Determine parent_id and node_type for an assignment target.
 
-        - ``self.xxx`` / ``cls.xxx`` targets inside a class → field of the class
-        - plain ``Name`` targets at class body level → field of the class
-        - plain ``Name`` targets inside a method → local variable of the method
-        - plain ``Name`` targets at module level → module variable
+        - ``self.xxx`` / ``cls.xxx`` inside a class → field
+        - ``Name`` at class body level → field
+        - ``Name`` inside a method → local variable
+        - ``Name`` at module level → module variable
         """
         has_class = self._current_class_id != 0
         has_func = self._current_func_id != 0
@@ -503,7 +512,14 @@ class ASTVisitor(ast.NodeVisitor):
             self._extract_target(target, node_type, parent_id, node)
             self._visit_target_subexpr(target)
 
-        self.visit(node.value)
+        # Attribute read references to the first target so that
+        # ``X = Y`` at module level creates a read edge from X → Y.
+        if node.targets and isinstance(node.targets[0], ast.Name):
+            self._context.append(node.targets[0].id)
+            self.visit(node.value)
+            self._context.pop()
+        else:
+            self.visit(node.value)
 
     def visit_AnnAssign(self, node: ast.AnnAssign) -> None:
         """Emit write references and extract annotated variable/field nodes."""
@@ -563,7 +579,13 @@ class ASTVisitor(ast.NodeVisitor):
                 node.target, node_type, parent_id, node, type_ann
             )
         if node.value:
-            self.visit(node.value)
+            # Create read edge from the assigned value to the target symbol.
+            if isinstance(node.target, ast.Name):
+                self._context.append(node.target.id)
+                self.visit(node.value)
+                self._context.pop()
+            else:
+                self.visit(node.value)
 
     # ------------------------------------------------------------------
     # Augmented assignment

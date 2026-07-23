@@ -16,10 +16,17 @@ graphlint's configuration file is located at `.graphlint/config.json` in the pro
     {"name": "typer_app",        "ast_pattern": "class_instantiation:typer.Typer | decorator:*.command", "file_pattern": "**/*.py", "enabled": true},
     {"name": "celery_app",       "ast_pattern": "class_instantiation:Celery | class_instantiation:celery.Celery", "file_pattern": "**/*.py", "enabled": true},
     {"name": "pytest_plugin",    "ast_pattern": "function_def:pytest_addoption | decorator:pytest.fixture", "file_pattern": "**/conftest.py", "enabled": true},
-    {"name": "pytest_test",      "ast_pattern": "test_file",                         "file_pattern": "**/*.py",         "enabled": true, "no_propagate": true}
+    {"name": "pytest_test",      "ast_pattern": "test_file",                         "file_pattern": "**/*.py",         "enabled": true, "no_propagate": true},
+    {"name": "rust_main",        "ast_pattern": "function_def:main",                 "file_pattern": "**/*.rs",         "enabled": true},
+    {"name": "rust_async_main",  "ast_pattern": "decorator:tokio::main | decorator:actix_rt::main | decorator:actix_web::main | decorator:async_std::main | decorator:rocket::main | decorator:rocket::launch | decorator:main", "file_pattern": "**/*.rs", "enabled": true},
+    {"name": "rust_wasm_entry",  "ast_pattern": "decorator:wasm_bindgen",            "file_pattern": "**/*.rs",         "enabled": true},
+    {"name": "rust_proc_macro",  "ast_pattern": "decorator:proc_macro | decorator:proc_macro_derive | decorator:proc_macro_attribute", "file_pattern": "**/*.rs", "enabled": true},
+    {"name": "rust_ffi_export",  "ast_pattern": "decorator:no_mangle | decorator:export_name", "file_pattern": "**/*.rs", "enabled": true},
+    {"name": "rust_test",        "ast_pattern": "test_file",                         "file_pattern": "**/*.rs",         "enabled": true, "no_propagate": true},
+    {"name": "rust_pub_api",     "ast_pattern": "visibility:pub",                    "file_pattern": "**/*.rs",         "enabled": false}
   ],
   "exclude_patterns": {
-    "always_exclude": ["__pycache__/", ".mypy_cache/", ".pytest_cache/", ".tox/", ".venv/", "venv/", "env/", "virtualenv/", ".env/", "node_modules/", ".git/", ".svn/", ".hg/", ".idea/", ".vscode/", ".vs/", ".graphlint/", "build/", "dist/", "*.egg-info/", "*.pyc", "*.pyo"],
+    "always_exclude": ["__pycache__/", ".mypy_cache/", ".pytest_cache/", ".tox/", ".venv/", "venv/", "env/", "virtualenv/", ".env/", "node_modules/", ".git/", ".svn/", ".hg/", ".idea/", ".vscode/", ".vs/", ".graphlint/", "build/", "dist/", "target/", ".cargo/", "*.egg-info/", "*.pyc", "*.pyo"],
     "user_exclude": []
   },
   "lang": "system",
@@ -36,7 +43,7 @@ graphlint's configuration file is located at `.graphlint/config.json` in the pro
   "test_patterns": {
     "config_files": ["conftest.py"],
     "dir_patterns": ["tests/", "test/", "__tests__/"],
-    "file_patterns": ["test_*.py", "*_test.py"],
+    "file_patterns": ["test_*.py", "*_test.py", "test_*.rs", "*_test.rs"],
     "function_patterns": ["test_*"]
   },
   "version": 1
@@ -58,19 +65,36 @@ Defines how code entry points are auto-detected. Each rule contains:
 | `enabled` | `boolean` | Whether the rule is enabled |
 | `no_propagate` | `boolean` | Entry does not propagate reachability (default `false`, e.g. pytest test rules set to `true`) |
 
+**Note:** The `rust_pub_api` rule (pattern `visibility:pub`, Rust only) is **disabled by default** (`"enabled": false`). Use `--public-as-entry` at query time, or manually set `"enabled": true` in the config for persistent library-crate analysis.
+
+### --public-as-entry Flag
+
+The `--public-as-entry` CLI flag (or `public_as_entry=True` API parameter) treats all public items as execution entry points:
+
+```bash
+graphlint query --public-as-entry
+```
+
+- **Scope:** Only affects languages with `public` visibility declarations (Rust `pub`). Has no effect on Python files.
+- **Re-indexing:** Toggling the flag triggers a full rebuild (the flag value is stored in the scan stamp). For long-term use, prefer enabling the `rust_pub_api` config rule or adding custom `visibility:pub` entry rules to avoid repeated rebuilds.
+- **Config interaction:** Independent of the `rust_pub_api` config rule — the two mechanisms are orthogonal and do not interfere.
+
 #### AST Pattern Prefixes
 
 All rules use the same prefix pattern syntax, supporting OR combinations with ` | `:
 
-| Prefix | Match Target | Example |
-|--------|-------------|---------|
-| `function_call:` | Function call | `"function_call:my_entry"` |
-| `function_def:` | Function definition name (supports glob) | `"function_def:run_*"` |
-| `decorator:` | Decorator | `"decorator:app.route"` |
-| `class_instantiation:` | Class instantiation | `"class_instantiation:MyApp"` |
-| `file_match:` | Filename match | `"file_match:**/main.py"` |
-| `if_name_main` | `if __name__ == '__main__'` check | `"if_name_main"` |
-| `test_file` | Test file detection (uses `test_patterns` config) | `"test_file"` |
+| Prefix | Match Target | Example | Languages |
+|--------|-------------|---------|-----------|
+| `function_call:` | Function call | `"function_call:my_entry"` | Python |
+| `function_def:` | Function definition name (supports glob) | `"function_def:run_*"` | Python, Rust |
+| `decorator:` | Decorator or attribute macro (`#[...]`) | `"decorator:app.route"` / `"decorator:tokio::main"` | Python, Rust |
+| `class_instantiation:` | Class instantiation | `"class_instantiation:MyApp"` | Python |
+| `file_match:` | Filename match | `"file_match:**/main.py"` | Python, Rust |
+| `if_name_main` | `if __name__ == '__main__'` check | `"if_name_main"` | Python |
+| `test_file` | Test file detection (uses `test_patterns` config) | `"test_file"` | Python, Rust |
+| `visibility:pub` | Items with `pub` visibility modifier | `"visibility:pub"` | Rust |
+| `trait_impl:` | Trait implementation block | `"trait_impl:Default"` | Rust |
+| `macro_def:` | `macro_rules!` definition | `"macro_def:my_macro"` | Rust |
 
 ### exclude_patterns — Exclude Patterns
 

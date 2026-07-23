@@ -11,6 +11,7 @@ from typing import Any, Optional, Union
 import sys
 import traceback
 
+from graphlint.analyzer.language.base import LanguageAdapter
 from graphlint.analyzer.language.python import PythonAdapter
 from graphlint.analyzer.language.registry import LanguageRegistry
 from graphlint.analyzer.warnings import WarningCollector
@@ -33,7 +34,25 @@ def _build_registry() -> LanguageRegistry:
     """Build the default language registry with all built-in adapters."""
     registry = LanguageRegistry()
     registry.register(PythonAdapter())
+    # Rust adapter — silently skipped when tree-sitter is not installed
+    _try_register_rust(registry)
     return registry
+
+
+def _try_register_rust(registry: LanguageRegistry) -> None:
+    """Register the Rust adapter if tree-sitter is available."""
+    try:
+        from graphlint.analyzer.language.rust import RustAdapter
+        from graphlint.analyzer.language.rust.constants import _TREE_SITTER_AVAILABLE
+
+        if _TREE_SITTER_AVAILABLE:
+            registry.register(RustAdapter())
+        else:
+            print("Rust support requires tree-sitter. "
+                  "Please install it with: pip install graphlint[rust]")
+    except ImportError:
+        print("Rust support requires tree-sitter. "
+              "Please install it with: pip install graphlint[rust]")
 
 
 # ---------------------------------------------------------------------------
@@ -61,6 +80,7 @@ def query(
     file_limit: int = 10,
     node_limit: int = 30,
     no_scan: bool = False,
+    public_as_entry: bool = False,
     lang: str = "system",
 ) -> Union[str, dict[str, Any]]:
     """Query the dependency graph."""
@@ -80,7 +100,7 @@ def query(
 
     # Auto incremental build (filesystem scan only if unchanged)
     if not no_scan:
-        if not _auto_build(root_dir, config, registry):
+        if not _auto_build(root_dir, config, registry, public_as_entry=public_as_entry):
             print(
                 "[graphlint] Warning: index may be stale. "
                 "Run 'graphlint build --force' to rebuild.",
@@ -146,6 +166,7 @@ def build(
     force_rebuild: bool = False,
     parallel: int = 0,
     root_dir: str = ".",
+    public_as_entry: bool = False,
     lang: str = "system",
 ) -> dict[str, Any]:
     """Build/update the index."""
@@ -162,7 +183,10 @@ def build(
     wc = WarningCollector()
 
     try:
-        indexer = IncrementalIndexer(root_dir, db, parallel, registry=registry)
+        indexer = IncrementalIndexer(
+            root_dir, db, parallel, registry=registry,
+            public_as_entry=public_as_entry,
+        )
         result = indexer.run(force_rebuild=force_rebuild, warning_collector=wc)
         return {
             "status": "ok",
@@ -293,8 +317,16 @@ def _parse_warn_types(warn_types: Optional[str]) -> Optional[list[str]]:
     return items
 
 
-def _scan_current(root_dir: str, registry: LanguageRegistry | None = None) -> tuple[bool, dict[str, int]]:
-    """Detect file changes against the last saved scan stamp."""
+def _scan_current(
+    root_dir: str,
+    registry: LanguageRegistry | None = None,
+    public_as_entry: Optional[bool] = None,
+) -> tuple[bool, dict[str, int]]:
+    """Detect file changes against the last saved scan stamp.
+    
+    When *public_as_entry* is provided (not None), the stamp also
+    records this flag so that a change in the flag triggers a rebuild.
+    """
     if registry is None:
         registry = _build_registry()
     stamp_file = os.path.join(root_dir, ".graphlint", ".last_scan_stamp")
@@ -306,6 +338,7 @@ def _scan_current(root_dir: str, registry: LanguageRegistry | None = None) -> tu
         saved = {}
         stamp_ok = False
     saved_files = saved.get("files", {})
+    saved_pub = saved.get("public_as_entry", False)
 
     scanned = registry.scan_files(root_dir)
     current_files = {rel: mtime for rel, mtime in scanned}
@@ -321,14 +354,22 @@ def _scan_current(root_dir: str, registry: LanguageRegistry | None = None) -> tu
             changed = True
             break
 
+    if public_as_entry is not None and public_as_entry != saved_pub:
+        changed = True
+
     return changed, current_files
 
 
-def _auto_build(root_dir: str, config: dict[str, Any], registry: LanguageRegistry | None = None) -> bool:
+def _auto_build(
+    root_dir: str,
+    config: dict[str, Any],
+    registry: LanguageRegistry | None = None,
+    public_as_entry: bool = False,
+) -> bool:
     """Run auto build. Returns True on success."""
     if registry is None:
         registry = _build_registry()
-    changed, current_files = _scan_current(root_dir, registry)
+    changed, current_files = _scan_current(root_dir, registry, public_as_entry)
     if not changed:
         return True
     db = None
@@ -336,7 +377,10 @@ def _auto_build(root_dir: str, config: dict[str, Any], registry: LanguageRegistr
         db = Database(root_dir)
         wc = WarningCollector()
         parallel = config.get("performance", {}).get("parallel_workers", 0)
-        indexer = IncrementalIndexer(root_dir, db, parallel, registry=registry)
+        indexer = IncrementalIndexer(
+            root_dir, db, parallel, registry=registry,
+            public_as_entry=public_as_entry,
+        )
         indexer.run(force_rebuild=True, warning_collector=wc, pre_scanned_files=current_files)
         return True
     except Exception as exc:
@@ -355,7 +399,10 @@ def _auto_build(root_dir: str, config: dict[str, Any], registry: LanguageRegistr
                         pass
                 db2 = Database(root_dir)
                 wc2 = WarningCollector()
-                indexer2 = IncrementalIndexer(root_dir, db2, parallel, registry=registry)
+                indexer2 = IncrementalIndexer(
+                    root_dir, db2, parallel, registry=registry,
+                    public_as_entry=public_as_entry,
+                )
                 indexer2.run(force_rebuild=True, warning_collector=wc2)
                 return True
             except Exception as exc2:

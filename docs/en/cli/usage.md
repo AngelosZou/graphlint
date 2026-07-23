@@ -45,6 +45,7 @@ graphlint query -j                 # JSON format output
 | `--file-limit` | — | int | `10` | Max files shown in graph detail (0=unlimited) |
 | `--node-limit` | — | int | `30` | Max nodes shown in graph detail (0=unlimited) |
 | `--no-scan` | — | flag | `false` | Skip auto-scan/build, query existing index only |
+| `--public-as-entry` | — | flag | `false` | Treat public methods (Rust `pub`) as execution entry points — see [Entry Detection](../guide/entry-detection.md#-public-as-entry-flag) |
 | `--fail-on` | — | string | — | Exit non-zero if matching warning types found (comma-separated) |
 
 ### Examples

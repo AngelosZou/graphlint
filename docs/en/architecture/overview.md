@@ -1,6 +1,6 @@
 # Architecture Overview
 
-graphlint is positioned as a dead code detection tool for AI-generated codebases. It analyzes the dependency graph to find components unreachable from all entry points (dead code), helping agents clean redundant code and reduce context pollution and attention dilution.
+graphlint is positioned as a dead code detection tool for AI-generated codebases (Python, Rust, and more in the future). It analyzes the dependency graph to find components unreachable from all entry points (dead code), helping agents clean redundant code and reduce context pollution and attention dilution.
 
 ## Overall Architecture
 
@@ -97,8 +97,8 @@ AST Parse (ast.parse / other language parser)
     │
     ▼
 ASTVisitor Traversal (single pass)
-    ├── Extract nodes (classes/functions/methods/variables/fields)
-    ├── Parse import statements
+    ├── Extract nodes (classes/functions/methods/structs/enums/traits/impls/variables/fields)
+    ├── Parse import statements (Python) / use declarations (Rust)
     ├── Collect name usage
     └── Collect structured references (ReferenceInfo — read/write/call/inherit/decorate)
     │

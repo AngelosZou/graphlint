@@ -10,7 +10,13 @@ graphlint provides a **Python API** (for integration into any Tool development) 
 pip install graphlint
 ```
 
-Requirements: Python >= 3.9, zero third-party dependencies.
+Requirements: Python >= 3.9
+
+For Rust support (`.rs` files), install the optional `tree-sitter` dependencies:
+
+```bash
+pip install graphlint[rust]
+```
 
 ## Agent Integration
 
