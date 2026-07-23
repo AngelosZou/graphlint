@@ -20,7 +20,7 @@ class TestImportAnalyzer:
             yield
 
     def test_absolute_import(self):
-        """import os' with os.path usage → is_used=True."""
+        """'import os' with os.path usage → is_used=True."""
         imp = ImportInfo(
             module_path="os",
             imported_names=["os"],
@@ -33,7 +33,7 @@ class TestImportAnalyzer:
         assert len(unused) == 0
 
     def test_unused_import(self):
-        """import json' never used → is_used=False with warning."""
+        """'import json' never used → is_used=False with warning."""
         imp = ImportInfo(
             module_path="json",
             imported_names=["json"],
@@ -45,7 +45,7 @@ class TestImportAnalyzer:
         assert unused[0][0].module_path == "json"
 
     def test_star_import(self):
-        """from os import *' → imported_names=['*']."""
+        """'from os import *' → imported_names=['*']."""
         imp = ImportInfo(
             module_path="os",
             imported_names=["*"],
