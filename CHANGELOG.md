@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.3.1] - 2026-07-24
+
+### Added
+- Cargo workspace detection: `[[bin]]` path entries in `Cargo.toml` are now
+  recognized as Rust language entry points
+
+### Fixed
+- SQLite `IN` clause batching: queries with >999 variables are now split into
+  batches to avoid the SQLite variable limit, preventing crashes on large
+  codebases
+- Dotted imports (`import X.Y.Z`) are now correctly detected as used, fixing
+  false-positive `unused_import` warnings for multi-level imports
+- Relaxed `tree-sitter-rust` version bound to allow Rust grammar v15+
+
 ## [0.3.0] - 2026-07-23
 
 ### Added
