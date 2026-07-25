@@ -30,6 +30,7 @@ Install with Rust support: `pip install graphlint[rust]` (adds `tree-sitter` and
 - **Configurable entry templates** — add custom entry rules via `ast_pattern` prefixes including `function_call:`, `function_def:`, `decorator:`, `file_match:`, `visibility:pub` (Rust), `trait_impl:` (Rust), `macro_def:` (Rust), and more
 - **`--public-as-entry` flag** — treat all public items (Rust `pub`) as entry points for library-crate analysis
 - **Warning detection** — 11 warning types including circular references, unused imports, write-only variables, and more
+- **Incremental updates** — after initial full scan, only changed files are re-indexed; subsequent queries leverage cached data to minimize computation overhead
 - **Python API + CLI** — integrate into any Tool, CI pipeline, or let agents self-analyze and self-clean
 
 ## Installation
@@ -186,7 +187,7 @@ Full documentation is available in the [docs/](https://github.com/AngelosZou/gra
 - **Python dynamic imports** — due to Python's dynamic import mechanisms (`importlib`, `getattr`, metaclasses, etc.), the default entry templates may produce false positives in codebases that rely heavily on runtime dispatch. Users should tune the `entry_rules` configuration to match their project's conventions.
 - **Rust macro expansion** — tree-sitter parses unexpanded source; procedural macros and `macro_rules!` bodies appear as opaque token trees. Some macro-generated call paths may be missed. `#[derive]` attributes are partially recognized via implicit `inherit` edges.
 - **`--public-as-entry` scope** — this flag only applies to languages with `public` visibility declarations (Rust `pub`). It has no effect on Python files. Toggling this flag triggers a full re-index. For long-term library-crate analysis, prefer enabling the `rust_pub_api` entry rule via `graphlint config` to persist the setting.
-- **Large codebase build time** — on a large codebase with 700+ `.py` files, 1,000+ classes, and 14,000+ functions, a full rebuild takes approximately 200 seconds (actual performance depends on hardware). Small projects (~60 files) complete in ~1 second. **Best practice:** run `query` before making changes to plan your work, and avoid invoking `query` during refactoring to prevent unnecessary index rebuilds.
+- **Large codebase build time** — on a large codebase with 700+ `.py` files, 1,000+ classes, and 14,000+ functions, a full rebuild takes approximately 200 seconds (actual performance depends on hardware). Small projects (~60 files) complete in ~1 second. This cost is one-time, after the initial full scan, subsequent queries use incremental updates.
 
 ## License
 

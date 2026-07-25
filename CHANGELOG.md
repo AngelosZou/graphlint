@@ -2,6 +2,24 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.3.2] - 2026-07-25
+
+### Changed
+- First-time builds now run a full rebuild; all subsequent queries use
+  incremental mode (previously every query forced a full rebuild)
+- Incremental rebuild restructured into 6 clearly delineated phases: Remove →
+  Parse → Downstream Reconnect → Rebuild → Persist → Verify
+
+### Fixed
+- Incremental rebuild: empty `set()` passed as `changed_files` was treated as
+  falsy and replaced with all files, causing unnecessary full re-parse
+- Incremental rebuild: unchanged child nodes whose parent received a new ID in
+  a changed file had stale `parent_node_id` values in the database (in-memory
+  remapping was not written back)
+- Incremental rebuild: removed files were not included in downstream
+  reconnection, causing FOREIGN KEY violations when prebuilt edges referenced
+  deleted symbols
+
 ## [0.3.1] - 2026-07-24
 
 ### Added

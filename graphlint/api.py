@@ -366,13 +366,17 @@ def _auto_build(
     registry: LanguageRegistry | None = None,
     public_as_entry: bool = False,
 ) -> bool:
-    """Run auto build. Returns True on success."""
+    """Run auto build. Returns True on success.
+    """
     if registry is None:
         registry = _build_registry()
     changed, current_files = _scan_current(root_dir, registry, public_as_entry)
     if not changed:
         return True
+
     db = None
+    db_path = os.path.join(root_dir, ".graphlint", "db.sqlite")
+    db_exists = os.path.isfile(db_path)
     try:
         db = Database(root_dir)
         wc = WarningCollector()
@@ -381,7 +385,13 @@ def _auto_build(
             root_dir, db, parallel, registry=registry,
             public_as_entry=public_as_entry,
         )
-        indexer.run(force_rebuild=True, warning_collector=wc, pre_scanned_files=current_files)
+
+        # Use incremental rebuild when DB exists; full rebuild for first time
+        indexer.run(
+            force_rebuild=not db_exists,
+            warning_collector=wc,
+            pre_scanned_files=current_files,
+        )
         return True
     except Exception as exc:
         msg = str(exc)

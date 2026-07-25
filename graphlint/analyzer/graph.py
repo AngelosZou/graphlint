@@ -270,7 +270,8 @@ class GraphBuilder:
         """
         fid_map: dict[str, int] = {}
         fid_cnt = 1
-        changed_files = changed_files or set(parse_results)
+        if changed_files is None:
+            changed_files = set(parse_results)
 
         # Build reverse lookup: (qualified_name, file_path) → old_id for changed file nodes
         qn_fp_to_old: dict[tuple[str, str], int] = {}

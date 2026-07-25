@@ -438,6 +438,40 @@ def build_snapshots(
     _save_component_members(db, build_result.component_map)
 
 
+def persist_unchanged_parent_node_ids(
+    db: Database,
+    build_result: GraphBuildResult,
+    changed_files: list[str],
+) -> None:
+    """Persist parent_node_id remappings for unchanged file nodes.
+
+    When a parent in a changed file receives a new global node ID during
+    incremental rebuild, any unchanged child nodes that reference the old
+    parent ID must be updated in the DB.
+    """
+    if not changed_files:
+        return
+    changed_set = set(changed_files)
+    mem_fid_to_path: dict[int, str] = dict(enumerate(build_result.files, 1))
+    fid_map = {r["path"]: r["id"] for r in db.fetchall("SELECT id, path FROM files")}
+
+    batch: list[tuple[Any, ...]] = []
+    for node in build_result.nodes:
+        fp = mem_fid_to_path.get(node.file_id, "")
+        if not fp or fp in changed_set:
+            continue
+        db_fid = fid_map.get(fp, 0)
+        if not db_fid:
+            continue
+        batch.append((node.parent_node_id or None, node.id))
+
+    if batch:
+        db.executemany(
+            "UPDATE nodes SET parent_node_id = ? WHERE id = ?",
+            batch,
+        )
+
+
 def update_snapshots(
     db: Database,
     build_result: GraphBuildResult,

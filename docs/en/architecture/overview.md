@@ -197,3 +197,54 @@ Write to SQLite database
     ▼
 Return statistics
 ```
+
+### Incremental Rebuild Mechanism
+
+When files change, graphlint avoids re-parsing the entire codebase. Instead, it performs a targeted incremental rebuild in six phases:
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  Phase 1: Remove                                            │
+│  Delete all data for changed+removed files from DB          │
+│  (nodes, edges, imports — both internal and cross-file)     │
+├─────────────────────────────────────────────────────────────┤
+│  Phase 2: Parse                                             │
+│  Re-parse changed files via AST; load unchanged files from  │
+│  the DB cache (hashed via SHA256)                            │
+├─────────────────────────────────────────────────────────────┤
+│  Phase 3: Downstream Reconnect                              │
+│  Restore edges from unchanged files → changed files.        │
+│  These "prebuilt" edges were recorded in the DB before the  │
+│  changed files' old data was removed. Each edge is re-      │
+│  validated against the new node IDs in the rebuilt graph.   │
+│  Edges referencing removed-file symbols are filtered out.   │
+├─────────────────────────────────────────────────────────────┤
+│  Phase 4: Rebuild                                           │
+│  GraphBuilder reconstructs:                                 │
+│    • Upstream edges — within changed files + changed →      │
+│      unchanged + changed → external (these may differ from  │
+│      the original connections)                              │
+│    • Downstream remapping — prebuilt edges from Phase 3     │
+│      are remapped to new node IDs                           │
+│    • Component analysis — full connected-component pass     │
+│      on the assembled graph                                 │
+├─────────────────────────────────────────────────────────────┤
+│  Phase 5: Persist                                           │
+│  Write updated nodes/edges back to SQLite. Fix              │
+│  parent_node_id remappings for unchanged nodes whose        │
+│  parent received a new ID in a changed file (the in-memory  │
+│  remapping was previously not written back to DB).          │
+├─────────────────────────────────────────────────────────────┤
+│  Phase 6: Verify                                            │
+│  Lightweight integrity check: detect dangling edge          │
+│  references and log warnings without aborting the build.    │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**Key design decisions:**
+
+- **Upstream vs. downstream**: Upstream edges (changed → others) are rebuilt from scratch by `GraphBuilder` because the changed code may have added, removed, or altered its references. Downstream edges (others → changed) are restored from precomputed records because unchanged code's references are stable — we only need to remap node IDs.
+
+- **Reachability propagation**: After upstream edges are rebuilt, `GraphBuilder` performs a full connected-component analysis on the assembled graph. This detects which nodes are reachable from entry points given the new upstream connections. When a node's reachability changes (previously reachable nodes may become unreachable if upstream references were removed, and vice versa), the change propagates to downstream nodes via the restored edges.
+
+- **Caching strategy**: Unchanged files are not re-parsed. Their nodes, edges, and metadata are loaded directly from the SQLite database, validated by SHA256 hash comparison. This keeps the incremental rebuild cost proportional to the number of changed files, not the total codebase size.

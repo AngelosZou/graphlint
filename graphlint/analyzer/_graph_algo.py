@@ -20,6 +20,7 @@ def compute_entry_reachability(
     file_id_map: Optional[dict[str, int]] = None,
     call_graph: Optional[dict[int, list[int]]] = None,
     special_method_names: frozenset[str] = _EMPTY_FROZENSET,
+    class_special_map: Optional[dict[int, list[int]]] = None,
 ) -> tuple[set[int], set[int]]:
     """Directed reachability analysis from entry points via CALL edges.
 
@@ -68,8 +69,8 @@ def compute_entry_reachability(
     queue: deque[int] = deque(entry_ids)
 
     # Precompute class -> [child special method IDs] mapping
-    class_special_map: dict[int, list[int]] = {}
-    if node_id_map:
+    if class_special_map is None and node_id_map:
+        class_special_map = {}
         for nid, ninfo in node_id_map.items():
             if ninfo.name in special_method_names and ninfo.parent_node_id:
                 class_special_map.setdefault(ninfo.parent_node_id, []).append(nid)
@@ -107,6 +108,7 @@ def _split_unreachable_by_call(
     comp_id_start: int,
     node_id_map: Optional[dict[int, NodeInfo]] = None,
     special_method_names: frozenset[str] = _EMPTY_FROZENSET,
+    class_special_map: Optional[dict[int, list[int]]] = None,
 ) -> tuple[dict[int, int], list[ComponentInfo], int]:
     """Split unreachable nodes by CALL edges (undirected) into potential dead code components."""
     call_adj: dict[int, set[int]] = {nid: set() for nid in unreachable}
@@ -116,7 +118,15 @@ def _split_unreachable_by_call(
             call_adj.setdefault(edge.target_id, set()).add(edge.source_id)
 
     # Include synthetic containment edges for special methods.
-    if node_id_map:
+    if class_special_map:
+        for parent, child_ids in class_special_map.items():
+            if parent not in unreachable:
+                continue
+            for cid in child_ids:
+                if cid in unreachable:
+                    call_adj.setdefault(cid, set()).add(parent)
+                    call_adj.setdefault(parent, set()).add(cid)
+    elif node_id_map:
         for nid, ninfo in node_id_map.items():
             if (
                 ninfo.name in special_method_names
@@ -215,15 +225,21 @@ def find_connected_components(
             if tgt and tgt.node_type in ("function", "class", "method"):
                 call_graph.setdefault(edge.source_id, []).append(edge.target_id)
 
+    # Precompute class->[special method child IDs] once (O(N)).
+    class_special_map: dict[int, list[int]] = {}
+    if node_id_map:
+        for _nid, _ninfo in node_id_map.items():
+            if _ninfo.name in special_method_names and _ninfo.parent_node_id:
+                class_special_map.setdefault(_ninfo.parent_node_id, []).append(_nid)
+
     reachable, noprop_ids = compute_entry_reachability(
         edges, entries, node_id_map, file_id_map,
         call_graph=call_graph,
         special_method_names=special_method_names,
+        class_special_map=class_special_map,
     )
 
     # Pre-compute globally reachable file IDs (excluding test-only nodes)
-    # so that isolated module-level variables in reachable files can be
-    # pulled into their file's component via node-0 expansion.
     global_reachable_fids: set[int] = set()
     if node_id_map:
         _non_noprop_reachable = reachable - noprop_ids if noprop_ids else reachable
@@ -231,6 +247,16 @@ def find_connected_components(
             _ninfo = node_id_map.get(_nid)
             if _ninfo:
                 global_reachable_fids.add(_ninfo.file_id)
+
+    # Pre-compute node-0 connected node IDs (O(E) once)
+    _zero_targets: set[int] = set()
+    _zero_sources: set[int] = set()
+    for _e in edges:
+        if _e.edge_type in ("read", "call"):
+            if _e.source_id == 0 and _e.target_id:
+                _zero_targets.add(_e.target_id)
+            elif _e.target_id == 0 and _e.source_id:
+                _zero_sources.add(_e.source_id)
 
     visited: set[int] = set()
     component_map: dict[int, int] = {}
@@ -266,11 +292,6 @@ def find_connected_components(
         if noprop_ids:
             seed = seed - noprop_ids
         q = deque(seed)
-        class_special_map: dict[int, list[int]] = {}
-        if node_id_map:
-            for _nid, _ninfo in node_id_map.items():
-                if _ninfo.name in special_method_names and _ninfo.parent_node_id:
-                    class_special_map.setdefault(_ninfo.parent_node_id, []).append(_nid)
         while q:
             cur = q.popleft()
             if cur == 0:
@@ -299,19 +320,17 @@ def find_connected_components(
         )
         _expand_via_module = bool(_non_noprop) or not comp_reachable
         if _expand_via_module:
-            for e in edges:
-                if e.source_id == 0 and e.target_id in comp_unreachable:
-                    if e.edge_type in ("read", "call"):
-                        tgt_info = node_id_map.get(e.target_id, NodeInfo()) if node_id_map else None
-                        if _non_noprop or (tgt_info and tgt_info.file_id in global_reachable_fids):
-                            comp_reachable.add(e.target_id)
-                            comp_unreachable.discard(e.target_id)
-                elif e.target_id == 0 and e.source_id in comp_unreachable:
-                    if e.edge_type in ("read", "call"):
-                        src_info = node_id_map.get(e.source_id, NodeInfo()) if node_id_map else None
-                        if _non_noprop or (src_info and src_info.file_id in global_reachable_fids):
-                            comp_reachable.add(e.source_id)
-                            comp_unreachable.discard(e.source_id)
+            for _nid in list(comp_unreachable):
+                if _nid not in _zero_targets and _nid not in _zero_sources:
+                    continue
+                if _non_noprop:
+                    comp_reachable.add(_nid)
+                    comp_unreachable.discard(_nid)
+                elif node_id_map:
+                    _ni = node_id_map.get(_nid)
+                    if _ni and _ni.file_id in global_reachable_fids:
+                        comp_reachable.add(_nid)
+                        comp_unreachable.discard(_nid)
 
         # Merge public API dunders into reachable components from the same file.
         if comp_reachable and comp_unreachable and node_id_map:
@@ -346,6 +365,7 @@ def find_connected_components(
                 comp_id,
                 node_id_map,
                 special_method_names=special_method_names,
+                class_special_map=class_special_map,
             )
             component_map.update(sub_map)
             components.extend(sub_comps)

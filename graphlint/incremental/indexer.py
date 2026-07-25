@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import sys
 import json
 import os
 import time
@@ -19,6 +20,7 @@ from graphlint.incremental._db_ops import (
     build_snapshots,
     load_old_changed_node_ids,
     load_prebuilt_edges,
+    persist_unchanged_parent_node_ids,
     update_db,
     update_snapshots,
 )
@@ -154,6 +156,7 @@ class IncrementalIndexer:
             )
             build_snapshots(self.db, br)
         else:
+            # ------ Phase 1-2: Parse changed / load unchanged ----------------
             if changed:
                 for fp, pr in self._parse_batch(changed):
                     if fp in hash_cache:
@@ -164,10 +167,12 @@ class IncrementalIndexer:
             if unchanged:
                 pr_map.update(self._load_unchanged(unchanged))
 
+            # ------ Phase 3: Prepare downstream reconnection ----------------
             old_ids: dict[int, tuple[str, str]] = {}
             prebuilt = None
-            if changed:
-                old_ids = load_old_changed_node_ids(self.db, changed)
+            affected = changed + removed
+            if affected:
+                old_ids = load_old_changed_node_ids(self.db, affected)
                 if unchanged:
                     sql_fid_map = {
                         r["path"]: r["id"]
@@ -180,19 +185,26 @@ class IncrementalIndexer:
                             sql_to_mem[sfid] = idx
                     prebuilt = load_prebuilt_edges(self.db, unchanged, sql_to_mem)
 
+            # ------ Phase 4: Rebuild graph (upstream + downstream + analysis) --
             builder = self._create_builder(wc)
             br = builder.build(
                 pr_map,
-                changed_files=set(changed) if changed else None,
+                changed_files=set(changed),
                 prebuilt_edges=prebuilt,
                 old_changed_node_ids=old_ids if old_ids else None,
             )
+
+            # ------ Phase 5: Persist to DB ---------------------------------------
             update_db(
                 self.db, br, removed, changed,
                 self.root_dir, self.config.get("test_patterns", {}),
                 incremental=True,
             )
+            persist_unchanged_parent_node_ids(self.db, br, changed)
             update_snapshots(self.db, br)
+
+            # ------ Phase 6: Lightweight consistency check ------------------------
+            self._verify_incremental_integrity(br)
 
         self.db.execute("PRAGMA wal_checkpoint(TRUNCATE)")
         self._update_scan_stamp(disk_files, file_mtimes)
@@ -337,6 +349,34 @@ class IncrementalIndexer:
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
+
+    def _verify_incremental_integrity(self, br: GraphBuildResult) -> None:
+        """Lightweight self-consistency check after incremental rebuild.
+
+        Verifies that no edge references a non-existent node ID and that
+        all nodes referenced by edges exist in the nodes table.
+        Issues are logged but do not abort the build.
+        """
+        # Check for dangling edge references
+        existing_ids: set[int] = set()
+        for row in self.db.fetchall("SELECT id FROM nodes"):
+            existing_ids.add(row["id"])
+
+        dangling_source = 0
+        dangling_target = 0
+        for row in self.db.fetchall("SELECT id, source_id, target_id FROM edges"):
+            if row["source_id"] not in existing_ids:
+                dangling_source += 1
+            if row["target_id"] not in existing_ids:
+                dangling_target += 1
+
+        if dangling_source or dangling_target:
+            print(
+                f"[graphlint] Incremental integrity warning: "
+                f"{dangling_source} edges with dangling source, "
+                f"{dangling_target} edges with dangling target",
+                file=sys.stderr,
+            )
 
     def _create_builder(self, wc: WarningCollector) -> GraphBuilder:
         cfg: dict[str, Any] = dict(self.config)
