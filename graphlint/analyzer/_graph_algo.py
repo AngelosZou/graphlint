@@ -258,6 +258,17 @@ def find_connected_components(
             elif _e.target_id == 0 and _e.source_id:
                 _zero_sources.add(_e.source_id)
 
+    # Pre-build entry indexes for O(1) per-component matching
+    _nid_to_entries: dict[int, list[EntryInfo]] = {}
+    _fid_to_entries: dict[int, list[EntryInfo]] = {}
+    for entry in entries:
+        if entry.node_id:
+            _nid_to_entries.setdefault(entry.node_id, []).append(entry)
+        elif file_id_map:
+            fid = file_id_map.get(entry.file_path, 0)
+            if fid:
+                _fid_to_entries.setdefault(fid, []).append(entry)
+
     visited: set[int] = set()
     component_map: dict[int, int] = {}
     components: list[ComponentInfo] = []
@@ -268,9 +279,13 @@ def find_connected_components(
         if nid in visited:
             continue
 
+        # discover component nodes and initial reachable seeds
         queue: deque[int] = deque([nid])
         visited.add(nid)
         comp_nodes: set[int] = {nid}
+        comp_reachable: set[int] = set()
+        if nid in reachable:
+            comp_reachable.add(nid)
 
         while queue:
             current = queue.popleft()
@@ -279,15 +294,19 @@ def find_connected_components(
                     visited.add(neighbor)
                     queue.append(neighbor)
                     comp_nodes.add(neighbor)
+                    if neighbor in reachable:
+                        comp_reachable.add(neighbor)
 
-        comp_entries = _match_entries(entries, comp_nodes, node_id_map, file_id_map)
+        comp_entries = _match_entries(
+            entries, comp_nodes, node_id_map, file_id_map,
+            nid_to_entries=_nid_to_entries, fid_to_entries=_fid_to_entries,
+        )
         has_entry = len(comp_entries) > 0
-        comp_nodes.discard(0)  # Exclude module root pseudo-node
-        comp_reachable = {nid for nid in comp_nodes if nid in reachable}
+        comp_nodes.discard(0)
+        comp_reachable.discard(0)
         comp_unreachable = comp_nodes - comp_reachable
 
-        # BFS expansion from reachable seed set via undirected edges.
-        # Node 0 (module pseudo-node): only expand via read/call edges.
+        # BFS expansion from reachable seeds via undirected edges
         seed = comp_reachable
         if noprop_ids:
             seed = seed - noprop_ids
@@ -296,13 +315,13 @@ def find_connected_components(
             cur = q.popleft()
             if cur == 0:
                 continue
-            for nid in adj.get(cur, set()):
-                if nid == 0 or nid in comp_reachable:
+            for nb in adj.get(cur, set()):
+                if nb == 0 or nb in comp_reachable:
                     continue
-                if nid in comp_unreachable:
-                    comp_reachable.add(nid)
-                    comp_unreachable.discard(nid)
-                    q.append(nid)
+                if nb in comp_unreachable:
+                    comp_reachable.add(nb)
+                    comp_unreachable.discard(nb)
+                    q.append(nb)
             if cur in class_special_map:
                 for sm_nid in class_special_map[cur]:
                     if sm_nid in comp_unreachable:
@@ -370,51 +389,52 @@ def find_connected_components(
             component_map.update(sub_map)
             components.extend(sub_comps)
 
-    # Post-process: merge dead code sub-components into live components.
-    x_edges: dict[int, set[int]] = {}
+    # Post-process: merge dead components into live ones via inherit/decorate edges.
+    comp_adj: dict[int, set[int]] = {}
     for e in edges:
         if e.edge_type not in ("inherit", "decorate"):
             continue
         cs = component_map.get(e.source_id)
         ct = component_map.get(e.target_id)
         if cs is not None and ct is not None and cs != ct:
-            x_edges.setdefault(cs, set()).add(ct)
-            x_edges.setdefault(ct, set()).add(cs)
+            comp_adj.setdefault(cs, set()).add(ct)
+            comp_adj.setdefault(ct, set()).add(cs)
 
     comp_by_id: dict[int, ComponentInfo] = {c.component_id: c for c in components}
+    live_comp_ids: set[int] = {c.component_id for c in components if not c.is_dead_code}
 
-    changed = True
-    while changed:
-        changed = False
-        for comp in list(components):
-            if not comp.is_dead_code:
+    # each connected group containing a live
+    # component merges all its dead members into the largest live one.
+    comp_visited: set[int] = set()
+    for live_cid in sorted(live_comp_ids):
+        if live_cid in comp_visited:
+            continue
+        group: set[int] = {live_cid}
+        comp_visited.add(live_cid)
+        q_comp: deque[int] = deque([live_cid])
+        while q_comp:
+            cur_cid = q_comp.popleft()
+            for nb_cid in comp_adj.get(cur_cid, set()):
+                if nb_cid not in comp_visited:
+                    comp_visited.add(nb_cid)
+                    q_comp.append(nb_cid)
+                    group.add(nb_cid)
+
+        group_live = group & live_comp_ids
+        group_dead = group - group_live
+        if not group_dead:
+            continue
+
+        target_cid = max(group_live, key=lambda cid: len(comp_by_id[cid].node_ids))
+        target_comp = comp_by_id[target_cid]
+        for dead_cid in group_dead:
+            dead_comp = comp_by_id.pop(dead_cid, None)
+            if dead_comp is None:
                 continue
-            neighbors = x_edges.get(comp.component_id, set())
-            if not neighbors:
-                continue
-            # Find all adjacent live components
-            live_nbrs = []
-            for nbr in neighbors:
-                nbr_comp = comp_by_id.get(nbr)
-                if nbr_comp and not nbr_comp.is_dead_code:
-                    live_nbrs.append(nbr_comp)
-            if not live_nbrs:
-                continue
-            target = max(live_nbrs, key=lambda c: len(c.node_ids))
-            target.node_ids.update(comp.node_ids)
-            for nid in list(comp.node_ids):
-                component_map[nid] = target.component_id
-            for other in list(neighbors):
-                if other == target.component_id:
-                    continue
-                x_edges.setdefault(other, set()).discard(comp.component_id)
-                x_edges.setdefault(other, set()).add(target.component_id)
-                x_edges.setdefault(target.component_id, set()).add(other)
-            x_edges.pop(comp.component_id, None)
-            comp_by_id.pop(comp.component_id, None)
-            components.remove(comp)
-            changed = True
-            break
+            target_comp.node_ids.update(dead_comp.node_ids)
+            for _nid in dead_comp.node_ids:
+                component_map[_nid] = target_cid
+            components.remove(dead_comp)
 
     return component_map, components
 
@@ -512,11 +532,28 @@ def _match_entries(
     comp_nodes: set[int],
     node_id_map: dict[int, NodeInfo],
     file_id_map: Optional[dict[str, int]] = None,
+    nid_to_entries: Optional[dict[int, list[EntryInfo]]] = None,
+    fid_to_entries: Optional[dict[int, list[EntryInfo]]] = None,
 ) -> list[EntryInfo]:
-    """Match entry points to connected components."""
+    """Match entry points to connected components.
+    """
+    matched: list[EntryInfo] = []
+
+    if nid_to_entries is not None and fid_to_entries is not None:
+        comp_file_ids: set[int] = set()
+        for nid in comp_nodes:
+            for entry in nid_to_entries.get(nid, []):
+                matched.append(entry)
+            enode = node_id_map.get(nid)
+            if enode:
+                comp_file_ids.add(enode.file_id)
+        for fid in comp_file_ids:
+            for entry in fid_to_entries.get(fid, []):
+                matched.append(entry)
+        return matched
+
     if file_id_map is None:
         file_id_map = {}
-    matched: list[EntryInfo] = []
     for entry in entries:
         if entry.node_id in comp_nodes:
             matched.append(entry)
