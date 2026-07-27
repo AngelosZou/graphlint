@@ -385,17 +385,3 @@ class TestEntryPointDetector:
         result = _make_result("app.py", [node], source=source)
         entries = detector.detect({"app.py": result}, [node], {1: node})
         assert len(entries) == 0
-
-    def test_update_output(self):
-        """update_output marks matching nodes as entry points."""
-        from graphlint.analyzer._types import EntryInfo
-        node = _make_node(1, "main", node_type="function")
-        entries = [EntryInfo(
-            rule_name="test",
-            file_path="test.py",
-            line=1,
-            node_id=1,
-        )]
-        node_id_by_key = {1: node}
-        EntryPointDetector.update_output(entries, node_id_by_key)
-        assert node.is_entry is True

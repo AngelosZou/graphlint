@@ -71,17 +71,6 @@ class EntryPointDetector:
                 )
         return entries
 
-    @staticmethod
-    def update_output(
-        entries: list[EntryInfo], node_id_by_key: dict[int, NodeInfo]
-    ) -> None:
-        """Mark detected entry points on the corresponding NodeInfo."""
-        for entry in entries:
-            if entry.node_id and entry.node_id in node_id_by_key:
-                node = node_id_by_key[entry.node_id]
-                if node:
-                    node.is_entry = True
-
     # ------------------------------------------------------------------
     # Unified rule detection (single path for built-in & custom)
     # ------------------------------------------------------------------

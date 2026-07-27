@@ -8,6 +8,10 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 from typing import Any, Optional
 
 from graphlint.analyzer._graph_algo import (
+    _build_call_graph,
+    _build_class_special_map,
+    _build_digraph,
+    _build_undirected_adj,
     detect_circular_refs,
     find_connected_components,
 )
@@ -419,6 +423,13 @@ class GraphBuilder:
         expanded: set[int] = set()
         reachable: set[int] = set()
 
+        _sn = self._get_special_names()
+        _pn = self._get_public_api_names()
+        _cached_adj = _build_undirected_adj(self._edges, self._node_id_map, _sn, _pn)
+        _cached_cg = _build_call_graph(self._edges, self._node_id_map)
+        _cached_csm = _build_class_special_map(self._node_id_map, _sn)
+        _cached_dg = _build_digraph(self._nodes, self._edges)
+
         changed_nids: Optional[set[int]] = None
         if changed_files is not None and old_reachable is not None:
             changed_fids = {fid_map[fp] for fp in changed_files if fp in fid_map}
@@ -432,15 +443,18 @@ class GraphBuilder:
             self._node_id_map,
             entries,
             fid_map,
-            public_api_names=self._get_public_api_names(),
-            special_method_names=self._get_special_names(),
+            public_api_names=_pn,
+            special_method_names=_sn,
             expanded_out=expanded,
             changed_node_ids=changed_nids,
             old_reachable=old_reachable,
             reachable_out=reachable,
+            cached_adj=_cached_adj,
+            cached_call_graph=_cached_cg,
+            cached_class_special_map=_cached_csm,
         )
         file_id_to_path = {v: k for k, v in fid_map.items()}
-        self._add_warnings(comps, file_id_to_path)
+        self._add_warnings(comps, file_id_to_path, cached_digraph=_cached_dg)
 
         return GraphBuildResult(
             nodes=list(self._nodes),
@@ -531,6 +545,7 @@ class GraphBuilder:
         self,
         comps: list[ComponentInfo],
         file_id_to_path: Optional[dict[int, str]] = None,
+        cached_digraph: Optional[dict[int, list[int]]] = None,
     ) -> None:
         """Collect all warning types."""
         if file_id_to_path is None:
@@ -556,7 +571,7 @@ class GraphBuilder:
                 w.node_id,
                 w.details,
             )
-        for w in detect_circular_refs(self._nodes, self._edges, self._node_id_map):
+        for w in detect_circular_refs(self._nodes, self._edges, self._node_id_map, cached_digraph=cached_digraph):
             self.warning_collector.add(
                 w.warn_type,
                 w.severity,

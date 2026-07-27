@@ -13,6 +13,87 @@ from graphlint.analyzer.warnings import WarningInfo
 _EMPTY_FROZENSET: frozenset[str] = frozenset()
 
 
+def _build_undirected_adj(
+    edges: list[EdgeInfo],
+    node_id_map: Optional[dict[int, NodeInfo]],
+    special_method_names: frozenset[str] = _EMPTY_FROZENSET,
+    public_api_names: frozenset[str] = _EMPTY_FROZENSET,
+) -> dict[int, set[int]]:
+    """Build undirected adjacency dict from edges plus synthetic containment edges."""
+    adj: dict[int, set[int]] = {}
+    for edge in edges:
+        if edge.source_id == 0 or edge.target_id == 0:
+            continue
+        adj.setdefault(edge.source_id, set()).add(edge.target_id)
+        adj.setdefault(edge.target_id, set()).add(edge.source_id)
+
+    if not node_id_map:
+        return adj
+
+    for nid, ninfo in node_id_map.items():
+        if ninfo.name in special_method_names and ninfo.parent_node_id:
+            parent = ninfo.parent_node_id
+            adj.setdefault(nid, set()).add(parent)
+            adj.setdefault(parent, set()).add(nid)
+
+    if public_api_names:
+        _fid_first: dict[int, int] = {}
+        for _ninfo in node_id_map.values():
+            if _ninfo.name not in public_api_names and _ninfo.file_id not in _fid_first:
+                _fid_first[_ninfo.file_id] = _ninfo.id
+        for _ninfo in node_id_map.values():
+            if _ninfo.name in public_api_names and _ninfo.node_type in ("variable", "field"):
+                _first = _fid_first.get(_ninfo.file_id)
+                if _first is not None:
+                    adj.setdefault(_ninfo.id, set()).add(_first)
+                    adj.setdefault(_first, set()).add(_ninfo.id)
+
+    return adj
+
+
+def _build_call_graph(
+    edges: list[EdgeInfo],
+    node_id_map: Optional[dict[int, NodeInfo]] = None,
+) -> dict[int, list[int]]:
+    """Build directed call graph from edges (CALL edges + READ edges targeting funcs/classes)."""
+    call_graph: dict[int, list[int]] = {}
+    for edge in edges:
+        if edge.edge_type == "call":
+            call_graph.setdefault(edge.source_id, []).append(edge.target_id)
+        elif edge.edge_type == "read" and node_id_map:
+            tgt = node_id_map.get(edge.target_id)
+            if tgt and tgt.node_type in ("function", "class", "method"):
+                call_graph.setdefault(edge.source_id, []).append(edge.target_id)
+    return call_graph
+
+
+def _build_digraph(
+    nodes: list[NodeInfo],
+    edges: list[EdgeInfo],
+) -> dict[int, list[int]]:
+    """Build directed graph for SCC detection (CALL + INHERIT edges)."""
+    digraph: dict[int, list[int]] = {}
+    for node in nodes:
+        digraph[node.id] = []
+    for edge in edges:
+        if edge.edge_type in ("call", "inherit"):
+            digraph.setdefault(edge.source_id, []).append(edge.target_id)
+    return digraph
+
+
+def _build_class_special_map(
+    node_id_map: Optional[dict[int, NodeInfo]],
+    special_method_names: frozenset[str] = _EMPTY_FROZENSET,
+) -> dict[int, list[int]]:
+    """Build class -> [child special method IDs] mapping for efficient propagation."""
+    class_map: dict[int, list[int]] = {}
+    if node_id_map:
+        for nid, ninfo in node_id_map.items():
+            if ninfo.name in special_method_names and ninfo.parent_node_id:
+                class_map.setdefault(ninfo.parent_node_id, []).append(nid)
+    return class_map
+
+
 def _resolve_entries(
     entries: list[EntryInfo],
     node_id_map: Optional[dict[int, NodeInfo]],
@@ -146,7 +227,7 @@ def _incremental_reachability(
     for eid in entry_ids:
         reachable.add(eid)
 
-    if not reachable:
+    if not reachable and not _noprop:
         return set(), _noprop
 
     # forward BFS
@@ -214,6 +295,7 @@ def _incremental_reachability(
                 if ninfo.node_type in ("variable", "field"):
                     reachable.add(nid)
 
+    reachable.update(_noprop)
     return reachable, _noprop
 
 
@@ -224,34 +306,42 @@ def _split_unreachable_by_call(
     node_id_map: Optional[dict[int, NodeInfo]] = None,
     special_method_names: frozenset[str] = _EMPTY_FROZENSET,
     class_special_map: Optional[dict[int, list[int]]] = None,
+    cached_adj: Optional[dict[int, set[int]]] = None,
 ) -> tuple[dict[int, int], list[ComponentInfo], int]:
     """Split unreachable nodes by CALL edges (undirected) into potential dead code components."""
-    call_adj: dict[int, set[int]] = {nid: set() for nid in unreachable}
-    for edge in edges:
-        if edge.source_id in unreachable and edge.target_id in unreachable:
-            call_adj.setdefault(edge.source_id, set()).add(edge.target_id)
-            call_adj.setdefault(edge.target_id, set()).add(edge.source_id)
+    if cached_adj is not None:
+        call_adj: dict[int, set[int]] = {}
+        for nid in unreachable:
+            nbrs = cached_adj.get(nid)
+            call_adj[nid] = (nbrs & unreachable) if nbrs else set()
+    else:
+        call_adj = {nid: set() for nid in unreachable}
+        for edge in edges:
+            if edge.source_id in unreachable and edge.target_id in unreachable:
+                call_adj.setdefault(edge.source_id, set()).add(edge.target_id)
+                call_adj.setdefault(edge.target_id, set()).add(edge.source_id)
 
     # Include synthetic containment edges for special methods.
-    if class_special_map:
-        for parent, child_ids in class_special_map.items():
-            if parent not in unreachable:
-                continue
-            for cid in child_ids:
-                if cid in unreachable:
-                    call_adj.setdefault(cid, set()).add(parent)
-                    call_adj.setdefault(parent, set()).add(cid)
-    elif node_id_map:
-        for nid, ninfo in node_id_map.items():
-            if (
-                ninfo.name in special_method_names
-                and ninfo.parent_node_id
-                and nid in unreachable
-                and ninfo.parent_node_id in unreachable
-            ):
-                parent = ninfo.parent_node_id
-                call_adj.setdefault(nid, set()).add(parent)
-                call_adj.setdefault(parent, set()).add(nid)
+    if cached_adj is None:
+        if class_special_map:
+            for parent, child_ids in class_special_map.items():
+                if parent not in unreachable:
+                    continue
+                for cid in child_ids:
+                    if cid in unreachable:
+                        call_adj.setdefault(cid, set()).add(parent)
+                        call_adj.setdefault(parent, set()).add(cid)
+        elif node_id_map:
+            for nid, ninfo in node_id_map.items():
+                if (
+                    ninfo.name in special_method_names
+                    and ninfo.parent_node_id
+                    and nid in unreachable
+                    and ninfo.parent_node_id in unreachable
+                ):
+                    parent = ninfo.parent_node_id
+                    call_adj.setdefault(nid, set()).add(parent)
+                    call_adj.setdefault(parent, set()).add(nid)
 
     comp_map: dict[int, int] = {}
     comps: list[ComponentInfo] = []
@@ -300,56 +390,70 @@ def find_connected_components(
     changed_node_ids: Optional[set[int]] = None,
     old_reachable: Optional[set[int]] = None,
     reachable_out: Optional[set[int]] = None,
+    cached_adj: Optional[dict[int, set[int]]] = None,
+    cached_call_graph: Optional[dict[int, list[int]]] = None,
+    cached_class_special_map: Optional[dict[int, list[int]]] = None,
 ) -> tuple[dict[int, int], list[ComponentInfo]]:
     """Find all connected components."""
-    adj: dict[int, set[int]] = {}
-    for node in nodes:
-        nid = node.id
-        adj.setdefault(nid, set())
+    if cached_adj is not None:
+        adj = cached_adj
+    else:
+        adj = {}
+        for edge in edges:
+            if edge.source_id == 0 or edge.target_id == 0:
+                continue  # exclude module pseudo-node — avoids cross-file merging
+            adj.setdefault(edge.source_id, set()).add(edge.target_id)
+            adj.setdefault(edge.target_id, set()).add(edge.source_id)
 
-    for edge in edges:
-        if edge.source_id == 0 or edge.target_id == 0:
-            continue  # exclude module pseudo-node — avoids cross-file merging
-        adj.setdefault(edge.source_id, set()).add(edge.target_id)
-        adj.setdefault(edge.target_id, set()).add(edge.source_id)
+        # Add synthetic containment edges for special method overloads.
+        if node_id_map:
+            for nid, ninfo in node_id_map.items():
+                if ninfo.name in special_method_names and ninfo.parent_node_id:
+                    parent = ninfo.parent_node_id
+                    adj.setdefault(nid, set()).add(parent)
+                    adj.setdefault(parent, set()).add(nid)
 
-    # Add synthetic containment edges for special method overloads.
-    if node_id_map:
-        for nid, ninfo in node_id_map.items():
-            if ninfo.name in special_method_names and ninfo.parent_node_id:
-                parent = ninfo.parent_node_id
-                adj.setdefault(nid, set()).add(parent)
-                adj.setdefault(parent, set()).add(nid)
+        # Connect public API dunders to their file's first non-dunder node.
+        if node_id_map:
+            _fid_first: dict[int, int] = {}
+            for _ninfo in node_id_map.values():
+                if _ninfo.name not in public_api_names and _ninfo.file_id not in _fid_first:
+                    _fid_first[_ninfo.file_id] = _ninfo.id
+            for _ninfo in node_id_map.values():
+                if _ninfo.name in public_api_names and _ninfo.node_type in ("variable", "field"):
+                    _first = _fid_first.get(_ninfo.file_id)
+                    if _first is not None:
+                        adj.setdefault(_ninfo.id, set()).add(_first)
+                        adj.setdefault(_first, set()).add(_ninfo.id)
 
-    # Connect public API dunders to their file's first non-dunder node.
-    if node_id_map:
-        _fid_first: dict[int, int] = {}
-        for _ninfo in node_id_map.values():
-            if _ninfo.name not in public_api_names and _ninfo.file_id not in _fid_first:
-                _fid_first[_ninfo.file_id] = _ninfo.id
-        for _ninfo in node_id_map.values():
-            if _ninfo.name in public_api_names and _ninfo.node_type in ("variable", "field"):
-                _first = _fid_first.get(_ninfo.file_id)
-                if _first is not None:
-                    adj.setdefault(_ninfo.id, set()).add(_first)
-                    adj.setdefault(_first, set()).add(_ninfo.id)
-
-    # Pre-build call_graph once to avoid repeated traversal inside compute_entry_reachability
-    call_graph: dict[int, list[int]] = {}
-    for edge in edges:
-        if edge.edge_type == "call":
-            call_graph.setdefault(edge.source_id, []).append(edge.target_id)
-        elif edge.edge_type == "read" and node_id_map:
-            tgt = node_id_map.get(edge.target_id)
-            if tgt and tgt.node_type in ("function", "class", "method"):
+    if cached_call_graph is not None:
+        call_graph = cached_call_graph
+    else:
+        call_graph = {}
+        for edge in edges:
+            if edge.edge_type == "call":
                 call_graph.setdefault(edge.source_id, []).append(edge.target_id)
+            elif edge.edge_type == "read" and node_id_map:
+                tgt = node_id_map.get(edge.target_id)
+                if tgt and tgt.node_type in ("function", "class", "method"):
+                    call_graph.setdefault(edge.source_id, []).append(edge.target_id)
 
-    # Precompute class->[special method child IDs] once (O(N)).
-    class_special_map: dict[int, list[int]] = {}
-    if node_id_map:
-        for _nid, _ninfo in node_id_map.items():
-            if _ninfo.name in special_method_names and _ninfo.parent_node_id:
-                class_special_map.setdefault(_ninfo.parent_node_id, []).append(_nid)
+    if cached_class_special_map is not None:
+        class_special_map = cached_class_special_map
+    else:
+        class_special_map = {}
+        if node_id_map:
+            for _nid, _ninfo in node_id_map.items():
+                if _ninfo.name in special_method_names and _ninfo.parent_node_id:
+                    class_special_map.setdefault(_ninfo.parent_node_id, []).append(_nid)
+
+    # Build undirected call adjacency for reachability propagation.
+    _call_adj: dict[int, set[int]] = {}
+    for src, targets in call_graph.items():
+        _src_set = _call_adj.setdefault(src, set())
+        for tgt in targets:
+            _src_set.add(tgt)
+            _call_adj.setdefault(tgt, set()).add(src)
 
     if old_reachable is not None and changed_node_ids is not None:
         reachable, noprop_ids = _incremental_reachability(
@@ -433,7 +537,7 @@ def find_connected_components(
         comp_reachable.discard(0)
         comp_unreachable = comp_nodes - comp_reachable
 
-        # BFS expansion from reachable seeds via undirected edges.
+        # BFS expansion from reachable seeds via CALL edges.
         if comp_unreachable:
             seed = comp_reachable
             if noprop_ids:
@@ -443,7 +547,7 @@ def find_connected_components(
                 cur = q.popleft()
                 if cur == 0:
                     continue
-                for nb in adj.get(cur, ()):
+                for nb in _call_adj.get(cur, ()):
                     if nb == 0 or nb in comp_reachable:
                         continue
                     if nb in comp_unreachable:
@@ -456,6 +560,17 @@ def find_connected_components(
                             comp_reachable.add(sm_nid)
                             comp_unreachable.discard(sm_nid)
                             q.append(sm_nid)
+                # Promote directly-connected variables/fields.
+                if node_id_map:
+                    for nb in adj.get(cur, ()):
+                        if nb == 0 or nb in comp_reachable:
+                            continue
+                        if nb in comp_unreachable:
+                            _ni = node_id_map.get(nb)
+                            if _ni and _ni.node_type in ("variable", "field"):
+                                comp_reachable.add(nb)
+                                comp_unreachable.discard(nb)
+                                q.append(nb)
 
         # Expand via module pseudo-node (id=0) edges for components
         # with non-test reachable nodes or isolated vars in reachable
@@ -471,11 +586,13 @@ def find_connected_components(
                 if _nid not in _zero_targets and _nid not in _zero_sources:
                     continue
                 if _non_noprop:
-                    comp_reachable.add(_nid)
-                    comp_unreachable.discard(_nid)
+                    _ni2 = node_id_map.get(_nid) if node_id_map else None
+                    if _ni2 is None or _ni2.node_type in ("variable", "field"):
+                        comp_reachable.add(_nid)
+                        comp_unreachable.discard(_nid)
                 elif node_id_map:
                     _ni = node_id_map.get(_nid)
-                    if _ni and _ni.file_id in global_reachable_fids:
+                    if _ni and _ni.file_id in global_reachable_fids and _ni.node_type in ("variable", "field"):
                         comp_reachable.add(_nid)
                         comp_unreachable.discard(_nid)
 
@@ -513,6 +630,7 @@ def find_connected_components(
                 node_id_map,
                 special_method_names=special_method_names,
                 class_special_map=class_special_map,
+                cached_adj=cached_adj,
             )
             component_map.update(sub_map)
             components.extend(sub_comps)
@@ -600,14 +718,18 @@ def detect_circular_refs(
     nodes: list[NodeInfo],
     edges: list[EdgeInfo],
     node_id_map: dict[int, NodeInfo],
+    cached_digraph: Optional[dict[int, list[int]]] = None,
 ) -> list[WarningInfo]:
     """Detect circular references using Tarjan SCC algorithm on CALL/INHERIT edges."""
-    digraph: dict[int, list[int]] = {}
-    for node in nodes:
-        digraph[_get_node_id(nodes, node)] = []
-    for edge in edges:
-        if edge.edge_type in ("call", "inherit"):
-            digraph.setdefault(edge.source_id, []).append(edge.target_id)
+    if cached_digraph is not None:
+        digraph = cached_digraph
+    else:
+        digraph: dict[int, list[int]] = {}
+        for node in nodes:
+            digraph[node.id] = []
+        for edge in edges:
+            if edge.edge_type in ("call", "inherit"):
+                digraph.setdefault(edge.source_id, []).append(edge.target_id)
 
     indices: dict[int, int] = {}
     lowlink: dict[int, int] = {}
@@ -657,18 +779,6 @@ def detect_circular_refs(
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-
-
-def _get_node_id(nodes: list[NodeInfo], node: NodeInfo) -> int:
-    """Find a node's ID by matching qualified_name, file_id, and line_start."""
-    for n in nodes:
-        if (
-            n.qualified_name == node.qualified_name
-            and n.file_id == node.file_id
-            and n.line_start == node.line_start
-        ):
-            return n.id
-    return 0
 
 
 def _match_entries(

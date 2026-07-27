@@ -287,3 +287,327 @@ class TestFindConnectedComponents:
             assert all(nid in comp_map for nid in c.node_ids)
             for nid in c.node_ids:
                 assert comp_map[nid] == c.component_id
+
+
+# =============================================================================
+# Tests for cached adjacency helper functions
+# =============================================================================
+
+
+@pytest.mark.timeout(30)
+class TestBuildUndirectedAdj:
+    """Tests for _build_undirected_adj."""
+
+    def test_basic_undirected(self):
+        from graphlint.analyzer._graph_algo import _build_undirected_adj
+
+        nodes = [_make_node(1, "A"), _make_node(2, "B")]
+        edges = [_make_edge(1, 2, "call")]
+        node_id_map = {n.id: n for n in nodes}
+
+        adj = _build_undirected_adj(edges, node_id_map)
+
+        assert adj.get(1, set()) == {2}
+        assert adj.get(2, set()) == {1}
+
+    def test_excludes_zero_id_edges(self):
+        from graphlint.analyzer._graph_algo import _build_undirected_adj
+
+        nodes = [_make_node(1, "A")]
+        edges = [
+            _make_edge(0, 1, "read"),
+            _make_edge(1, 0, "read"),
+        ]
+        node_id_map = {n.id: n for n in nodes}
+
+        adj = _build_undirected_adj(edges, node_id_map)
+
+        assert 0 not in adj
+        assert adj.get(1, set()) == set()
+
+    def test_synthetic_special_method_edges(self):
+        from graphlint.analyzer._graph_algo import _build_undirected_adj
+
+        cls_node = NodeInfo(
+            id=1, file_id=1, name="MyClass",
+            qualified_name="mod.MyClass", node_type="class",
+            line_start=1, line_end=20, col_offset=0,
+            parent_node_id=None, is_deprecated=False,
+            deprecation_msg="", type_annotation="",
+            is_async=False, decorators=[], docstring="", is_entry=True,
+        )
+        init_node = NodeInfo(
+            id=2, file_id=1, name="__init__",
+            qualified_name="mod.MyClass.__init__", node_type="method",
+            line_start=2, line_end=10, col_offset=4,
+            parent_node_id=1, is_deprecated=False,
+            deprecation_msg="", type_annotation="",
+            is_async=False, decorators=[], docstring="", is_entry=False,
+        )
+        nodes = [cls_node, init_node]
+        edges: list[EdgeInfo] = []
+        node_id_map = {n.id: n for n in nodes}
+
+        adj = _build_undirected_adj(
+            edges, node_id_map,
+            special_method_names=_PYTHON_SPECIAL_METHOD_DUNDERS,
+        )
+
+        assert adj.get(1, set()) == {2}
+        assert adj.get(2, set()) == {1}
+
+    def test_synthetic_public_api_edges(self):
+        from graphlint.analyzer._graph_algo import _build_undirected_adj
+
+        var_node = NodeInfo(
+            id=2, file_id=1, name="VAR_A",
+            qualified_name="mod.VAR_A", node_type="variable",
+            line_start=10, line_end=20, col_offset=0,
+            parent_node_id=None, is_deprecated=False,
+            deprecation_msg="", type_annotation="",
+            is_async=False, decorators=[], docstring="", is_entry=False,
+        )
+        non_dunder_node = NodeInfo(
+            id=1, file_id=1, name="func",
+            qualified_name="mod.func", node_type="function",
+            line_start=1, line_end=5, col_offset=0,
+            parent_node_id=None, is_deprecated=False,
+            deprecation_msg="", type_annotation="",
+            is_async=False, decorators=[], docstring="", is_entry=False,
+        )
+        nodes = [non_dunder_node, var_node]
+        edges: list[EdgeInfo] = []
+        node_id_map = {n.id: n for n in nodes}
+
+        adj = _build_undirected_adj(
+            edges, node_id_map,
+            public_api_names=frozenset({"VAR_A"}),
+        )
+
+        assert non_dunder_node.id in adj.get(var_node.id, set())
+
+    def test_none_node_id_map(self):
+        from graphlint.analyzer._graph_algo import _build_undirected_adj
+
+        edges = [_make_edge(1, 2, "call")]
+
+        adj = _build_undirected_adj(edges, None)
+
+        assert adj == {1: {2}, 2: {1}}
+
+    def test_multiple_edge_types(self):
+        from graphlint.analyzer._graph_algo import _build_undirected_adj
+
+        nodes = [_make_node(1, "A"), _make_node(2, "B")]
+        edges = [
+            _make_edge(1, 2, "call"),
+            _make_edge(1, 2, "inherit"),
+            _make_edge(1, 2, "read"),
+        ]
+        node_id_map = {n.id: n for n in nodes}
+
+        adj = _build_undirected_adj(edges, node_id_map)
+
+        assert adj[1] == {2}
+        assert adj[2] == {1}
+
+
+@pytest.mark.timeout(30)
+class TestBuildCallGraph:
+    """Tests for _build_call_graph."""
+
+    def test_call_edges_only(self):
+        from graphlint.analyzer._graph_algo import _build_call_graph
+
+        edges = [
+            _make_edge(1, 2, "call"),
+            _make_edge(2, 3, "call"),
+        ]
+
+        cg = _build_call_graph(edges)
+
+        assert cg == {1: [2], 2: [3]}
+
+    def test_read_edge_targeting_function(self):
+        from graphlint.analyzer._graph_algo import _build_call_graph
+
+        edges = [_make_edge(1, 2, "read")]
+        node_id_map = {
+            2: NodeInfo(
+                id=2, file_id=1, name="func",
+                qualified_name="mod.func", node_type="function",
+                line_start=1, line_end=5, col_offset=0,
+                parent_node_id=None, is_deprecated=False,
+                deprecation_msg="", type_annotation="",
+                is_async=False, decorators=[], docstring="", is_entry=False,
+            ),
+        }
+
+        cg = _build_call_graph(edges, node_id_map)
+
+        assert 1 in cg
+        assert 2 in cg[1]
+
+    def test_read_edge_targeting_variable(self):
+        from graphlint.analyzer._graph_algo import _build_call_graph
+
+        edges = [_make_edge(1, 2, "read")]
+        node_id_map = {
+            2: NodeInfo(
+                id=2, file_id=1, name="var",
+                qualified_name="mod.var", node_type="variable",
+                line_start=1, line_end=5, col_offset=0,
+                parent_node_id=None, is_deprecated=False,
+                deprecation_msg="", type_annotation="",
+                is_async=False, decorators=[], docstring="", is_entry=False,
+            ),
+        }
+
+        cg = _build_call_graph(edges, node_id_map)
+
+        assert 1 not in cg
+
+    def test_other_edge_types_ignored(self):
+        from graphlint.analyzer._graph_algo import _build_call_graph
+
+        edges = [
+            _make_edge(1, 2, "inherit"),
+            _make_edge(3, 4, "decorate"),
+        ]
+
+        cg = _build_call_graph(edges)
+
+        assert cg == {}
+
+
+@pytest.mark.timeout(30)
+class TestBuildDigraph:
+    """Tests for _build_digraph."""
+
+    def test_call_and_inherit_edges(self):
+        from graphlint.analyzer._graph_algo import _build_digraph
+
+        nodes = [_make_node(i, f"Node{i}") for i in range(1, 4)]
+        edges = [
+            _make_edge(1, 2, "call"),
+            _make_edge(2, 3, "inherit"),
+        ]
+
+        dg = _build_digraph(nodes, edges)
+
+        assert dg[1] == [2]
+        assert dg[2] == [3]
+        assert dg[3] == []
+
+    def test_non_call_inherit_ignored(self):
+        from graphlint.analyzer._graph_algo import _build_digraph
+
+        nodes = [_make_node(1, "A"), _make_node(2, "B")]
+        edges = [
+            _make_edge(1, 2, "read"),
+            _make_edge(1, 2, "decorate"),
+        ]
+
+        dg = _build_digraph(nodes, edges)
+
+        assert dg[1] == []
+        assert dg[2] == []
+
+    def test_all_nodes_present(self):
+        from graphlint.analyzer._graph_algo import _build_digraph
+
+        nodes = [_make_node(i, f"Node{i}") for i in range(1, 4)]
+        edges: list[EdgeInfo] = []
+
+        dg = _build_digraph(nodes, edges)
+
+        assert set(dg.keys()) == {1, 2, 3}
+        assert all(v == [] for v in dg.values())
+
+
+@pytest.mark.timeout(30)
+class TestBuildClassSpecialMap:
+    """Tests for _build_class_special_map."""
+
+    def test_basic_mapping(self):
+        from graphlint.analyzer._graph_algo import _build_class_special_map
+
+        cls_node = NodeInfo(
+            id=1, file_id=1, name="MyClass",
+            qualified_name="mod.MyClass", node_type="class",
+            line_start=1, line_end=20, col_offset=0,
+            parent_node_id=None, is_deprecated=False,
+            deprecation_msg="", type_annotation="",
+            is_async=False, decorators=[], docstring="", is_entry=True,
+        )
+        init_node = NodeInfo(
+            id=2, file_id=1, name="__init__",
+            qualified_name="mod.MyClass.__init__", node_type="method",
+            line_start=2, line_end=10, col_offset=4,
+            parent_node_id=1, is_deprecated=False,
+            deprecation_msg="", type_annotation="",
+            is_async=False, decorators=[], docstring="", is_entry=False,
+        )
+        node_id_map = {1: cls_node, 2: init_node}
+
+        csm = _build_class_special_map(node_id_map, _PYTHON_SPECIAL_METHOD_DUNDERS)
+
+        assert 1 in csm
+        assert 2 in csm[1]
+
+    def test_non_special_methods_ignored(self):
+        from graphlint.analyzer._graph_algo import _build_class_special_map
+
+        cls_node = NodeInfo(
+            id=1, file_id=1, name="MyClass",
+            qualified_name="mod.MyClass", node_type="class",
+            line_start=1, line_end=20, col_offset=0,
+            parent_node_id=None, is_deprecated=False,
+            deprecation_msg="", type_annotation="",
+            is_async=False, decorators=[], docstring="", is_entry=True,
+        )
+        regular_node = NodeInfo(
+            id=2, file_id=1, name="regular_method",
+            qualified_name="mod.MyClass.regular_method", node_type="method",
+            line_start=2, line_end=10, col_offset=4,
+            parent_node_id=1, is_deprecated=False,
+            deprecation_msg="", type_annotation="",
+            is_async=False, decorators=[], docstring="", is_entry=False,
+        )
+        node_id_map = {1: cls_node, 2: regular_node}
+
+        csm = _build_class_special_map(node_id_map, _PYTHON_SPECIAL_METHOD_DUNDERS)
+
+        assert csm == {}
+
+    def test_none_node_id_map(self):
+        from graphlint.analyzer._graph_algo import _build_class_special_map
+
+        csm = _build_class_special_map(None)
+
+        assert csm == {}
+
+    def test_empty_special_names(self):
+        from graphlint.analyzer._graph_algo import _build_class_special_map
+
+        cls_node = NodeInfo(
+            id=1, file_id=1, name="MyClass",
+            qualified_name="mod.MyClass", node_type="class",
+            line_start=1, line_end=20, col_offset=0,
+            parent_node_id=None, is_deprecated=False,
+            deprecation_msg="", type_annotation="",
+            is_async=False, decorators=[], docstring="", is_entry=True,
+        )
+        init_node = NodeInfo(
+            id=2, file_id=1, name="__init__",
+            qualified_name="mod.MyClass.__init__", node_type="method",
+            line_start=2, line_end=10, col_offset=4,
+            parent_node_id=1, is_deprecated=False,
+            deprecation_msg="", type_annotation="",
+            is_async=False, decorators=[], docstring="", is_entry=False,
+        )
+        node_id_map = {1: cls_node, 2: init_node}
+
+        csm = _build_class_special_map(node_id_map, frozenset())
+
+        assert csm == {}

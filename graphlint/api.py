@@ -11,7 +11,6 @@ from typing import Any, Optional, Union
 import sys
 import traceback
 
-from graphlint.analyzer.language.base import LanguageAdapter
 from graphlint.analyzer.language.python import PythonAdapter
 from graphlint.analyzer.language.registry import LanguageRegistry
 from graphlint.analyzer.warnings import WarningCollector

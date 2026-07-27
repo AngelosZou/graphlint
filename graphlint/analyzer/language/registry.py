@@ -49,13 +49,6 @@ class LanguageRegistry:
             return self._by_extension.get(key)
         return None
 
-    def adapter_for_language(self, name: str) -> Optional[LanguageAdapter]:
-        """Return the adapter whose :attr:`language_name` matches *name*."""
-        for adapter in self._adapters:
-            if adapter.language_name == name:
-                return adapter
-        return None
-
     # ------------------------------------------------------------------
     # File-system scanning
     # ------------------------------------------------------------------

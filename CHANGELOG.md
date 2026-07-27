@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.3.7] - 2026-07-28
+
+### Changed
+- **Graph construction caching**: `GraphBuilder` now pre-builds adjacency,
+  call graph, digraph, and class-special-member map once and passes them as
+  `cached_*` parameters to `find_connected_components`,
+  `_split_unreachable_by_call`, and `detect_circular_refs`, eliminating
+  repeated edge traversal per invocation
+
+### Fixed
+- **Directed CALL-edge BFS**: reachability propagation now traverses CALL
+  edges only (via `_call_adj`) instead of undirected adjacency, preventing
+  false reachability from flowing backwards through read/write/inherit
+  edges
+
 ## [0.3.6] - 2026-07-27
 
 ### Changed
