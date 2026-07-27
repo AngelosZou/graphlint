@@ -261,6 +261,8 @@ class GraphBuilder:
         prebuilt_edges: Optional[list[EdgeInfo]] = None,
         prebuilt_entries: Optional[list[EntryInfo]] = None,
         old_changed_node_ids: dict[int, tuple[str, str]] | None = None,
+        old_reachable: Optional[set[int]] = None,
+        old_expanded: Optional[set[int]] = None,
     ) -> GraphBuildResult:
         """Build the complete dependency graph from parse results.
 
@@ -271,6 +273,10 @@ class GraphBuilder:
             prebuilt_entries: Pre-loaded EntryInfo from DB for unchanged files
                 (incremental mode). When provided, entry detection only scans
                 changed files and merges these prebuilt entries.
+            old_reachable: Reachable node IDs from the previous build
+                (incremental mode). Enables component-level delta reachability.
+            old_expanded: Expanded node IDs from the previous build
+                (incremental mode). Used together with old_reachable.
         """
         fid_map: dict[str, int] = {}
         fid_cnt = 1
@@ -380,6 +386,7 @@ class GraphBuilder:
         self._edges = self._build_edges_batch(
             changed_list, parse_results, fid_map, fnodes_map,
         )
+        new_edge_count = len(self._edges)
 
         # Add synthetic module-level edges through the module pseudo-node (id=0).
         for fp in parse_results:
@@ -409,6 +416,16 @@ class GraphBuilder:
                     pe.target_id = tid
                     self._edges.append(pe)
 
+        expanded: set[int] = set()
+        reachable: set[int] = set()
+
+        changed_nids: Optional[set[int]] = None
+        if changed_files is not None and old_reachable is not None:
+            changed_fids = {fid_map[fp] for fp in changed_files if fp in fid_map}
+            changed_nids = {
+                n.id for n in self._nodes if n.file_id in changed_fids
+            }
+
         comp_map, comps = find_connected_components(
             self._nodes,
             self._edges,
@@ -417,6 +434,10 @@ class GraphBuilder:
             fid_map,
             public_api_names=self._get_public_api_names(),
             special_method_names=self._get_special_names(),
+            expanded_out=expanded,
+            changed_node_ids=changed_nids,
+            old_reachable=old_reachable,
+            reachable_out=reachable,
         )
         file_id_to_path = {v: k for k, v in fid_map.items()}
         self._add_warnings(comps, file_id_to_path)
@@ -431,6 +452,10 @@ class GraphBuilder:
             component_map=comp_map,
             components=comps,
             node_id_map=dict(self._node_id_map),
+            expanded=expanded,
+            reachable=reachable,
+            remapped_node_ids=dict(old_to_new_global),
+            new_edge_count=new_edge_count,
         )
 
     def _build_edges_batch(
@@ -595,6 +620,8 @@ class GraphBuilder:
 
     def get_all_data(self) -> GraphBuildResult:
         """Return all built data (used by tests)."""
+        expanded: set[int] = set()
+        reachable: set[int] = set()
         cm, cs = find_connected_components(
             self._nodes,
             self._edges,
@@ -603,6 +630,8 @@ class GraphBuilder:
             {},
             public_api_names=self._get_public_api_names(),
             special_method_names=self._get_special_names(),
+            expanded_out=expanded,
+            reachable_out=reachable,
         )
         return GraphBuildResult(
             nodes=list(self._nodes),
@@ -611,4 +640,6 @@ class GraphBuilder:
             component_map=cm,
             components=cs,
             node_id_map=dict(self._node_id_map),
+            expanded=expanded,
+            reachable=reachable,
         )

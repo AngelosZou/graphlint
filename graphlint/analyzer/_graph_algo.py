@@ -13,20 +13,12 @@ from graphlint.analyzer.warnings import WarningInfo
 _EMPTY_FROZENSET: frozenset[str] = frozenset()
 
 
-def compute_entry_reachability(
-    edges: list[EdgeInfo],
+def _resolve_entries(
     entries: list[EntryInfo],
-    node_id_map: Optional[dict[int, NodeInfo]] = None,
-    file_id_map: Optional[dict[str, int]] = None,
-    call_graph: Optional[dict[int, list[int]]] = None,
-    special_method_names: frozenset[str] = _EMPTY_FROZENSET,
-    class_special_map: Optional[dict[int, list[int]]] = None,
+    node_id_map: Optional[dict[int, NodeInfo]],
+    file_id_map: Optional[dict[str, int]],
 ) -> tuple[set[int], set[int]]:
-    """Directed reachability analysis from entry points via CALL edges.
-
-    Returns (reachable_ids, noprop_ids) where noprop_ids are nodes whose
-    CALL edges should not propagate reachability (test-file entries).
-    """
+    """Resolve EntryInfo list → (entry_node_ids, noprop_node_ids)."""
     entry_ids: set[int] = set()
     file_entry_fids: set[int] = set()
     noprop_fids: set[int] = set()
@@ -41,7 +33,6 @@ def compute_entry_reachability(
                 if e.no_propagate:
                     noprop_fids.add(fid)
 
-    # File-level entry expands to all nodes in that file
     noprop_ids: set[int] = set()
     if file_entry_fids and node_id_map:
         for nid, ninfo in node_id_map.items():
@@ -50,8 +41,26 @@ def compute_entry_reachability(
                     noprop_ids.add(nid)
                 else:
                     entry_ids.add(nid)
+    return entry_ids, noprop_ids
+
+
+def compute_entry_reachability(
+    edges: list[EdgeInfo],
+    entries: list[EntryInfo],
+    node_id_map: Optional[dict[int, NodeInfo]] = None,
+    file_id_map: Optional[dict[str, int]] = None,
+    call_graph: Optional[dict[int, list[int]]] = None,
+    special_method_names: frozenset[str] = _EMPTY_FROZENSET,
+    class_special_map: Optional[dict[int, list[int]]] = None,
+    expanded_out: Optional[set[int]] = None,
+) -> tuple[set[int], set[int]]:
+    """Directed reachability analysis from entry points via CALL edges.
+    """
+    entry_ids, noprop_ids = _resolve_entries(entries, node_id_map, file_id_map)
 
     if not entry_ids and not noprop_ids:
+        if expanded_out is not None:
+            expanded_out.clear()
         return set(), set()
 
     if call_graph is None:
@@ -67,6 +76,11 @@ def compute_entry_reachability(
 
     reachable: set[int] = set(entry_ids)
     queue: deque[int] = deque(entry_ids)
+
+    # Track nodes whose CALL-graph downstream was fully explored by this BFS.
+    # Excluded from the output: noprop (test-file) nodes — they do not
+    # propagate reachability, so they are not safe pruning anchors.
+    expanded: set[int] = set()
 
     # Precompute class -> [child special method IDs] mapping
     if class_special_map is None and node_id_map:
@@ -89,6 +103,8 @@ def compute_entry_reachability(
                     reachable.add(sm_nid)
                     queue.append(sm_nid)
 
+        expanded.add(current)
+
     # Test-file nodes are alive but do not propagate reachability.
     reachable.update(noprop_ids)
 
@@ -99,7 +115,106 @@ def compute_entry_reachability(
                 if ninfo.node_type in ("variable", "field"):
                     reachable.add(nid)
 
+    if expanded_out is not None:
+        expanded_out.clear()
+        expanded_out.update(expanded - noprop_ids)
+
     return reachable, noprop_ids
+
+
+def _incremental_reachability(
+    entries: list[EntryInfo],
+    node_id_map: dict[int, NodeInfo],
+    file_id_map: dict[str, int],
+    call_graph: dict[int, list[int]],
+    class_special_map: dict[int, list[int]],
+    changed_node_ids: set[int],
+    old_reachable: set[int],
+) -> tuple[set[int], set[int]]:
+    """Incremental reachability: propagate only from changed/entry nodes."""
+    # entry resolution
+    entry_ids, _noprop = _resolve_entries(entries, node_id_map, file_id_map)
+
+    # reverse CALL graph (caller lookup for multi-source pruning)
+    rev: dict[int, set[int]] = {}
+    for src, targets in call_graph.items():
+        for tgt in targets:
+            rev.setdefault(tgt, set()).add(src)
+
+    # optimistic candidate set
+    reachable: set[int] = set(old_reachable)
+    for eid in entry_ids:
+        reachable.add(eid)
+
+    if not reachable:
+        return set(), _noprop
+
+    # forward BFS
+    queue: deque[int] = deque()
+    scheduled: set[int] = set()
+    for eid in entry_ids:
+        if eid in changed_node_ids or eid not in old_reachable:
+            queue.append(eid)
+            scheduled.add(eid)
+    for c in changed_node_ids:
+        if c not in scheduled and c in old_reachable:
+            queue.append(c)
+            scheduled.add(c)
+
+    while queue:
+        cur = queue.popleft()
+        if cur not in reachable:
+            continue
+        for target in call_graph.get(cur, []):
+            if target not in reachable:
+                reachable.add(target)
+                queue.append(target)
+                scheduled.add(target)
+        # class-aware propagation
+        if cur in class_special_map:
+            for sm_nid in class_special_map[cur]:
+                if sm_nid not in reachable:
+                    reachable.add(sm_nid)
+                    queue.append(sm_nid)
+                    scheduled.add(sm_nid)
+
+    # prune losses from changed nodes
+    loss_q: deque[int] = deque()
+    for c in changed_node_ids:
+        if c not in old_reachable or c in entry_ids:
+            continue
+        callers = rev.get(c, set())
+        if not any(clr in reachable for clr in callers):
+            reachable.discard(c)
+            loss_q.append(c)
+
+    while loss_q:
+        cur = loss_q.popleft()
+        for target in call_graph.get(cur, []):
+            if target not in reachable:
+                continue
+            if target in entry_ids:
+                continue
+            # multi-source pruning
+            callers = rev.get(target, set())
+            if any(clr in reachable and clr != cur for clr in callers):
+                continue
+            reachable.discard(target)
+            loss_q.append(target)
+        if cur in class_special_map:
+            for sm_nid in class_special_map[cur]:
+                if sm_nid in reachable:
+                    reachable.discard(sm_nid)
+                    loss_q.append(sm_nid)
+
+    # expand variables / fields
+    if node_id_map:
+        for nid, ninfo in node_id_map.items():
+            if nid not in reachable and ninfo.parent_node_id in reachable:
+                if ninfo.node_type in ("variable", "field"):
+                    reachable.add(nid)
+
+    return reachable, _noprop
 
 
 def _split_unreachable_by_call(
@@ -181,8 +296,12 @@ def find_connected_components(
     file_id_map: Optional[dict[str, int]] = None,
     public_api_names: frozenset[str] = _EMPTY_FROZENSET,
     special_method_names: frozenset[str] = _EMPTY_FROZENSET,
+    expanded_out: Optional[set[int]] = None,
+    changed_node_ids: Optional[set[int]] = None,
+    old_reachable: Optional[set[int]] = None,
+    reachable_out: Optional[set[int]] = None,
 ) -> tuple[dict[int, int], list[ComponentInfo]]:
-    """Find all connected components via undirected BFS, split by CALL reachability."""
+    """Find all connected components."""
     adj: dict[int, set[int]] = {}
     for node in nodes:
         nid = node.id
@@ -232,12 +351,20 @@ def find_connected_components(
             if _ninfo.name in special_method_names and _ninfo.parent_node_id:
                 class_special_map.setdefault(_ninfo.parent_node_id, []).append(_nid)
 
-    reachable, noprop_ids = compute_entry_reachability(
-        edges, entries, node_id_map, file_id_map,
-        call_graph=call_graph,
-        special_method_names=special_method_names,
-        class_special_map=class_special_map,
-    )
+    if old_reachable is not None and changed_node_ids is not None:
+        reachable, noprop_ids = _incremental_reachability(
+            entries, node_id_map, file_id_map,
+            call_graph, class_special_map,
+            changed_node_ids, old_reachable,
+        )
+    else:
+        reachable, noprop_ids = compute_entry_reachability(
+            edges, entries, node_id_map, file_id_map,
+            call_graph=call_graph,
+            special_method_names=special_method_names,
+            class_special_map=class_special_map,
+            expanded_out=expanded_out,
+        )
 
     # Pre-compute globally reachable file IDs (excluding test-only nodes)
     global_reachable_fids: set[int] = set()
@@ -289,7 +416,7 @@ def find_connected_components(
 
         while queue:
             current = queue.popleft()
-            for neighbor in adj.get(current, set()):
+            for neighbor in adj.get(current, ()):
                 if neighbor not in visited:
                     visited.add(neighbor)
                     queue.append(neighbor)
@@ -306,28 +433,29 @@ def find_connected_components(
         comp_reachable.discard(0)
         comp_unreachable = comp_nodes - comp_reachable
 
-        # BFS expansion from reachable seeds via undirected edges
-        seed = comp_reachable
-        if noprop_ids:
-            seed = seed - noprop_ids
-        q = deque(seed)
-        while q:
-            cur = q.popleft()
-            if cur == 0:
-                continue
-            for nb in adj.get(cur, set()):
-                if nb == 0 or nb in comp_reachable:
+        # BFS expansion from reachable seeds via undirected edges.
+        if comp_unreachable:
+            seed = comp_reachable
+            if noprop_ids:
+                seed = seed - noprop_ids
+            q = deque(seed)
+            while q:
+                cur = q.popleft()
+                if cur == 0:
                     continue
-                if nb in comp_unreachable:
-                    comp_reachable.add(nb)
-                    comp_unreachable.discard(nb)
-                    q.append(nb)
-            if cur in class_special_map:
-                for sm_nid in class_special_map[cur]:
-                    if sm_nid in comp_unreachable:
-                        comp_reachable.add(sm_nid)
-                        comp_unreachable.discard(sm_nid)
-                        q.append(sm_nid)
+                for nb in adj.get(cur, ()):
+                    if nb == 0 or nb in comp_reachable:
+                        continue
+                    if nb in comp_unreachable:
+                        comp_reachable.add(nb)
+                        comp_unreachable.discard(nb)
+                        q.append(nb)
+                if cur in class_special_map:
+                    for sm_nid in class_special_map[cur]:
+                        if sm_nid in comp_unreachable:
+                            comp_reachable.add(sm_nid)
+                            comp_unreachable.discard(sm_nid)
+                            q.append(sm_nid)
 
         # Expand via module pseudo-node (id=0) edges for components
         # with non-test reachable nodes or isolated vars in reachable
@@ -435,6 +563,13 @@ def find_connected_components(
             for _nid in dead_comp.node_ids:
                 component_map[_nid] = target_cid
             components.remove(dead_comp)
+
+    if reachable_out is not None:
+        live_ids = {c.component_id for c in components if not c.is_dead_code}
+        reachable_out.clear()
+        reachable_out.update(
+            nid for nid, cid in component_map.items() if cid in live_ids
+        )
 
     return component_map, components
 

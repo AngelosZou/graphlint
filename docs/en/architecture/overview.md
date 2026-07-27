@@ -48,6 +48,20 @@ graphlint uses a layered modular architecture with clear responsibilities and de
 └───────────────────────────────────────────────────┘
 ```
 
+## Key Data Structures
+
+### Reachability Cache (`.graphlint/.reachability_cache`)
+
+A JSON file caching the `reachable` and `expanded` node-ID sets from the
+last successful build. On the next incremental build, instead of running a
+full O(N+E) connected-component BFS, graphlint loads this cache and applies
+a delta-aware algorithm that only propagates from changed and newly-entered
+nodes.
+
+- `reachable` — all node IDs reachable from any entry point
+- `expanded` — node IDs whose CALL-graph downstream was fully explored
+  (excludes test-only nodes that don't propagate reachability)
+
 ## Module Responsibilities
 
 ### 1. API Layer (`graphlint/api.py`)
@@ -226,18 +240,19 @@ When files change, graphlint avoids re-parsing the entire codebase. Instead, it 
 │      the original connections)                              │
 │    • Downstream remapping — prebuilt edges from Phase 3     │
 │      are remapped to new node IDs                           │
-│    • Component analysis — full connected-component pass     │
-│      on the assembled graph                                 │
+│    • Component analysis — delta-aware reachability          │
+│      propagation (see below)                                │
 ├─────────────────────────────────────────────────────────────┤
 │  Phase 5: Persist                                           │
-│  Write updated nodes/edges back to SQLite. Fix              │
-│  parent_node_id remappings for unchanged nodes whose        │
-│  parent received a new ID in a changed file (the in-memory  │
-│  remapping was previously not written back to DB).          │
+│  Write updated nodes and only changed-file edges to SQLite  │
+│  (unchanged edges are retained in place). Fix parent_node_id│
+│  remappings and remap downstream edge references via        │
+│  targeted SQL UPDATE statements.                            │
 ├─────────────────────────────────────────────────────────────┤
 │  Phase 6: Verify                                            │
-│  Lightweight integrity check: detect dangling edge          │
-│  references and log warnings without aborting the build.    │
+│  Lightweight integrity check: LEFT JOIN queries detect      │
+│  dangling edge references without loading all edges into    │
+│  memory.                                                    │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -245,6 +260,14 @@ When files change, graphlint avoids re-parsing the entire codebase. Instead, it 
 
 - **Upstream vs. downstream**: Upstream edges (changed → others) are rebuilt from scratch by `GraphBuilder` because the changed code may have added, removed, or altered its references. Downstream edges (others → changed) are restored from precomputed records because unchanged code's references are stable — we only need to remap node IDs.
 
-- **Reachability propagation**: After upstream edges are rebuilt, `GraphBuilder` performs a full connected-component analysis on the assembled graph. This detects which nodes are reachable from entry points given the new upstream connections. When a node's reachability changes (previously reachable nodes may become unreachable if upstream references were removed, and vice versa), the change propagates to downstream nodes via the restored edges.
+- **Delta-aware reachability**: Instead of a full O(N+E) BFS from entry points on every incremental build, the algorithm loads the old `(reachable, expanded)` cache and only propagates changes from affected nodes:
 
-- **Caching strategy**: Unchanged files are not re-parsed. Their nodes, edges, and metadata are loaded directly from the SQLite database, validated by SHA256 hash comparison. This keeps the incremental rebuild cost proportional to the number of changed files, not the total codebase size.
+  1. **Forward propagation** — entry nodes that are new or changed, plus changed nodes that were previously reachable, are seeded into a BFS queue. Their CALL-graph targets are explored and added to the reachable set.
+  2. **Loss propagation** — changed nodes that were previously reachable but now have no reachable caller are removed from the reachable set. The algorithm walks downstream, pruning nodes whose only reachable caller was just removed.
+  3. **Multi-source pruning** — a reverse CALL graph allows checking whether a potentially-pruned node has *any other* reachable caller. If another reachable caller exists, the node is retained and loss propagation stops there.
+
+  This reduces the incremental reachability cost from O(N+E) to O(|C| + |Δ|), where C is the changed-node set and Δ is the set of nodes whose reachability actually changed.
+
+- **Edge persistence**: In incremental mode, only edges built from changed files are inserted. Unchanged downstream edge references are remapped via targeted SQL `UPDATE` statements when node IDs change.
+
+- **Caching strategy**: Unchanged files are not re-parsed. Their nodes, edges, and metadata are loaded directly from the SQLite database, validated by SHA256 hash comparison. The reachability cache (`.graphlint/.reachability_cache`) persists the reachable/expanded sets across builds so the incremental algorithm can start from a known-good state. This keeps the incremental rebuild cost proportional to the number of changed files, not the total codebase size.

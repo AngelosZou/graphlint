@@ -64,6 +64,33 @@ class IncrementalIndexer:
         self.config = self.config_manager.load()
         self.registry = registry
         self.public_as_entry = public_as_entry
+        self._cache_path = os.path.join(self.root_dir, ".graphlint", ".reachability_cache")
+
+    # ------------------------------------------------------------------
+    # Reachability cache (space-for-time: store old reachable/expanded sets
+    # so the next incremental build can skip clean component analysis).
+    # ------------------------------------------------------------------
+
+    def _load_cache(self) -> tuple[set[int], set[int]]:
+        """Return (reachable, expanded) from the previous build, or empty sets."""
+        try:
+            with open(self._cache_path, "r") as f:
+                data = json.load(f)
+            return set(data.get("reachable", [])), set(data.get("expanded", []))
+        except (FileNotFoundError, json.JSONDecodeError, KeyError):
+            return set(), set()
+
+    def _save_cache(self, reachable: set[int], expanded: set[int]) -> None:
+        """Persist reachable and expanded node IDs for the next incremental build."""
+        os.makedirs(os.path.dirname(self._cache_path), exist_ok=True)
+        data: dict[str, Any] = {
+            "reachable": sorted(reachable),
+            "expanded": sorted(expanded),
+        }
+        tmp = self._cache_path + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump(data, f)
+        os.replace(tmp, self._cache_path)
 
     def run(
         self,
@@ -156,6 +183,7 @@ class IncrementalIndexer:
                 incremental=False,
             )
             build_snapshots(self.db, br)
+            self._save_cache(br.reachable, br.expanded)
         else:
             # ------ Phase 1-2: Parse changed / load unchanged ----------------
             if changed:
@@ -190,6 +218,7 @@ class IncrementalIndexer:
             prebuilt_entries: Optional[list[Any]] = None
             if unchanged:
                 prebuilt_entries = load_unchanged_entries(self.db, unchanged)
+            old_reachable, old_expanded = self._load_cache()
             builder = self._create_builder(wc)
             br = builder.build(
                 pr_map,
@@ -197,6 +226,8 @@ class IncrementalIndexer:
                 prebuilt_edges=prebuilt,
                 prebuilt_entries=prebuilt_entries,
                 old_changed_node_ids=old_ids if old_ids else None,
+                old_reachable=old_reachable if old_reachable else None,
+                old_expanded=old_expanded if old_expanded else None,
             )
 
             # ------ Phase 5: Persist to DB ---------------------------------------
@@ -207,6 +238,7 @@ class IncrementalIndexer:
             )
             persist_unchanged_parent_node_ids(self.db, br, changed)
             update_snapshots(self.db, br)
+            self._save_cache(br.reachable, br.expanded)
 
             # ------ Phase 6: Lightweight consistency check ------------------------
             self._verify_incremental_integrity(br)
@@ -358,30 +390,26 @@ class IncrementalIndexer:
     def _verify_incremental_integrity(self, br: GraphBuildResult) -> None:
         """Lightweight self-consistency check after incremental rebuild.
 
-        Verifies that no edge references a non-existent node ID and that
-        all nodes referenced by edges exist in the nodes table.
-        Issues are logged but do not abort the build.
+        Uses SQL-level checks to avoid loading all edges into memory.
         """
-        # Check for dangling edge references
-        existing_ids: set[int] = set()
-        for row in self.db.fetchall("SELECT id FROM nodes"):
-            existing_ids.add(row["id"])
-
-        dangling_source = 0
-        dangling_target = 0
-        for row in self.db.fetchall("SELECT id, source_id, target_id FROM edges"):
-            if row["source_id"] not in existing_ids:
-                dangling_source += 1
-            if row["target_id"] not in existing_ids:
-                dangling_target += 1
-
-        if dangling_source or dangling_target:
-            print(
-                f"[graphlint] Incremental integrity warning: "
-                f"{dangling_source} edges with dangling source, "
-                f"{dangling_target} edges with dangling target",
-                file=sys.stderr,
-            )
+        # Check for dangling edges via SQL join — O(E log V) inside SQLite
+        row = self.db.fetchone(
+            "SELECT "
+            "SUM(CASE WHEN n1.id IS NULL AND e.source_id != 0 THEN 1 ELSE 0 END) AS dsrc, "
+            "SUM(CASE WHEN n2.id IS NULL AND e.target_id != 0 THEN 1 ELSE 0 END) AS dtgt "
+            "FROM edges e "
+            "LEFT JOIN nodes n1 ON e.source_id = n1.id "
+            "LEFT JOIN nodes n2 ON e.target_id = n2.id"
+        )
+        if row:
+            dsrc, dtgt = row["dsrc"], row["dtgt"]
+            if dsrc or dtgt:
+                print(
+                    f"[graphlint] Incremental integrity warning: "
+                    f"{dsrc} edges with dangling source, "
+                    f"{dtgt} edges with dangling target",
+                    file=sys.stderr,
+                )
 
     def _create_builder(self, wc: WarningCollector) -> GraphBuilder:
         cfg: dict[str, Any] = dict(self.config)

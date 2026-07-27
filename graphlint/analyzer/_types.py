@@ -102,3 +102,7 @@ class GraphBuildResult:
     component_map: dict[int, int] = field(default_factory=dict)
     components: list[ComponentInfo] = field(default_factory=list)
     node_id_map: dict[int, Any] = field(default_factory=dict)
+    expanded: set[int] = field(default_factory=set)
+    reachable: set[int] = field(default_factory=set)
+    remapped_node_ids: dict[int, int] = field(default_factory=dict)
+    new_edge_count: int = 0  # number of edges built from changed files (incremental mode)

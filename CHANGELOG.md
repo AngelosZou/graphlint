@@ -2,6 +2,34 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.3.5] - 2026-07-27
+
+### Changed
+- **Incremental reachability analysis**: replaced the full O(N+E) connected-
+  component pass with a delta-aware algorithm that only propagates from
+  changed and newly-entered nodes. Old reachable sets are loaded from a
+  JSON cache, and a reverse CALL graph enables multi-source pruning: if a
+  downstream node receives calls from any other reachable caller, it is
+  retained and loss propagation stops. This eliminates redundant BFS over
+  unchanged regions of the graph.
+- **Reachability persistence**: reachable and expanded node-ID sets are
+  cached to `.graphlint/.reachability_cache` after each successful build
+  and reused in the next incremental build, avoiding recomputation of
+  stable component connectivity.
+- **Incremental edge persistence**: edges from unchanged files are no longer
+  deleted and re-inserted; only edges belonging to changed files are
+  inserted, and downstream node-ID remapping is handled via targeted SQL
+  `UPDATE` statements. On large codebases, incremental builds now complete
+  in ~50% of the previous wall-clock time.
+- **Integrity verification**: `_verify_incremental_integrity` now uses
+  SQL `LEFT JOIN` queries instead of loading all edges into memory,
+  reducing peak memory usage during verification.
+
+### Fixed
+- Incremental build: `DELETE FROM edges` was followed by re-inserting all
+  edges (including unaffected ones), causing unnecessary I/O proportional to
+  total graph size rather than the changed subset.
+
 ## [0.3.4] - 2026-07-27
 
 ### Changed

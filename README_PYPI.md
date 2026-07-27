@@ -30,7 +30,7 @@ Install with Rust support: `pip install graphlint[rust]` (adds `tree-sitter` and
 - **Configurable entry templates** — add custom entry rules via `ast_pattern` prefixes including `function_call:`, `function_def:`, `decorator:`, `file_match:`, `visibility:pub` (Rust), `trait_impl:` (Rust), `macro_def:` (Rust), and more
 - **`--public-as-entry` flag** — treat all public items (Rust `pub`) as entry points for library-crate analysis
 - **Warning detection** — 11 warning types including circular references, unused imports, write-only variables, and more
-- **Incremental updates** — after initial full scan, only changed files are re-indexed; subsequent queries leverage cached data to minimize computation overhead
+- **Incremental updates** — after initial full scan, only changed files are re-indexed; delta-aware reachability analysis avoids full-graph recomputation.
 - **Python API + CLI** — integrate into any Tool, CI pipeline, or let agents self-analyze and self-clean
 
 ## Installation

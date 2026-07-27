@@ -30,7 +30,7 @@ AI Agent 在快速生成代码的同时，也会留下大量冗余和死代码�
 - **可配置入口模板** — 通过 `ast_pattern` 前缀添加自定义入口规则，包括 `function_call:`、`function_def:`、`decorator:`、`file_match:`、`visibility:pub`（Rust）、`trait_impl:`（Rust）、`macro_def:`（Rust）等
 - **`--public-as-entry` 标志** — 将所有公开项（Rust `pub`）视为入口点，用于库代码分析
 - **警告检测** — 11 种警告类型：循环引用、未使用 import、只写变量、死代码等
-- **增量更新** — 首次全量扫描后，仅对变更文件进行增量重建，后续查询利用缓存数据，大幅减少计算开销
+- **增量更新** — 首次全量扫描后，仅对变更文件进行增量重建；增量感知可达性分析避免了对全图的重复计算。
 - **Python API + CLI** — 可集成到任何 Tool 开发、CI 流程，或直接供 Agent 自行分析和清理
 
 ## 安装
