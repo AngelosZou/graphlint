@@ -615,32 +615,41 @@ def detect_circular_refs(
     stack: list[int] = []
     sccs: list[list[int]] = []
     index = 0
+    call_stack: list[tuple[int, int]] = []
 
-    def strongconnect(v: int) -> None:
-        nonlocal index
-        indices[v] = lowlink[v] = index
-        index += 1
-        stack.append(v)
-        onstack.add(v)
-        for w in digraph.get(v, []):
-            if w not in indices:
-                strongconnect(w)
-                lowlink[v] = min(lowlink[v], lowlink[w])
-            elif w in onstack:
-                lowlink[v] = min(lowlink[v], indices[w])
-        if lowlink[v] == indices[v]:
-            scc: list[int] = []
-            while True:
-                w = stack.pop()
-                onstack.discard(w)
-                scc.append(w)
-                if w == v:
-                    break
-            sccs.append(scc)
-
-    for v in digraph:
-        if v not in indices:
-            strongconnect(v)
+    for start_v in digraph:
+        if start_v in indices:
+            continue
+        call_stack.append((start_v, 0))
+        while call_stack:
+            v, child_idx = call_stack[-1]
+            neighbors = digraph.get(v, [])
+            if child_idx == 0:
+                indices[v] = lowlink[v] = index
+                index += 1
+                stack.append(v)
+                onstack.add(v)
+            if child_idx < len(neighbors):
+                w = neighbors[child_idx]
+                call_stack[-1] = (v, child_idx + 1)
+                if w not in indices:
+                    call_stack.append((w, 0))
+                elif w in onstack:
+                    lowlink[v] = min(lowlink[v], indices[w])
+            else:
+                call_stack.pop()
+                if call_stack:
+                    parent_v, _ = call_stack[-1]
+                    lowlink[parent_v] = min(lowlink[parent_v], lowlink[v])
+                if lowlink[v] == indices[v]:
+                    scc: list[int] = []
+                    while True:
+                        w = stack.pop()
+                        onstack.discard(w)
+                        scc.append(w)
+                        if w == v:
+                            break
+                    sccs.append(scc)
 
     return _build_warnings(sccs, node_id_map)
 

@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.3.6] - 2026-07-27
+
+### Changed
+- Tarjan SCC algorithm converted from recursive to iterative using explicit
+  call stack, avoiding Python recursion depth limits on large dependency
+  graphs
+
 ## [0.3.5] - 2026-07-27
 
 ### Changed
