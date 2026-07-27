@@ -9,7 +9,7 @@ import json
 import os
 from typing import Any, Optional
 
-from graphlint.analyzer._types import EdgeInfo, NodeInfo, GraphBuildResult
+from graphlint.analyzer._types import EdgeInfo, EntryInfo, NodeInfo, GraphBuildResult
 from graphlint.storage.db import Database
 from graphlint.storage.hashing import compute_file_hash, is_test_file
 
@@ -96,13 +96,14 @@ def update_db(
         else:
             # Full build: unconditionally clear all data tables (keep files table)
             # files table is updated by subsequent _upsert_files INSERT OR REPLACE
-            for tbl in ("edges", "nodes", "imports", "warnings", "graph_snapshots"):
+            for tbl in ("edges", "nodes", "imports", "warnings", "graph_snapshots", "entries"):
                 db.execute(f"DELETE FROM {tbl}")
         _upsert_files(db, build_result, root_dir, test_patterns, changed)
         fid_map = _load_fid_map(db)
         _insert_nodes(db, build_result, fid_map, changed_files=changed_set)
         _do_insert_edges(db, build_result, fid_map, changed_files=changed_set)
         _insert_warnings(db, build_result, fid_map, changed_files=changed_set)
+        _insert_entries(db, build_result, fid_map, changed_files=changed_set)
         if incremental:
             update_snapshots(db, build_result)
         else:
@@ -115,7 +116,7 @@ def _delete_old(db: Database, removed: list[str], changed: list[str]) -> None:
         if not paths:
             continue
         ph = ",".join("?" for _ in paths)
-        for tbl in ("edges", "nodes", "imports", "warnings"):
+        for tbl in ("edges", "nodes", "imports", "warnings", "entries"):
             db.execute(
                 f"DELETE FROM {tbl} WHERE file_id IN "
                 f"(SELECT id FROM files WHERE path IN ({ph}))",
@@ -300,6 +301,77 @@ def _insert_warnings(
             "severity, message, line, details) VALUES (?,?,?,?,?,?,?)",
             batch,
         )
+
+
+def _insert_entries(
+    db: Database,
+    build_result: GraphBuildResult,
+    fid_map: dict[str, int],
+    changed_files: Optional[set[str]] = None,
+) -> None:
+    """Insert entry point detection results."""
+    batch: list[tuple[Any, ...]] = []
+    for entry in build_result.entry_info_list:
+        fp = entry.file_path
+        if changed_files is not None and fp not in changed_files:
+            continue
+        fid = fid_map.get(fp, 0)
+        if not fid:
+            continue
+        batch.append(
+            (
+                fid,
+                entry.node_id or 0,
+                entry.rule_name,
+                entry.line,
+                entry.description or "",
+                1 if entry.no_propagate else 0,
+            )
+        )
+        if len(batch) >= 5000:
+            db.executemany(
+                "INSERT INTO entries (file_id, node_id, rule_name, "
+                "line, description, no_propagate) VALUES (?,?,?,?,?,?)",
+                batch,
+            )
+            batch.clear()
+    if batch:
+        db.executemany(
+            "INSERT INTO entries (file_id, node_id, rule_name, "
+            "line, description, no_propagate) VALUES (?,?,?,?,?,?)",
+            batch,
+        )
+
+
+def load_unchanged_entries(
+    db: Database,
+    unchanged_files: set[str],
+) -> list[EntryInfo]:
+    """Load entry points for unchanged files from DB (incremental build)."""
+    if not unchanged_files:
+        return []
+    ph = ",".join("?" for _ in unchanged_files)
+    rows = db.fetchall(
+        f"SELECT e.*, f.path FROM entries e "
+        f"JOIN files f ON e.file_id = f.id "
+        f"WHERE f.path IN ({ph})",
+        tuple(unchanged_files),
+    )
+    entries: list[EntryInfo] = []
+    for r in rows:
+        file_path = r["path"]
+        node_id = r["node_id"] or 0
+        entries.append(
+            EntryInfo(
+                rule_name=r["rule_name"],
+                file_path=file_path,
+                line=r["line"],
+                node_id=node_id,
+                description=r["description"] or "",
+                no_propagate=bool(r["no_propagate"]),
+            )
+        )
+    return entries
 
 
 def _precompute_edge_counts(

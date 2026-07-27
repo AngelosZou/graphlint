@@ -117,6 +117,19 @@ CREATE TABLE IF NOT EXISTS graph_snapshots (
 
 CREATE INDEX IF NOT EXISTS idx_snapshots_time ON graph_snapshots(snapshot_time);
 
+-- Entry points: persisted detection results for incremental rebuild reuse
+CREATE TABLE IF NOT EXISTS entries (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    file_id         INTEGER NOT NULL REFERENCES files(id) ON DELETE CASCADE,
+    node_id         INTEGER DEFAULT 0,
+    rule_name       TEXT NOT NULL,
+    line            INTEGER NOT NULL DEFAULT 0,
+    description     TEXT NOT NULL DEFAULT '',
+    no_propagate    INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE INDEX IF NOT EXISTS idx_entries_file ON entries(file_id);
+
 -- Component members: maps node_id to component_id for incremental connectivity analysis
 CREATE TABLE IF NOT EXISTS component_members (
     component_id    INTEGER NOT NULL,

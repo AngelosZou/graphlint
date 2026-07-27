@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.3.4] - 2026-07-27
+
+### Changed
+- Incremental entry detection: entry point results are now persisted to DB
+  and only re-scanned for changed files in incremental builds, reducing
+  redundant computation when most files are unchanged
+
 ## [0.3.3] - 2026-07-25
 
 ### Changed

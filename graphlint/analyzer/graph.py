@@ -259,6 +259,7 @@ class GraphBuilder:
         parse_results: dict[str, ParseResult],
         changed_files: Optional[set[str]] = None,
         prebuilt_edges: Optional[list[EdgeInfo]] = None,
+        prebuilt_entries: Optional[list[EntryInfo]] = None,
         old_changed_node_ids: dict[int, tuple[str, str]] | None = None,
     ) -> GraphBuildResult:
         """Build the complete dependency graph from parse results.
@@ -267,6 +268,9 @@ class GraphBuilder:
             old_changed_node_ids: Maps old global node ID → (qualified_name, file_path)
                 for nodes in changed files. Used to remap parent_node_id when a
                 child in an unchanged file references a parent in a changed file.
+            prebuilt_entries: Pre-loaded EntryInfo from DB for unchanged files
+                (incremental mode). When provided, entry detection only scans
+                changed files and merges these prebuilt entries.
         """
         fid_map: dict[str, int] = {}
         fid_cnt = 1
@@ -332,15 +336,30 @@ class GraphBuilder:
             if fid and fid in file_nodes_by_fid:
                 fnodes_map[fp] = {n.qualified_name: n.id for n in file_nodes_by_fid[fid]}
 
-        # Detect entries via language adapters
+        # Detect entries via language adapters.
+        # In incremental mode, only scan changed files and merge prebuilt
+        # entries loaded from DB for unchanged files.
         entries: list[EntryInfo] = []
-        if self.registry:
-            for adapter in self.registry.all_adapters():
-                entries.extend(
-                    adapter.detect_entries(
-                        parse_results, self._nodes, self._node_id_map, self.config
+        if prebuilt_entries is not None and changed_files and len(changed_files) < len(parse_results):
+            changed_pr = {
+                fp: pr for fp, pr in parse_results.items() if fp in changed_files
+            }
+            if self.registry:
+                for adapter in self.registry.all_adapters():
+                    entries.extend(
+                        adapter.detect_entries(
+                            changed_pr, self._nodes, self._node_id_map, self.config
+                        )
                     )
-                )
+            entries.extend(prebuilt_entries)
+        else:
+            if self.registry:
+                for adapter in self.registry.all_adapters():
+                    entries.extend(
+                        adapter.detect_entries(
+                            parse_results, self._nodes, self._node_id_map, self.config
+                        )
+                    )
         for e in entries:
             if e.node_id and e.node_id in self._node_id_map:
                 self._node_id_map[e.node_id].is_entry = True

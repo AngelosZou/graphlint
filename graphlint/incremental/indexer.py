@@ -20,6 +20,7 @@ from graphlint.incremental._db_ops import (
     build_snapshots,
     load_old_changed_node_ids,
     load_prebuilt_edges,
+    load_unchanged_entries,
     persist_unchanged_parent_node_ids,
     update_db,
     update_snapshots,
@@ -140,7 +141,7 @@ class IncrementalIndexer:
 
         if needs_full:
             with self.db.transaction():
-                for t in ("edges", "nodes", "imports", "warnings", "graph_snapshots", "files"):
+                for t in ("edges", "nodes", "imports", "warnings", "graph_snapshots", "entries", "files"):
                     self.db.execute(f"DELETE FROM {t}")
             all_results = self._parse_batch(disk_files)
             for fp, pr in all_results:
@@ -186,11 +187,15 @@ class IncrementalIndexer:
                     prebuilt = load_prebuilt_edges(self.db, unchanged, sql_to_mem)
 
             # ------ Phase 4: Rebuild graph (upstream + downstream + analysis) --
+            prebuilt_entries: Optional[list[Any]] = None
+            if unchanged:
+                prebuilt_entries = load_unchanged_entries(self.db, unchanged)
             builder = self._create_builder(wc)
             br = builder.build(
                 pr_map,
                 changed_files=set(changed),
                 prebuilt_edges=prebuilt,
+                prebuilt_entries=prebuilt_entries,
                 old_changed_node_ids=old_ids if old_ids else None,
             )
 
