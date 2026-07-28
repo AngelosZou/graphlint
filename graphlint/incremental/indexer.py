@@ -181,6 +181,7 @@ class IncrementalIndexer:
                 self.db, br, [], list(pr_map),
                 self.root_dir, self.config.get("test_patterns", {}),
                 incremental=False,
+                file_mtimes=file_mtimes,
             )
             build_snapshots(self.db, br)
             self._save_cache(br.reachable, br.expanded)
@@ -235,6 +236,7 @@ class IncrementalIndexer:
                 self.db, br, removed, changed,
                 self.root_dir, self.config.get("test_patterns", {}),
                 incremental=True,
+                file_mtimes=file_mtimes,
             )
             persist_unchanged_parent_node_ids(self.db, br, changed)
             update_snapshots(self.db, br)

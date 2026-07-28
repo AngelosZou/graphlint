@@ -87,6 +87,7 @@ def update_db(
     root_dir: str,
     test_patterns: dict[str, Any],
     incremental: bool = False,
+    file_mtimes: Optional[dict[str, int]] = None,
 ) -> None:
     """Update SQLite in a single transaction."""
     changed_set = set(changed) if incremental else None
@@ -98,7 +99,8 @@ def update_db(
             # files table is updated by subsequent _upsert_files INSERT OR REPLACE
             for tbl in ("edges", "nodes", "imports", "warnings", "graph_snapshots", "entries"):
                 db.execute(f"DELETE FROM {tbl}")
-        _upsert_files(db, build_result, root_dir, test_patterns, changed)
+        _upsert_files(db, build_result, root_dir, test_patterns, changed,
+                      file_mtimes=file_mtimes)
         fid_map = _load_fid_map(db)
         _insert_nodes(db, build_result, fid_map, changed_files=changed_set)
         _do_insert_edges(db, build_result, fid_map, changed_files=changed_set)
@@ -106,8 +108,6 @@ def update_db(
         _insert_entries(db, build_result, fid_map, changed_files=changed_set)
         if incremental:
             update_snapshots(db, build_result)
-        else:
-            db.execute("DELETE FROM graph_snapshots")
 
 
 def _delete_old(db: Database, removed: list[str], changed: list[str]) -> None:
@@ -133,6 +133,7 @@ def _upsert_files(
     root_dir: str,
     test_patterns: dict[str, Any],
     changed_files: Optional[list[str]] = None,
+    file_mtimes: Optional[dict[str, int]] = None,
 ) -> None:
     """Insert or update the files table for changed files only."""
     if changed_files is None:
@@ -145,11 +146,18 @@ def _upsert_files(
         if not pr:
             continue
         abs_p = os.path.join(root_dir, fp)
-        try:
-            st = os.stat(abs_p)
-            size, mtime = st.st_size, st.st_mtime_ns
-        except OSError:
-            size, mtime = 0, 0
+        if file_mtimes and fp in file_mtimes:
+            mtime = file_mtimes[fp]
+            try:
+                size = os.path.getsize(abs_p)
+            except OSError:
+                size = 0
+        else:
+            try:
+                st = os.stat(abs_p)
+                size, mtime = st.st_size, st.st_mtime_ns
+            except OSError:
+                size, mtime = 0, 0
         is_test = 1 if is_test_file(fp, test_patterns) else 0
         fhash = pr.hash or compute_file_hash(abs_p)
         db.execute(

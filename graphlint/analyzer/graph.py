@@ -335,9 +335,11 @@ class GraphBuilder:
         changed_list = [fp for fp in changed_files if fp in parse_results]
 
         # Pre-build file_id → nodes index for fnodes lookups
+        changed_fids = {fid_map[fp] for fp in changed_list if fp in fid_map}
         file_nodes_by_fid: dict[int, list[NodeInfo]] = {}
         for n in self._nodes:
-            file_nodes_by_fid.setdefault(n.file_id, []).append(n)
+            if n.file_id in changed_fids:
+                file_nodes_by_fid.setdefault(n.file_id, []).append(n)
 
         # Build fnodes for all changed files (qualified_name → node_id)
         fnodes_map: dict[str, dict[str, int]] = {}
@@ -454,7 +456,8 @@ class GraphBuilder:
             cached_class_special_map=_cached_csm,
         )
         file_id_to_path = {v: k for k, v in fid_map.items()}
-        self._add_warnings(comps, file_id_to_path, cached_digraph=_cached_dg)
+        self._add_warnings(comps, file_id_to_path, cached_digraph=_cached_dg,
+                           special_names=_sn, public_api_names=_pn)
 
         return GraphBuildResult(
             nodes=list(self._nodes),
@@ -546,17 +549,24 @@ class GraphBuilder:
         comps: list[ComponentInfo],
         file_id_to_path: Optional[dict[int, str]] = None,
         cached_digraph: Optional[dict[int, list[int]]] = None,
+        special_names: Optional[frozenset[str]] = None,
+        public_api_names: Optional[frozenset[str]] = None,
     ) -> None:
         """Collect all warning types."""
         if file_id_to_path is None:
             file_id_to_path = {}
 
-        # Gather language-specific special names from adapters
-        public_api_names: frozenset[str] = frozenset()
-        special_names: frozenset[str] = frozenset()
-        if self.registry:
-            public_api_names = self.registry.public_api_names()
-            special_names = self.registry.special_names()
+        if special_names is None or public_api_names is None:
+            if self.registry:
+                if special_names is None:
+                    special_names = self.registry.special_names()
+                if public_api_names is None:
+                    public_api_names = self.registry.public_api_names()
+            else:
+                if special_names is None:
+                    special_names = frozenset()
+                if public_api_names is None:
+                    public_api_names = frozenset()
 
         for w in detect_write_only_nodes(
             self._nodes, self._edges, self._node_id_map, file_id_to_path,

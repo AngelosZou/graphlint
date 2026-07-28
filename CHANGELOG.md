@@ -2,6 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.3.8] - 2026-07-28
+
+### Changed
+- `_upsert_files` now accepts optional `file_mtimes` dict — when the caller
+  provides pre-collected mtime data, it uses `os.path.getsize` instead of the
+  heavier `os.stat`, avoiding redundant filesystem syscalls per changed file
+- `file_nodes_by_fid` in `GraphBuilder.build()` now only indexes nodes belonging
+  to changed files in incremental mode, skipping the O(N) iteration over
+  unchanged file nodes
+- `_add_warnings` accepts optional `special_names` / `public_api_names`
+  parameters — when passed, skips redundant calls to
+  `registry.special_names()` and `registry.public_api_names()`
+
+### Fixed
+- Removed duplicate `DELETE FROM graph_snapshots` in `update_db` full-build path
+
 ## [0.3.7] - 2026-07-28
 
 ### Changed
