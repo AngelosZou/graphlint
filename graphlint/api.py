@@ -60,6 +60,8 @@ def _build_registry() -> LanguageRegistry:
     _try_register_csharp(registry)
     # TypeScript adapter — silently skipped when tree-sitter-typescript is not installed
     _try_register_typescript(registry)
+    # C adapter — silently skipped when tree-sitter-c is not installed
+    _try_register_c(registry)
     return registry
 
 
@@ -70,6 +72,20 @@ def _try_register(registry: LanguageRegistry, adapter_cls: type) -> None:
     :func:`_warn_missing_lang_support`.
     """
     registry.register(adapter_cls())
+
+
+def _try_register_c(registry: LanguageRegistry) -> None:
+    """Register the C adapter if tree-sitter-c is available."""
+    try:
+        from graphlint.analyzer.language.c import CAdapter
+        from graphlint.analyzer.language.c.constants import _TREE_SITTER_C_AVAILABLE
+    except ImportError:
+        print("C support requires tree-sitter-c. "
+              "Please install it with: pip install graphlint[c]")
+        return
+    _try_register(registry, CAdapter, _TREE_SITTER_C_AVAILABLE,
+                  "C support requires tree-sitter-c. "
+                  "Please install it with: pip install graphlint[c]")
 
 
 def _try_register_rust(registry: LanguageRegistry) -> None:

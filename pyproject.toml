@@ -57,6 +57,10 @@ typescript = [
     "tree-sitter-typescript>=0.23,<0.25",
     "tree-sitter-javascript>=0.23,<0.25",
 ]
+c = [
+    "tree-sitter>=0.22,<0.27",
+    "tree-sitter-c>=0.21,<0.25",
+]
 
 [project.urls]
 Homepage = "https://github.com/AngelosZou/graphlint"
