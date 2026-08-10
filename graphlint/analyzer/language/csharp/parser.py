@@ -94,6 +94,17 @@ class CSharpSourceParser:
             result.name_usages = visitor.name_usages
             result.references = visitor.references
             result.warnings.extend(visitor.warnings)
+
+            unused = import_analyzer.detect_unused_imports(
+                result.imports, result.name_usages, file_path,
+            )
+            for use_info, msg, _ in unused:
+                result.warnings.append(
+                    _make_warning(
+                        "unused_import", "warning",
+                        msg, file_path, line=use_info.line,
+                    )
+                )
         except Exception as exc:
             result.warnings.append(
                 _make_warning(

@@ -30,54 +30,84 @@ class CSharpImportAnalyzer:
             - ``using static System.Math;``        → static import
             - ``using Timer = System.Timers.Timer;`` → alias
             - ``global using System;``              → global import (treated same)
-        """
-        module_path = ""
-        imported_names: list[str] = []
-        alias_map: dict[str, str] = {}
-        is_static = False
 
+        The alias form ``using Timer = System.Timers.Timer;`` parses in
+        tree-sitter-c-sharp as: ``identifier(Timer)`` ``=``
+        ``qualified_name(System.Timers.Timer)`` (the alias name also appears
+        in the ``name`` field).  The real module path is the right-hand side
+        (``System.Timers.Timer``), and the imported name is the alias
+        (``Timer``).  A ``name_equals`` node **does not exist** in this
+        grammar — detection must key on the ``=`` operator child.
+        """
+        children = list(node.children)
+        is_static = any(c.type == "static" for c in children)
+        has_equals = any(c.type == "=" for c in children)
+
+        # --- alias using: ``using Timer = System.Timers.Timer;`` ---
+        if has_equals:
+            alias_name = ""
+            module_path = ""
+            for c in children:
+                if c.type in ("qualified_name", "generic_name"):
+                    module_path = _node_text(c)
+                elif c.type == "identifier":
+                    alias_name = _node_text(c)
+            if not module_path or not alias_name:
+                return None
+            line = node.start_point[0] + 1 if hasattr(node, "start_point") and node.start_point else 0
+            return UseInfo(
+                module_path=module_path,
+                imported_names=[alias_name],
+                alias_map={alias_name: module_path},
+                is_static=False,
+                line=line,
+            )
+
+        # --- namespace importing : ``using System;`` / ``using static ...`` ---
         name_node = node.child_by_field_name("name")
         if not name_node:
-            # Try to find qualified name or identifier among children
-            for child in node.children:
-                if child.type in ("qualified_name", "identifier"):
-                    name_node = child
+            for c in children:
+                if c.type in ("qualified_name", "identifier"):
+                    name_node = c
                     break
-
         if not name_node:
             return None
-
         module_path = _node_text(name_node)
-
-        # Check for ``using static``
-        for child in node.children:
-            if child.type == "static":
-                is_static = True
-                break
-
-        # Check for alias: ``using Foo = Bar;`` — the name field is the
-        # right-hand side; the alias is a separate child.
-        for child in node.children:
-            if child.type == "name_equals":
-                # Left of = is the alias name; right side is the actual type
-                for c in child.children:
-                    if c.type == "identifier":
-                        imported_names.append(_node_text(c))
-                break
-
-        if is_static:
-            # For static using, imported names are the static members
-            imported_names.append("*")
-
         line = node.start_point[0] + 1 if hasattr(node, "start_point") and node.start_point else 0
-
         return UseInfo(
             module_path=module_path,
-            imported_names=imported_names if imported_names else ["*"],
-            alias_map=alias_map,
+            # Wildcard: single-file analysis cannot determine which types
+            # from a namespace are referenced (or which static members).
+            imported_names=["*"],
+            alias_map={},
             is_static=is_static,
             line=line,
         )
+
+    def detect_unused_imports(
+        self,
+        uses: list[UseInfo],
+        name_usages: set[str],
+        file_path: str = "",
+    ) -> list[tuple[UseInfo, str, int]]:
+        """Detect unused ``using`` directives.
+
+        Wildcard imports (``using System;``, ``using static System.Math;``)
+        are skipped because single-file analysis cannot determine whether
+        types from the namespace are actually referenced.
+
+        Alias imports (``using Timer = System.Timers.Timer;``) are checked
+        against *name_usages*.
+        """
+        unused: list[tuple[UseInfo, str, int]] = []
+        for idx, use_info in enumerate(uses):
+            if use_info.imported_names == ["*"]:
+                continue
+            used = any(n in name_usages for n in use_info.imported_names)
+            if not used:
+                msg = f"Unused using directive: '{use_info.module_path}'"
+                unused.append((use_info, msg, idx))
+        return unused
 
 
 def _node_text(node: Any) -> str:
