@@ -50,6 +50,8 @@ def _build_registry() -> LanguageRegistry:
     _try_register_rust(registry)
     # C# adapter — skipped when tree-sitter-c-sharp is missing
     _try_register_csharp(registry)
+    # TypeScript adapter — silently skipped when tree-sitter-typescript is not installed
+    _try_register_typescript(registry)
     return registry
 
 
@@ -107,6 +109,24 @@ def _warn_missing_lang_support(root_dir: str, registry: LanguageRegistry) -> Non
             f"Install with: {install_cmd}",
             file=sys.stderr,
         )
+
+
+def _try_register_typescript(registry: LanguageRegistry) -> None:
+    """Register the TypeScript adapter if tree-sitter-typescript is available."""
+    try:
+        from graphlint.analyzer.language.typescript import TSTypeScriptAdapter
+        from graphlint.analyzer.language.typescript.constants import (
+            _TREE_SITTER_TYPESCRIPT_AVAILABLE,
+            _TREE_SITTER_JAVASCRIPT_AVAILABLE,
+        )
+    except ImportError:
+        print("TypeScript support requires tree-sitter-typescript. "
+              "Please install it with: pip install graphlint[typescript]")
+        return
+    available = _TREE_SITTER_TYPESCRIPT_AVAILABLE or _TREE_SITTER_JAVASCRIPT_AVAILABLE
+    _try_register(registry, TSTypeScriptAdapter, available,
+                  "TypeScript support requires tree-sitter-typescript + tree-sitter-javascript. "
+                  "Please install it with: pip install graphlint[typescript]")
 
 
 # ---------------------------------------------------------------------------
