@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "graphlint"
-version = "0.3.8"
+version = "0.4.0"
 description = "A static analysis tool for identifying dead code in a codebase. It provides Python API and CLI for use by agents."
 readme = "README_PYPI.md"
 license = "MIT"
@@ -47,6 +47,10 @@ dev = [
 rust = [
     "tree-sitter>=0.22,<0.27",
     "tree-sitter-rust>=0.22,<0.25",
+]
+csharp = [
+    "tree-sitter>=0.22,<0.27",
+    "tree-sitter-c-sharp>=0.23,<0.25",
 ]
 
 [project.urls]

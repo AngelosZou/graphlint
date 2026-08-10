@@ -264,3 +264,83 @@ class TestAutoBuildIntegration:
 
             _auto_build(str(tmp_path), {})
             mock_db.assert_called_once()
+
+
+@pytest.mark.timeout(30)
+class TestStaleDbDetection:
+    """_is_stale_db — read-only probe for incompatible stored schema."""
+
+    def test_no_db_is_not_stale(self, tmp_path: Path):
+        """Missing index DB → not stale."""
+        from graphlint.api import _is_stale_db
+
+        assert _is_stale_db(str(tmp_path)) is False
+
+    def test_matching_version_is_not_stale(self, tmp_path: Path):
+        """DB stamped with the current schema version → not stale."""
+        from graphlint.api import _is_stale_db
+        from graphlint.storage.db import Database
+
+        db = Database(str(tmp_path))
+        db.close()
+        assert _is_stale_db(str(tmp_path)) is False
+
+    def test_unversioned_db_is_stale(self, tmp_path: Path):
+        """Pre-versioning DB (user_version=0) → stale."""
+        from graphlint.api import _is_stale_db
+        from graphlint.storage.db import Database
+
+        db = Database(str(tmp_path))
+        db.execute("PRAGMA user_version = 0")
+        db.close()
+        assert _is_stale_db(str(tmp_path)) is True
+
+    def test_newer_version_db_is_stale(self, tmp_path: Path):
+        """DB written by a future graphlint → stale."""
+        from graphlint.api import _is_stale_db
+        from graphlint.storage.db import Database
+
+        db = Database(str(tmp_path))
+        db.execute("PRAGMA user_version = 999")
+        db.close()
+        assert _is_stale_db(str(tmp_path)) is True
+
+
+@pytest.mark.timeout(60)
+class TestAutoBuildHealsStaleDb:
+    """Auto build must drop an incompatible stored DB and rebuild
+    from scratch."""
+
+    def test_auto_build_rebuilds_unversioned_db(self, tmp_path: Path):
+        """Unchanged files + incompatible DB → still full rebuild,
+        fresh schema."""
+        import sqlite3
+
+        from graphlint import api
+
+        (tmp_path / "main.py").write_text("x = 1", encoding="utf-8")
+        cfg = {"performance": {"parallel_workers": 1}}
+
+        # First build creates a compatible DB + scan stamp
+        assert api._auto_build(str(tmp_path), cfg) is True
+
+        # Simulate a pre-versioning DB: unversioned, missing new columns
+        db_path = tmp_path / ".graphlint" / "db.sqlite"
+        conn = sqlite3.connect(str(db_path))
+        conn.execute("ALTER TABLE nodes DROP COLUMN is_partial")
+        conn.execute("ALTER TABLE nodes DROP COLUMN canonical_name")
+        conn.execute("ALTER TABLE nodes DROP COLUMN visibility")
+        conn.execute("PRAGMA user_version = 0")
+        conn.close()
+
+        # Stamp still matches (no file changed) — the stale probe must force
+        # a full rebuild anyway
+        assert api._auto_build(str(tmp_path), cfg) is True
+
+        conn = sqlite3.connect(str(db_path))
+        try:
+            cols = [r[1] for r in conn.execute("PRAGMA table_info(nodes)")]
+            assert "is_partial" in cols
+            assert conn.execute("PRAGMA user_version").fetchone()[0] == 1
+        finally:
+            conn.close()

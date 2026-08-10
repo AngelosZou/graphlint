@@ -6,6 +6,41 @@ from __future__ import annotations
 import sqlite3
 
 # ---------------------------------------------------------------------------
+# Schema versioning
+#
+# Bump SCHEMA_VERSION on ANY DDL change (new table/column/index). A stored
+# database whose user_version differs from SCHEMA_VERSION is treated as
+# incompatible and dropped + rebuilt (see storage/db.py Database.__init__).
+# ---------------------------------------------------------------------------
+
+SCHEMA_VERSION: int = 1
+
+# SQLite error fragments indicating the stored schema no longer matches the
+# code that wrote it (usually a version mismatch on the disk DB).
+SCHEMA_MISMATCH_HINTS: tuple[str, ...] = (
+    "no column named",
+    "no such column",
+    "duplicate column name",
+    "no such table",
+)
+
+
+def get_user_version(conn: sqlite3.Connection) -> int:
+    """Return the stored schema version (0 for unversioned/fresh DBs)."""
+    try:
+        return int(conn.execute("PRAGMA user_version").fetchone()[0])
+    except (sqlite3.DatabaseError, TypeError, IndexError):
+        return 0
+
+
+def is_schema_mismatch_error(exc: BaseException) -> bool:
+    """Return True when *exc* indicates the stored schema no longer
+    matches code."""
+    msg = str(exc)
+    return any(hint in msg for hint in SCHEMA_MISMATCH_HINTS)
+
+
+# ---------------------------------------------------------------------------
 # DDL
 # ---------------------------------------------------------------------------
 
@@ -43,7 +78,10 @@ CREATE TABLE IF NOT EXISTS nodes (
     is_async        INTEGER NOT NULL DEFAULT 0,
     decorators      TEXT,
     docstring       TEXT,
-    is_entry        INTEGER NOT NULL DEFAULT 0
+    is_entry        INTEGER NOT NULL DEFAULT 0,
+    is_partial      INTEGER NOT NULL DEFAULT 0,
+    canonical_name  TEXT,
+    visibility      TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_nodes_file ON nodes(file_id);
@@ -176,3 +214,6 @@ def create_tables(conn: sqlite3.Connection) -> None:
                 conn.execute(stmt)
             except Exception:
                 pass
+    # Stamp the schema version so later incompatible-DB detection works.
+    # Runs outside the swallow loop: a version stamp must never silently fail.
+    conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")

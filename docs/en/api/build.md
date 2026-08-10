@@ -44,7 +44,7 @@ Returns a dict with build statistics:
 
 `build()` uses incremental indexing by default, with the following flow:
 
-1. **Scan files**: Traverse the project directory, collect all `.py` files
+1. **Scan files**: Traverse the project directory, collect source files (`.py` / `.rs` / `.cs`)
 2. **Compute hash**: Calculate SHA256 hash for each file
 3. **Compare cache**: Compare against hashes in `.graphlint/` cache
 4. **Parse only changes**: Only AST-parse files whose hash changed
@@ -52,6 +52,16 @@ Returns a dict with build statistics:
 6. **Collect warnings**: Detect circular references, unused imports, etc.
 
 When `force_rebuild=True`, steps 2-4 are skipped, performing a full rebuild.
+
+## Stale Index Recovery
+
+The index schema is versioned (`PRAGMA user_version`). When the stored database
+is incompatible with the installed graphlint version (a version update/downgrade
+or a schema-mismatch error such as `no column named` / `no such table` /
+`FOREIGN KEY constraint failed`), `build()` automatically drops the stale
+`.graphlint/db.sqlite` and runs a full rebuild instead of raising — the return
+value reflects the fresh rebuild. The same recovery applies to the implicit
+auto-build triggered by `query()`.
 
 ## Parallel Build
 

@@ -1,6 +1,6 @@
 # 入口点检测参考
 
-graphlint 内置 17 种入口点检测规则（Python 10 种、Rust 7 种），并支持自定义规则扩展。首次运行 `graphlint build` 时，这些规则作为模板写入 `.graphlint/config.json` 中，此后配置文件即为唯一入口规则来源——你可以通过 `graphlint config` 命令或直接编辑配置文件来添加、删除或修改规则。
+graphlint 内置 28 种入口点检测规则（Python 10 种、Rust 8 种、C# 10 种），并支持自定义规则扩展。首次运行 `graphlint build` 时，这些规则作为模板写入 `.graphlint/config.json` 中，此后配置文件即为唯一入口规则来源——你可以通过 `graphlint config` 命令或直接编辑配置文件来添加、删除或修改规则。
 
 ## 内置规则
 
@@ -171,7 +171,21 @@ graphlint 内置 17 种入口点检测规则（Python 10 种、Rust 7 种），�
 
 ### Rust 规则
 
-### 11. rust_main
+### 11. rust_default_bin_path
+
+检测 Cargo 隐式二进制入口路径（`src/main.rs` 和 `src/bin/*.rs`）。
+
+- **匹配模式**：`file_match:src/main.rs | file_match:src/bin/*.rs`
+- **匹配文件**：`**/*.rs`
+- **示例**：
+  ```rust
+  // src/main.rs — Cargo 隐式二进制入口
+  fn main() {
+      println!("Hello, world!");
+  }
+  ```
+
+### 12. rust_main
 
 检测 Rust 二进制 crate 入口点 `fn main()`。
 
@@ -184,7 +198,7 @@ graphlint 内置 17 种入口点检测规则（Python 10 种、Rust 7 种），�
   }
   ```
 
-### 12. rust_async_main
+### 13. rust_async_main
 
 检测异步运行时 `#[...]` 属性宏装饰的 `main` 函数。
 
@@ -199,7 +213,7 @@ graphlint 内置 17 种入口点检测规则（Python 10 种、Rust 7 种），�
   }
   ```
 
-### 13. rust_wasm_entry
+### 14. rust_wasm_entry
 
 检测 WebAssembly 导出。
 
@@ -215,7 +229,7 @@ graphlint 内置 17 种入口点检测规则（Python 10 种、Rust 7 种），�
   }
   ```
 
-### 14. rust_proc_macro
+### 15. rust_proc_macro
 
 检测 Rust 过程宏入口点（由编译器调用）。
 
@@ -229,7 +243,7 @@ graphlint 内置 17 种入口点检测规则（Python 10 种、Rust 7 种），�
   }
   ```
 
-### 15. rust_ffi_export
+### 16. rust_ffi_export
 
 检测 FFI 导出（`#[no_mangle]` 或 `#[export_name]`）。
 
@@ -243,7 +257,7 @@ graphlint 内置 17 种入口点检测规则（Python 10 种、Rust 7 种），�
   }
   ```
 
-### 16. rust_test
+### 17. rust_test
 
 检测 Rust 测试文件和 `#[test]` 函数。
 
@@ -258,13 +272,156 @@ graphlint 内置 17 种入口点检测规则（Python 10 种、Rust 7 种），�
   }
   ```
 
-### 17. rust_pub_api
+### 18. rust_pub_api
 
 将 Rust 库 crate 中所有 `pub` 项目视为入口点。
 
 - **匹配模式**：`visibility:pub`
 - **匹配文件**：`**/*.rs`
 - **注意**：默认禁用（`"enabled": false`）。使用 `--public-as-entry` 在查询时激活，或在配置中启用该规则以实现持久的库代码分析。
+
+### C# 规则
+
+### 19. csharp_console_app
+
+检测 C# 控制台应用入口点：`Program.cs` 中的静态 `Main` 方法或顶级语句。
+
+- **匹配模式**：`function_def:Main | file_is_program`
+- **匹配文件**：`**/Program.cs`
+- **示例**：
+  ```csharp
+  // 顶级语句
+  Console.WriteLine("Hello, world!");
+  ```
+
+### 20. csharp_xunit
+
+检测 xUnit 测试方法。
+
+- **匹配模式**：`decorator:Fact | decorator:Theory`
+- **匹配文件**：`**/*.cs`
+- **示例**：
+  ```csharp
+  public class CalculatorTests
+  {
+      [Fact]
+      public void Add_Works()
+      {
+          Assert.Equal(4, 2 + 2);
+      }
+  }
+  ```
+
+### 21. csharp_nunit
+
+检测 NUnit 测试夹具和方法。
+
+- **匹配模式**：`decorator:TestFixture | decorator:Test | decorator:TestCase | decorator:SetUp | decorator:OneTimeSetUp`
+- **匹配文件**：`**/*.cs`
+- **示例**：
+  ```csharp
+  [TestFixture]
+  public class CalculatorTests
+  {
+      [Test]
+      public void Add_Works() { /* ... */ }
+  }
+  ```
+
+### 22. csharp_mstest
+
+检测 MSTest 测试类和方法。
+
+- **匹配模式**：`decorator:TestClass | decorator:TestMethod | decorator:ClassInitialize | decorator:TestInitialize`
+- **匹配文件**：`**/*.cs`
+- **示例**：
+  ```csharp
+  [TestClass]
+  public class CalculatorTests
+  {
+      [TestMethod]
+      public void Add_Works() { /* ... */ }
+  }
+  ```
+
+### 23. csharp_webapi
+
+检测 ASP.NET Web API 控制器和操作方法。
+
+- **匹配模式**：`decorator:ApiController | decorator:Route | decorator:HttpGet | decorator:HttpPost | decorator:HttpPut | decorator:HttpDelete | decorator:HttpPatch`
+- **匹配文件**：`**/*.cs`
+- **示例**：
+  ```csharp
+  [ApiController]
+  [Route("api/[controller]")]
+  public class ProductsController : ControllerBase
+  {
+      [HttpGet]
+      public IActionResult GetAll() { /* ... */ }
+  }
+  ```
+
+### 24. csharp_minimal_api
+
+检测 ASP.NET Minimal API 端点定义。
+
+- **匹配模式**：`function_call:MapGet | function_call:MapPost | function_call:MapPut | function_call:MapDelete | function_call:MapMethods`
+- **匹配文件**：`**/*.cs`
+- **示例**：
+  ```csharp
+  var builder = WebApplication.CreateBuilder(args);
+  var app = builder.Build();
+  app.MapGet("/", () => "Hello, World!");
+  app.Run();
+  ```
+
+### 25. csharp_generic_host
+
+检测 .NET Generic Host / WebApplication 启动调用。
+
+- **匹配模式**：`function_call:CreateDefaultBuilder | function_call:ConfigureWebHostDefaults | function_call:Run`
+- **匹配文件**：`**/*.cs`
+- **示例**：
+  ```csharp
+  Host.CreateDefaultBuilder(args)
+      .ConfigureServices(services => { /* ... */ })
+      .Build()
+      .Run();
+  ```
+
+### 26. csharp_winforms
+
+检测 Windows Forms 应用入口点。
+
+- **匹配模式**：`function_call:Application.Run | function_call:Application.EnableVisualStyles`
+- **匹配文件**：`**/*.cs`
+- **示例**：
+  ```csharp
+  Application.EnableVisualStyles();
+  Application.Run(new MainForm());
+  ```
+
+### 27. csharp_wpf
+
+检测 WPF 应用入口点（`App.xaml.cs`）。
+
+- **匹配模式**：`class_definition:App`
+- **匹配文件**：`**/*.cs`
+- **示例**：
+  ```csharp
+  public partial class App : Application
+  {
+      // 启动逻辑
+  }
+  ```
+
+### 28. csharp_test
+
+检测 C# 测试文件（xUnit/NUnit/MSTest 约定）。
+
+- **匹配模式**：`test_file`
+- **匹配文件**：`**/*.cs`
+- **注意**：测试入口点不会将可达性传播到被测试的非测试代码。
 
 ## `--public-as-entry` 标志
 
@@ -275,7 +432,7 @@ graphlint query --public-as-entry
 ```
 
 此标志：
-- 仅适用于具有 `public` 可见性声明的语言（Rust `pub`），对 Python 文件无效。
+- 仅适用于具有 `public` 可见性声明的语言（Rust `pub`、C# `public`），对 Python 文件无效。
 - 与 `rust_pub_api` 配置入口规则独立——两者是正交的机制。
 - **开关时会触发全量重新索引**（通过扫描戳检测变化）。
 - 对于长期库代码分析，建议在 `.graphlint/config.json` 中启用 `rust_pub_api` 以持久化设置，避免重复构建。
@@ -290,14 +447,17 @@ graphlint query --public-as-entry
 
 | 前缀 | 说明 | 示例 | 适用语言 |
 |------|------|------|----------|
-| `function_call:<name>` | 匹配指定名称的函数调用 | `"function_call:start_app"` | Python |
-| `function_def:<pattern>` | 匹配指定名称的函数定义（支持 glob） | `"function_def:run_*"` | Python、Rust |
-| `decorator:<name>` | 匹配装饰器（Python）或属性宏（Rust `#[...]`） | `"decorator:app.route"` / `"decorator:tokio::main"` | Python、Rust |
+| `function_call:<name>` | 匹配指定名称的函数调用 | `"function_call:start_app"` | Python、C# |
+| `function_def:<pattern>` | 匹配指定名称的函数定义（支持 glob） | `"function_def:run_*"` | Python、Rust、C# |
+| `decorator:<name>` | 匹配装饰器（Python）、属性宏（Rust `#[...]`）或特性（C# `[...]`） | `"decorator:app.route"` / `"decorator:tokio::main"` / `"decorator:Fact"` | Python、Rust、C# |
 | `class_instantiation:<name>` | 匹配指定名称的类实例化 | `"class_instantiation:MyApp"` | Python |
-| `file_match:<pattern>` | 匹配文件名模式 | `"file_match:**/startup.py"` | Python、Rust |
+| `class_definition:<pattern>` | 匹配类/结构体/记录/接口定义（支持 glob） | `"class_definition:App"` | C# |
+| `file_match:<pattern>` | 匹配文件名模式 | `"file_match:**/startup.py"` | Python、Rust、C# |
+| `file_is_program` | 匹配含顶级语句的 `Program.cs` | `"file_is_program"` | C# |
 | `if_name_main` | 匹配 `if __name__ == '__main__'` | `"if_name_main"` | Python |
-| `test_file` | 匹配测试文件（使用 `test_patterns` 配置） | `"test_file"` | Python、Rust |
+| `test_file` | 匹配测试文件（使用 `test_patterns` 配置） | `"test_file"` | Python、Rust、C# |
 | `visibility:pub` | 匹配具有 `pub` 可见性修饰符的项目 | `"visibility:pub"` | Rust |
+| `visibility:public` | 匹配具有 `public` 可见性修饰符的项目 | `"visibility:public"` | C# |
 | `trait_impl:<pattern>` | 匹配 `impl Trait for Type` 实现块 | `"trait_impl:Default"` | Rust |
 | `macro_def:<pattern>` | 匹配 `macro_rules!` 定义 | `"macro_def:my_macro"` | Rust |
 

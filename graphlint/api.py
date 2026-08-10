@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import os
+import sqlite3
 import time
 from typing import Any, Optional, Union
 
@@ -17,12 +18,13 @@ from graphlint.analyzer.warnings import WarningCollector
 from graphlint.config.manager import ConfigManager
 from graphlint.exceptions import InvalidParamError, InvalidPathError
 from graphlint.i18n import I18nManager
-from graphlint.incremental.indexer import IncrementalIndexer
+from graphlint.incremental.indexer import IncrementalIndexer, IndexResult
 from graphlint.params import VALID_SORT_BY, VALID_WARN_TYPES
 from graphlint.query.engine import QueryEngine, QueryFilters
 from graphlint.query.formatter import TextFormatter
 from graphlint.query.volume import VolumeStrategy
-from graphlint.storage.db import Database
+from graphlint.storage.db import Database, remove_database_files
+from graphlint.storage.schema import SCHEMA_VERSION, get_user_version, is_schema_mismatch_error
 
 # ---------------------------------------------------------------------------
 # Language registry
@@ -35,7 +37,18 @@ def _build_registry() -> LanguageRegistry:
     registry.register(PythonAdapter())
     # Rust adapter — silently skipped when tree-sitter is not installed
     _try_register_rust(registry)
+    # C# adapter — silently skipped when tree-sitter-c-sharp is not installed
+    _try_register_csharp(registry)
     return registry
+
+
+def _try_register(registry: LanguageRegistry, adapter_cls: type, available: bool,
+                   install_msg: str) -> None:
+    """Register *adapter_cls* when its tree-sitter grammar is installed."""
+    if available:
+        registry.register(adapter_cls())
+    else:
+        print(install_msg)
 
 
 def _try_register_rust(registry: LanguageRegistry) -> None:
@@ -43,15 +56,27 @@ def _try_register_rust(registry: LanguageRegistry) -> None:
     try:
         from graphlint.analyzer.language.rust import RustAdapter
         from graphlint.analyzer.language.rust.constants import _TREE_SITTER_AVAILABLE
-
-        if _TREE_SITTER_AVAILABLE:
-            registry.register(RustAdapter())
-        else:
-            print("Rust support requires tree-sitter. "
-                  "Please install it with: pip install graphlint[rust]")
     except ImportError:
         print("Rust support requires tree-sitter. "
               "Please install it with: pip install graphlint[rust]")
+        return
+    _try_register(registry, RustAdapter, _TREE_SITTER_AVAILABLE,
+                  "Rust support requires tree-sitter. "
+                  "Please install it with: pip install graphlint[rust]")
+
+
+def _try_register_csharp(registry: LanguageRegistry) -> None:
+    """Register the C# adapter if tree-sitter-c-sharp is available."""
+    try:
+        from graphlint.analyzer.language.csharp import CSharpAdapter
+        from graphlint.analyzer.language.csharp.constants import _TREE_SITTER_CSHARP_AVAILABLE
+    except ImportError:
+        print("C# support requires tree-sitter-c-sharp. "
+              "Please install it with: pip install graphlint[csharp]")
+        return
+    _try_register(registry, CSharpAdapter, _TREE_SITTER_CSHARP_AVAILABLE,
+                  "C# support requires tree-sitter-c-sharp. "
+                  "Please install it with: pip install graphlint[csharp]")
 
 
 # ---------------------------------------------------------------------------
@@ -161,6 +186,21 @@ def query(
 # ---------------------------------------------------------------------------
 
 
+def _index_result_dict(result: IndexResult) -> dict[str, Any]:
+    """Format an IndexResult for the public build() API."""
+    return {
+        "status": "ok",
+        "files_scanned": result.files_scanned,
+        "files_changed": result.files_changed,
+        "files_added": result.files_added,
+        "files_removed": result.files_removed,
+        "nodes_added": result.nodes_added,
+        "edges_updated": result.edges_updated,
+        "duration_ms": result.duration_ms,
+        "warnings_generated": result.warnings_generated,
+    }
+
+
 def build(
     force_rebuild: bool = False,
     parallel: int = 0,
@@ -180,6 +220,7 @@ def build(
     registry = _build_registry()
     db = Database(root_dir)
     wc = WarningCollector()
+    db2: Optional[Database] = None
 
     try:
         indexer = IncrementalIndexer(
@@ -187,19 +228,36 @@ def build(
             public_as_entry=public_as_entry,
         )
         result = indexer.run(force_rebuild=force_rebuild, warning_collector=wc)
-        return {
-            "status": "ok",
-            "files_scanned": result.files_scanned,
-            "files_changed": result.files_changed,
-            "files_added": result.files_added,
-            "files_removed": result.files_removed,
-            "nodes_added": result.nodes_added,
-            "edges_updated": result.edges_updated,
-            "duration_ms": result.duration_ms,
-            "warnings_generated": result.warnings_generated,
-        }
-    finally:
+        return _index_result_dict(result)
+    except Exception as exc:
+        if not (_is_fk_error(exc) or is_schema_mismatch_error(exc)):
+            raise
+        # Stale schema (version update) or broken constraints — drop the
+        # stored DB and rebuild from scratch, then report the fresh result.
+        print(
+            f"[graphlint] Build failed: {exc} — dropping stale database and "
+            "running full rebuild...",
+            file=sys.stderr,
+        )
         db.close()
+        remove_database_files(db.db_path)
+        db2 = Database(root_dir)
+        indexer2 = IncrementalIndexer(
+            root_dir, db2, parallel, registry=registry,
+            public_as_entry=public_as_entry,
+        )
+        result = indexer2.run(force_rebuild=True, warning_collector=wc)
+        return _index_result_dict(result)
+    finally:
+        try:
+            db.close()
+        except Exception:
+            pass
+        if db2 is not None:
+            try:
+                db2.close()
+            except Exception:
+                pass
 
 
 # ---------------------------------------------------------------------------
@@ -359,6 +417,31 @@ def _scan_current(
     return changed, current_files
 
 
+def _is_fk_error(exc: BaseException) -> bool:
+    """True when *exc* is a SQLite foreign-key constraint failure."""
+    return "FOREIGN KEY constraint failed" in str(exc)
+
+
+def _is_stale_db(root_dir: str) -> bool:
+    """True when the stored index DB carries an incompatible schema version.
+
+    Read-only probe (no tables created, no reset): lets the auto-build
+    decide whether a full rebuild is required even when no source file
+    changed — e.g. right after upgrading graphlint.
+    """
+    db_path = os.path.join(root_dir, ".graphlint", "db.sqlite")
+    if not os.path.isfile(db_path):
+        return False
+    try:
+        conn = sqlite3.connect(db_path)
+        try:
+            return get_user_version(conn) != SCHEMA_VERSION
+        finally:
+            conn.close()
+    except sqlite3.Error:
+        return False
+
+
 def _auto_build(
     root_dir: str,
     config: dict[str, Any],
@@ -370,7 +453,7 @@ def _auto_build(
     if registry is None:
         registry = _build_registry()
     changed, current_files = _scan_current(root_dir, registry, public_as_entry)
-    if not changed:
+    if not changed and not _is_stale_db(root_dir):
         return True
 
     db = None
@@ -387,25 +470,31 @@ def _auto_build(
 
         # Use incremental rebuild when DB exists; full rebuild for first time
         indexer.run(
-            force_rebuild=not db_exists,
+            force_rebuild=(not db_exists or db.schema_reset),
             warning_collector=wc,
             pre_scanned_files=current_files,
         )
         return True
     except Exception as exc:
         msg = str(exc)
-        is_fk = "FOREIGN KEY constraint failed" in msg
-        if is_fk:
+        if _is_fk_error(exc):
             traceback.print_exc(file=sys.stderr)
         print(f"[graphlint] Auto build failed: {msg}", file=sys.stderr)
-        if is_fk:
-            print("[graphlint] FK constraint — retrying with full rebuild...", file=sys.stderr)
+        if _is_fk_error(exc) or is_schema_mismatch_error(exc):
+            # Stale schema (version update) or broken constraints — the
+            # stored DB cannot be reused. Drop it and rebuild from scratch.
+            print(
+                "[graphlint] Stale index detected — dropping database and "
+                "running full rebuild...",
+                file=sys.stderr,
+            )
             try:
                 if db is not None:
                     try:
                         db.close()
                     except Exception:
                         pass
+                remove_database_files(db_path)
                 db2 = Database(root_dir)
                 wc2 = WarningCollector()
                 indexer2 = IncrementalIndexer(

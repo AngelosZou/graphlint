@@ -18,6 +18,12 @@ pip install graphlint
 pip install graphlint[rust]
 ```
 
+如需支持 C#（`.cs` 文件），安装可选的 `tree-sitter` 依赖：
+
+```bash
+pip install graphlint[csharp]
+```
+
 ## Agent 集成
 
 Graphlint 可以将使用提示词注入到您的 AI 编码工具的**全局配置**中，让每个项目自动获得 graphlint 的使用指南：

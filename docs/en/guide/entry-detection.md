@@ -1,6 +1,6 @@
 # Entry Point Detection Reference
 
-graphlint has 17 built-in entry point detection rules (10 for Python, 7 for Rust) and supports custom rule extension. On first `graphlint build`, these rules are written as a template into `.graphlint/config.json`; thereafter the config file is the single source of truth — you may add, remove, or modify rules via `graphlint config` or by editing the file directly.
+graphlint has 28 built-in entry point detection rules (10 for Python, 8 for Rust, 10 for C#) and supports custom rule extension. On first `graphlint build`, these rules are written as a template into `.graphlint/config.json`; thereafter the config file is the single source of truth — you may add, remove, or modify rules via `graphlint config` or by editing the file directly.
 
 ## Built-in Rules
 
@@ -171,7 +171,21 @@ Detects Pytest test cases as entry points.
 
 ### Rust Rules
 
-### 11. rust_main
+### 11. rust_default_bin_path
+
+Detects Cargo's implicit binary entry paths (`src/main.rs` and `src/bin/*.rs`).
+
+- **Match Pattern**: `file_match:src/main.rs | file_match:src/bin/*.rs`
+- **Match Files**: `**/*.rs`
+- **Example**:
+  ```rust
+  // src/main.rs — implicit Cargo binary entry
+  fn main() {
+      println!("Hello, world!");
+  }
+  ```
+
+### 12. rust_main
 
 Detects the Rust binary crate entry point `fn main()`.
 
@@ -184,7 +198,7 @@ Detects the Rust binary crate entry point `fn main()`.
   }
   ```
 
-### 12. rust_async_main
+### 13. rust_async_main
 
 Detects async runtime `#[...]` attributes that decorate `main`.
 
@@ -199,7 +213,7 @@ Detects async runtime `#[...]` attributes that decorate `main`.
   }
   ```
 
-### 13. rust_wasm_entry
+### 14. rust_wasm_entry
 
 Detects WebAssembly exports.
 
@@ -215,7 +229,7 @@ Detects WebAssembly exports.
   }
   ```
 
-### 14. rust_proc_macro
+### 15. rust_proc_macro
 
 Detects Rust procedural macro entry points called by the compiler.
 
@@ -229,7 +243,7 @@ Detects Rust procedural macro entry points called by the compiler.
   }
   ```
 
-### 15. rust_ffi_export
+### 16. rust_ffi_export
 
 Detects FFI exports via `#[no_mangle]` or `#[export_name]`.
 
@@ -243,7 +257,7 @@ Detects FFI exports via `#[no_mangle]` or `#[export_name]`.
   }
   ```
 
-### 16. rust_test
+### 17. rust_test
 
 Detects Rust test files and `#[test]` functions.
 
@@ -258,13 +272,156 @@ Detects Rust test files and `#[test]` functions.
   }
   ```
 
-### 17. rust_pub_api
+### 18. rust_pub_api
 
 Treats all `pub` items in Rust library crates as entry points.
 
 - **Match Pattern**: `visibility:pub`
 - **Match Files**: `**/*.rs`
 - **Note**: Disabled by default (`"enabled": false`). Use `--public-as-entry` to activate it at query time, or enable the rule in config for persistent library-crate analysis.
+
+### C# Rules
+
+### 19. csharp_console_app
+
+Detects C# console application entry points: a static `Main` method or top-level statements in `Program.cs`.
+
+- **Match Pattern**: `function_def:Main | file_is_program`
+- **Match Files**: `**/Program.cs`
+- **Example**:
+  ```csharp
+  // top-level statements
+  Console.WriteLine("Hello, world!");
+  ```
+
+### 20. csharp_xunit
+
+Detects xUnit test methods.
+
+- **Match Pattern**: `decorator:Fact | decorator:Theory`
+- **Match Files**: `**/*.cs`
+- **Example**:
+  ```csharp
+  public class CalculatorTests
+  {
+      [Fact]
+      public void Add_Works()
+      {
+          Assert.Equal(4, 2 + 2);
+      }
+  }
+  ```
+
+### 21. csharp_nunit
+
+Detects NUnit test fixtures and methods.
+
+- **Match Pattern**: `decorator:TestFixture | decorator:Test | decorator:TestCase | decorator:SetUp | decorator:OneTimeSetUp`
+- **Match Files**: `**/*.cs`
+- **Example**:
+  ```csharp
+  [TestFixture]
+  public class CalculatorTests
+  {
+      [Test]
+      public void Add_Works() { /* ... */ }
+  }
+  ```
+
+### 22. csharp_mstest
+
+Detects MSTest test classes and methods.
+
+- **Match Pattern**: `decorator:TestClass | decorator:TestMethod | decorator:ClassInitialize | decorator:TestInitialize`
+- **Match Files**: `**/*.cs`
+- **Example**:
+  ```csharp
+  [TestClass]
+  public class CalculatorTests
+  {
+      [TestMethod]
+      public void Add_Works() { /* ... */ }
+  }
+  ```
+
+### 23. csharp_webapi
+
+Detects ASP.NET Web API controllers and action methods.
+
+- **Match Pattern**: `decorator:ApiController | decorator:Route | decorator:HttpGet | decorator:HttpPost | decorator:HttpPut | decorator:HttpDelete | decorator:HttpPatch`
+- **Match Files**: `**/*.cs`
+- **Example**:
+  ```csharp
+  [ApiController]
+  [Route("api/[controller]")]
+  public class ProductsController : ControllerBase
+  {
+      [HttpGet]
+      public IActionResult GetAll() { /* ... */ }
+  }
+  ```
+
+### 24. csharp_minimal_api
+
+Detects ASP.NET Minimal API endpoint definitions.
+
+- **Match Pattern**: `function_call:MapGet | function_call:MapPost | function_call:MapPut | function_call:MapDelete | function_call:MapMethods`
+- **Match Files**: `**/*.cs`
+- **Example**:
+  ```csharp
+  var builder = WebApplication.CreateBuilder(args);
+  var app = builder.Build();
+  app.MapGet("/", () => "Hello, World!");
+  app.Run();
+  ```
+
+### 25. csharp_generic_host
+
+Detects .NET Generic Host / WebApplication startup calls.
+
+- **Match Pattern**: `function_call:CreateDefaultBuilder | function_call:ConfigureWebHostDefaults | function_call:Run`
+- **Match Files**: `**/*.cs`
+- **Example**:
+  ```csharp
+  Host.CreateDefaultBuilder(args)
+      .ConfigureServices(services => { /* ... */ })
+      .Build()
+      .Run();
+  ```
+
+### 26. csharp_winforms
+
+Detects Windows Forms application entry points.
+
+- **Match Pattern**: `function_call:Application.Run | function_call:Application.EnableVisualStyles`
+- **Match Files**: `**/*.cs`
+- **Example**:
+  ```csharp
+  Application.EnableVisualStyles();
+  Application.Run(new MainForm());
+  ```
+
+### 27. csharp_wpf
+
+Detects WPF application entry points (`App.xaml.cs`).
+
+- **Match Pattern**: `class_definition:App`
+- **Match Files**: `**/*.cs`
+- **Example**:
+  ```csharp
+  public partial class App : Application
+  {
+      // Startup logic
+  }
+  ```
+
+### 28. csharp_test
+
+Detects C# test files (xUnit/NUnit/MSTest conventions).
+
+- **Match Pattern**: `test_file`
+- **Match Files**: `**/*.cs`
+- **Note**: Test entry points do not propagate reachability to non-test code under test.
 
 ## `--public-as-entry` Flag
 
@@ -275,10 +432,10 @@ graphlint query --public-as-entry
 ```
 
 This flag:
-- Only applies to languages with `public` visibility declarations (Rust `pub`); has no effect on Python files.
+- Only applies to languages with `public` visibility declarations (Rust `pub`, C# `public`); has no effect on Python files.
 - Toggles independently from the `rust_pub_api` config entry rule — the two are orthogonal mechanisms.
 - **Triggers a full re-index** when switched on or off (detected via the scan stamp).
-- For long-term library-crate analysis, prefer enabling `rust_pub_api` in `.graphlint/config.json` to persist the setting and avoid repeated rebuilds.
+- For long-term library analysis, prefer enabling `rust_pub_api` in `.graphlint/config.json` to persist the setting and avoid repeated rebuilds.
 
 ## Custom Rules
 
@@ -290,14 +447,17 @@ All rules (built-in and custom) use the same prefix syntax, supporting OR combin
 
 | Prefix | Description | Example | Applicable |
 |--------|-------------|---------|------------|
-| `function_call:<name>` | Match a function call by name | `"function_call:start_app"` | Python |
-| `function_def:<pattern>` | Match a function definition by name (supports glob) | `"function_def:run_*"` | Python, Rust |
-| `decorator:<name>` | Match a decorator (Python) or attribute macro (Rust `#[...]`) by name | `"decorator:app.route"` / `"decorator:tokio::main"` | Python, Rust |
+| `function_call:<name>` | Match a function call by name | `"function_call:start_app"` | Python, C# |
+| `function_def:<pattern>` | Match a function definition by name (supports glob) | `"function_def:run_*"` | Python, Rust, C# |
+| `decorator:<name>` | Match a decorator (Python), attribute macro (Rust `#[...]`), or attribute (C# `[...]`) by name | `"decorator:app.route"` / `"decorator:tokio::main"` / `"decorator:Fact"` | Python, Rust, C# |
 | `class_instantiation:<name>` | Match a class instantiation by name | `"class_instantiation:MyApp"` | Python |
-| `file_match:<pattern>` | Match a filename pattern | `"file_match:**/startup.py"` | Python, Rust |
+| `class_definition:<pattern>` | Match a class/struct/record/interface definition by name (supports glob) | `"class_definition:App"` | C# |
+| `file_match:<pattern>` | Match a filename pattern | `"file_match:**/startup.py"` | Python, Rust, C# |
+| `file_is_program` | Match `Program.cs` with top-level statements | `"file_is_program"` | C# |
 | `if_name_main` | Match `if __name__ == '__main__'` | `"if_name_main"` | Python |
-| `test_file` | Match test files (uses `test_patterns` config) | `"test_file"` | Python, Rust |
+| `test_file` | Match test files (uses `test_patterns` config) | `"test_file"` | Python, Rust, C# |
 | `visibility:pub` | Match items with `pub` visibility modifier | `"visibility:pub"` | Rust |
+| `visibility:public` | Match items with `public` visibility modifier | `"visibility:public"` | C# |
 | `trait_impl:<pattern>` | Match `impl Trait for Type` blocks | `"trait_impl:Default"` | Rust |
 | `macro_def:<pattern>` | Match `macro_rules!` definitions | `"macro_def:my_macro"` | Rust |
 

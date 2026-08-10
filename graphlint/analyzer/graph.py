@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from concurrent.futures import ProcessPoolExecutor, as_completed
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 from graphlint.analyzer._graph_algo import (
     _build_call_graph,
@@ -218,6 +218,9 @@ class GraphBuilder:
             decorators=list(node.decorators or []),
             docstring=node.docstring,
             is_entry=node.is_entry,
+            is_partial=node.is_partial,
+            canonical_name=node.canonical_name,
+            visibility=node.visibility,
         )
         self._old_to_new[(str(node.file_id), str(node.id))] = nid
         self._nodes.append(saved)
@@ -332,6 +335,9 @@ class GraphBuilder:
                 elif old_to_new_global and n.parent_node_id in old_to_new_global:
                     n.parent_node_id = old_to_new_global[n.parent_node_id]
 
+        # Merge partial class nodes (C#) into virtual merged nodes.
+        self._merge_partial_nodes()
+
         changed_list = [fp for fp in changed_files if fp in parse_results]
 
         # Pre-build file_id → nodes index for fnodes lookups
@@ -348,9 +354,8 @@ class GraphBuilder:
             if fid and fid in file_nodes_by_fid:
                 fnodes_map[fp] = {n.qualified_name: n.id for n in file_nodes_by_fid[fid]}
 
-        # Detect entries via language adapters.
-        # In incremental mode, only scan changed files and merge prebuilt
-        # entries loaded from DB for unchanged files.
+        # Detect entries via language adapters; in incremental mode only
+        # changed files are scanned and prebuilt DB entries merged in.
         entries: list[EntryInfo] = []
         if prebuilt_entries is not None and changed_files and len(changed_files) < len(parse_results):
             changed_pr = {
@@ -376,9 +381,8 @@ class GraphBuilder:
             if e.node_id and e.node_id in self._node_id_map:
                 self._node_id_map[e.node_id].is_entry = True
 
-        # Resolve function_def:/decorator: entries (node_id=0) to
-        # their global node IDs by file path + line number.  Entries
-        # with unresolved node_id are treated as file-level entries.
+        # Resolve node_id=0 entries to their global node IDs by file path
+        # and line; unresolved ones stay file-level entries.
         for e in entries:
             if e.node_id == 0 and e.line > 0 and e.file_path:
                 e_fid = fid_map.get(e.file_path, 0)
@@ -392,6 +396,9 @@ class GraphBuilder:
         self._edges = self._build_edges_batch(
             changed_list, parse_results, fid_map, fnodes_map,
         )
+        # The edge batch replaces self._edges; re-attach the partial-fragment
+        # part_of edges.
+        self._add_partial_edges()
         new_edge_count = len(self._edges)
 
         # Add synthetic module-level edges through the module pseudo-node (id=0).
@@ -427,9 +434,16 @@ class GraphBuilder:
 
         _sn = self._get_special_names()
         _pn = self._get_public_api_names()
-        _cached_adj = _build_undirected_adj(self._edges, self._node_id_map, _sn, _pn)
+        special_check = self._make_special_name_check(fid_map, _sn)
+        public_check = self._make_public_api_check(fid_map, _pn)
+        _cached_adj = _build_undirected_adj(
+            self._edges, self._node_id_map, _sn, _pn,
+            is_special_name=special_check, is_public_api_name=public_check,
+        )
         _cached_cg = _build_call_graph(self._edges, self._node_id_map)
-        _cached_csm = _build_class_special_map(self._node_id_map, _sn)
+        _cached_csm = _build_class_special_map(
+            self._node_id_map, _sn, is_special_name=special_check,
+        )
         _cached_dg = _build_digraph(self._nodes, self._edges)
 
         changed_nids: Optional[set[int]] = None
@@ -454,6 +468,8 @@ class GraphBuilder:
             cached_adj=_cached_adj,
             cached_call_graph=_cached_cg,
             cached_class_special_map=_cached_csm,
+            is_special_name=special_check,
+            is_public_api_name=public_check,
         )
         file_id_to_path = {v: k for k, v in fid_map.items()}
         self._add_warnings(comps, file_id_to_path, cached_digraph=_cached_dg,
@@ -531,8 +547,135 @@ class GraphBuilder:
         if self.registry:
             adapter = self.registry.adapter_for_file(file_path)
             if adapter:
-                return adapter.file_to_module(file_path)
+                return adapter.file_to_module_with_csproj(file_path, self.config)
         return file_path
+
+    # ------------------------------------------------------------------
+    # Partial class merging (C#)
+    # ------------------------------------------------------------------
+
+    def _merge_partial_nodes(self) -> None:
+        """Merge C# partial class/struct/record nodes into virtual merged
+        nodes.
+
+        For partial types defined across multiple files, each file produces
+        a node with ``is_partial=True`` and a file-unique qualified_name
+        (e.g. ``Ns.Foo#partial:src/Part1.cs``).  This method groups those
+        nodes by their ``canonical_name`` (the logical type name, e.g.
+        ``Ns.Foo``), creates one virtual merged node per group, and remaps
+        the symbol indices so that all references resolve to the merged node.
+
+        The individual partial nodes retain their internal structure
+        (methods, fields, etc.) so that file-local edges remain correct.
+        """
+        # Group partial nodes by (canonical_name, node_type)
+        groups: dict[tuple[str, str], list[NodeInfo]] = defaultdict(list)
+        for n in self._nodes:
+            if n.is_partial and n.canonical_name:
+                key = (n.canonical_name, n.node_type)
+                groups[key].append(n)
+
+        if not groups:
+            return
+
+        for (canonical, node_type), partial_nodes in groups.items():
+            if len(partial_nodes) < 1:
+                continue
+
+            # Determine representative metadata
+            min_line = min(n.line_start for n in partial_nodes if n.line_start > 0)
+            all_decorators: list[str] = []
+            seen_dec: set[str] = set()
+            for n in partial_nodes:
+                for d in n.decorators:
+                    if d not in seen_dec:
+                        seen_dec.add(d)
+                        all_decorators.append(d)
+
+            # Use the first partial node's file_id for the merged node
+            # (virtual nodes need a file association for DB persistence).
+            existing_ids = self._symbol_index.get(canonical, [])
+            existing_merged = None
+            for eid in existing_ids:
+                en = self._node_id_map.get(eid)
+                if en and not en.is_partial and en.qualified_name == canonical:
+                    existing_merged = en
+                    break
+
+            if existing_merged is not None:
+                merged_id = existing_merged.id
+                merged = existing_merged
+                # Update metadata from current partial parts
+                merged.decorators = all_decorators
+                merged.docstring = "[partial merged: {} files]".format(len(partial_nodes))
+                merged.line_start = min_line
+                merged.line_end = max(n.line_end for n in partial_nodes)
+            else:
+                rep_file_id = partial_nodes[0].file_id
+                merged_id = self._next_node_id
+                self._next_node_id += 1
+                merged = NodeInfo(
+                    id=merged_id,
+                    file_id=rep_file_id,
+                    name=canonical.split(".")[-1] if "." in canonical else canonical,
+                    qualified_name=canonical,
+                    node_type=node_type,
+                    line_start=min_line,
+                    line_end=max(n.line_end for n in partial_nodes),
+                    col_offset=0,
+                    parent_node_id=0,
+                    decorators=all_decorators,
+                    docstring="[partial merged: {} files]".format(len(partial_nodes)),
+                    is_partial=False,
+                    canonical_name="",
+                    visibility=partial_nodes[0].visibility,
+                )
+                self._nodes.append(merged)
+                self._node_id_map[merged_id] = merged
+
+            # Remap symbol indices from partial nodes to the merged node.
+            for pn in partial_nodes:
+                qn = pn.qualified_name
+                if qn in self._symbol_index:
+                    self._symbol_index[qn] = [
+                        i for i in self._symbol_index.get(qn, []) if i != pn.id
+                    ]
+                    if not self._symbol_index[qn]:
+                        del self._symbol_index[qn]
+
+            # Add merged node to indices under the canonical name
+            self._symbol_index[canonical].insert(0, merged_id)
+
+            # Update suffix indices
+            normalized = canonical.replace("::", ".")
+            parts = normalized.split(".")
+            for i in range(len(parts)):
+                suffix = ".".join(parts[i:])
+                self._suffix_index[suffix].insert(0, merged_id)
+                for j in range(i + 1):
+                    scope = ".".join(parts[:j])
+                    self._scope_suffix_index[(scope, suffix)].insert(0, merged_id)
+
+    def _add_partial_edges(self) -> None:
+        """Attach ``part_of`` edges from partial fragments to their
+        merged node.
+
+        Called *after* the edge batch replaces :attr:`_edges` — the batch is
+        built from parse-result references only, so the fragment→merged links
+        created by :meth:`_merge_partial_nodes` would otherwise be lost.  These
+        edges let reachability flow between fragments and the merged type.
+        """
+        for n in self._nodes:
+            if not (n.is_partial and n.canonical_name):
+                continue
+            ids = self._symbol_index.get(n.canonical_name, [])
+            merged_id = ids[0] if ids else 0
+            if merged_id and merged_id != n.id:
+                self.add_edge(n.id, merged_id, "part_of", n.file_id, n.line_start)
+
+    # ------------------------------------------------------------------
+    # Public / special name helpers
+    # ------------------------------------------------------------------
 
     def _get_public_api_names(self) -> frozenset[str]:
         if self.registry:
@@ -544,6 +687,103 @@ class GraphBuilder:
             return self.registry.special_names()
         return frozenset()
 
+    def _make_special_name_check(
+        self, fid_map: dict[str, int], fallback: frozenset[str]
+    ) -> Callable[[NodeInfo], bool]:
+        """Return a per-node special-name checker scoped to the node's
+        language.
+
+        Language-specific special names (e.g. C# ``Dispose`` / ``ToString``,
+        Rust ``drop``) must not leak into other languages' analysis: a Python
+        method named ``Dispose`` is an ordinary method, not an implicitly
+        invoked one.  The checker resolves each node's file to its language
+        adapter and delegates to ``adapter.is_special_name``; nodes in files
+        with no registered adapter fall back to the legacy union set.
+        """
+        registry = self.registry
+        path_by_fid = {fid: fp for fp, fid in fid_map.items()}
+        adapter_cache: dict[int, Any] = {}
+
+        def check(node: NodeInfo) -> bool:
+            if registry is None:
+                return node.name in fallback
+            fid = node.file_id
+            if fid not in adapter_cache:
+                fp = path_by_fid.get(fid, "")
+                adapter = registry.adapter_for_file(fp) if fp else None
+                adapter_cache[fid] = adapter
+            adapter = adapter_cache[fid]
+            if adapter is None:
+                return node.name in fallback
+            return adapter.is_special_name(node.name)
+
+        return check
+
+    def _make_public_api_check(
+        self, fid_map: dict[str, int], fallback: frozenset[str]
+    ) -> Callable[[NodeInfo], bool]:
+        """Return a per-node public-API-name checker scoped to the
+        node's language.
+
+        Mirrors :meth:`_make_special_name_check` for public API names so that
+        e.g. C# ``Main`` is not treated as a public-API name inside Python
+        code.
+        """
+        registry = self.registry
+        path_by_fid = {fid: fp for fp, fid in fid_map.items()}
+        adapter_cache: dict[int, Any] = {}
+
+        def check(node: NodeInfo) -> bool:
+            if registry is None:
+                return node.name in fallback
+            fid = node.file_id
+            if fid not in adapter_cache:
+                fp = path_by_fid.get(fid, "")
+                adapter = registry.adapter_for_file(fp) if fp else None
+                adapter_cache[fid] = adapter
+            adapter = adapter_cache[fid]
+            if adapter is None:
+                return node.name in fallback
+            return node.name in adapter.public_api_names
+
+        return check
+
+    def _node_is_special(
+        self,
+        node: NodeInfo,
+        file_id_to_path: dict[int, str],
+        fallback: frozenset[str],
+    ) -> bool:
+        """True when *node* has a special name *for its own language*.
+
+        Special-name semantics are language-specific; a name that is
+        implicitly invoked in one language (C# ``Dispose``) is an ordinary
+        method in another.  Nodes in files without a registered adapter fall
+        back to the legacy cross-language union set.
+        """
+        if self.registry is None:
+            return node.name in fallback
+        fp = file_id_to_path.get(node.file_id, "")
+        adapter = self.registry.adapter_for_file(fp) if fp else None
+        if adapter is None:
+            return node.name in fallback
+        return adapter.is_special_name(node.name)
+
+    def _node_is_public_api(
+        self,
+        node: NodeInfo,
+        file_id_to_path: dict[int, str],
+        fallback: frozenset[str],
+    ) -> bool:
+        """True when *node* has a public-API name *for its own language*."""
+        if self.registry is None:
+            return node.name in fallback
+        fp = file_id_to_path.get(node.file_id, "")
+        adapter = self.registry.adapter_for_file(fp) if fp else None
+        if adapter is None:
+            return node.name in fallback
+        return node.name in adapter.public_api_names
+ 
     def _add_warnings(
         self,
         comps: list[ComponentInfo],
@@ -597,14 +837,19 @@ class GraphBuilder:
                     nid
                     for nid in comp.node_ids
                     if nid in self._node_id_map
-                    and self._node_id_map[nid].name in special_names
+                    and self._node_is_special(
+                        self._node_id_map[nid], file_id_to_path, special_names
+                    )
                 ]
                 non_dunder_nids = [
                     nid
                     for nid in comp.node_ids
                     if nid in self._node_id_map
-                    and self._node_id_map[nid].name not in public_api_names
+                    and not self._node_is_public_api(
+                        self._node_id_map[nid], file_id_to_path, public_api_names
+                    )
                     and self._node_id_map[nid].name != "_"
+                    and not self._node_id_map[nid].is_partial
                     and nid not in special_method_nids
                 ]
                 # Skip only-dunder components.

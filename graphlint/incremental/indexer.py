@@ -453,4 +453,7 @@ def _row_to_node(row: Any) -> NodeInfo:
         decorators=json.loads(row["decorators"] or "[]"),
         docstring=row["docstring"] or "",
         is_entry=bool(row["is_entry"]),
+        is_partial=bool(row["is_partial"] or False),
+        canonical_name=row["canonical_name"] or "",
+        visibility=row["visibility"] or "",
     )

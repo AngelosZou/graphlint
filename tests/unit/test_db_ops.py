@@ -11,11 +11,18 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from typing import Any, Optional
 from unittest.mock import MagicMock, patch
 
 import pytest
 
+from graphlint.analyzer._types import (
+    ComponentInfo,
+    EdgeInfo,
+    GraphBuildResult,
+    NodeInfo,
+    ParseResult,
+)
+from graphlint.analyzer.warnings import WarningInfo
 from graphlint.storage.db import Database
 
 
@@ -24,35 +31,32 @@ from graphlint.storage.db import Database
 # =============================================================================
 
 
-def _make_mock_parse_result(nodes: list[Any]) -> Any:
-    """Create a mock ParseResult object."""
-    pr = MagicMock()
-    pr.nodes = nodes
-    pr.hash = "testhash"
-    return pr
+def _make_parse_result(nodes: list[NodeInfo]) -> ParseResult:
+    """Create a ParseResult with the given nodes."""
+    return ParseResult(nodes=nodes, hash="testhash")
 
 
-def _make_mock_build_result(
-    nodes: list[Any],
-    edges: list[Any],
-    files_data: dict[str, Any],
+def _make_build_result(
+    nodes: list[NodeInfo],
+    edges: list[EdgeInfo],
+    files_data: dict[str, ParseResult],
     files: list[str],
-    warnings: Optional[list[Any]] = None,
-    component_map: Optional[dict[int, int]] = None,
-    components: Optional[list[Any]] = None,
-    node_id_map: Optional[dict[int, Any]] = None,
-) -> Any:
-    """Create a mock GraphBuildResult object."""
-    br = MagicMock()
-    br.nodes = nodes
-    br.edges = edges
-    br.files_data = files_data
-    br.files = files
-    br.warnings = warnings or []
-    br.component_map = component_map or {}
-    br.components = components or []
-    br.node_id_map = node_id_map or {}
-    return br
+    warnings: list[WarningInfo] | None = None,
+    component_map: dict[int, int] | None = None,
+    components: list[ComponentInfo] | None = None,
+    node_id_map: dict[int, NodeInfo] | None = None,
+) -> GraphBuildResult:
+    """Create a GraphBuildResult with the given fields."""
+    return GraphBuildResult(
+        nodes=nodes,
+        edges=edges,
+        files_data=files_data,
+        files=files,
+        warnings=warnings or [],
+        component_map=component_map or {},
+        components=components or [],
+        node_id_map=node_id_map or {},
+    )
 
 
 def _in_memory_db() -> sqlite3.Connection:
@@ -74,26 +78,18 @@ def _in_memory_db() -> sqlite3.Connection:
 class TestNodePathPrebuild:
     """Tests for _insert_nodes using prebuilt node_id -> file_path mapping."""
 
-    def _make_node(self, nid: int, qname: str, line: int, fname: str = "module"):
-        """Create a mock NodeInfo object."""
-        node = MagicMock()
-        node.id = nid
-        node.qualified_name = qname
-        node.line_start = line
-        node.name = fname
-        node.node_type = "function"
-        node.file_id = 1
-        node.line_end = line + 5
-        node.col_offset = 0
-        node.parent_node_id = None
-        node.is_deprecated = False
-        node.deprecation_msg = None
-        node.type_annotation = None
-        node.is_async = False
-        node.decorators = []
-        node.docstring = None
-        node.is_entry = False
-        return node
+    def _make_node(self, nid: int, qname: str, line: int, fname: str = "module") -> NodeInfo:
+        """Create a NodeInfo object."""
+        return NodeInfo(
+            id=nid,
+            file_id=1,
+            name=fname,
+            qualified_name=qname,
+            node_type="function",
+            line_start=line,
+            line_end=line + 5,
+            col_offset=0,
+        )
 
     def test_insert_nodes_with_prebuilt_mapping(self):
         """Verify _insert_nodes correctly inserts nodes using prebuilt mapping."""
@@ -126,10 +122,10 @@ class TestNodePathPrebuild:
         ]
 
         # Prepare files_data (source of prebuilt mapping)
-        pr1 = _make_mock_parse_result(nodes)
+        pr1 = _make_parse_result(nodes)
         files_data = {"src/mod.py": pr1}
 
-        br = _make_mock_build_result(
+        br = _make_build_result(
             nodes=nodes,
             edges=[],
             files_data=files_data,
@@ -177,11 +173,11 @@ class TestNodePathPrebuild:
         node2 = self._make_node(2, "mod2.Bar", 1, "Bar")
         node2.file_id = 2  # second file in build_result.files
 
-        pr1 = _make_mock_parse_result([node1])
-        pr2 = _make_mock_parse_result([node2])
+        pr1 = _make_parse_result([node1])
+        pr2 = _make_parse_result([node2])
         files_data = {"src/mod1.py": pr1, "src/mod2.py": pr2}
 
-        br = _make_mock_build_result(
+        br = _make_build_result(
             nodes=[node1, node2],
             edges=[],
             files_data=files_data,
@@ -217,10 +213,10 @@ class TestNodePathPrebuild:
         node0 = self._make_node(0, "mod.root", 0, "root")
         node1 = self._make_node(1, "mod.Foo", 1, "Foo")
 
-        pr = _make_mock_parse_result([node0, node1])
+        pr = _make_parse_result([node0, node1])
         files_data = {"src/mod.py": pr}
 
-        br = _make_mock_build_result(
+        br = _make_build_result(
             nodes=[node0, node1],
             edges=[],
             files_data=files_data,
@@ -300,7 +296,7 @@ class TestFullBuildDelete:
         db.executemany = lambda sql, pl: conn.executemany(sql, pl)
 
         # Full build data
-        br = _make_mock_build_result(
+        br = _make_build_result(
             nodes=[],
             edges=[],
             files_data={},
@@ -344,7 +340,7 @@ class TestFullBuildDelete:
         db.fetchall = lambda sql, p=(): conn.execute(sql, p).fetchall()
         db.executemany = lambda sql, pl: conn.executemany(sql, pl)
 
-        br = _make_mock_build_result(
+        br = _make_build_result(
             nodes=[],
             edges=[],
             files_data={},
@@ -422,44 +418,22 @@ class TestFullBuildDelete:
 class TestPrecomputeEdgeCounts:
     """Tests for _precompute_edge_counts and _component_stats optimizations."""
 
-    def _make_edge(self, sid: int, tid: int) -> Any:
-        edge = MagicMock()
-        edge.source_id = sid
-        edge.target_id = tid
-        edge.edge_type = "call"
-        edge.file_id = 1
-        edge.line = 1
-        edge.context = ""
-        return edge
+    def _make_edge(self, sid: int, tid: int) -> EdgeInfo:
+        return EdgeInfo(source_id=sid, target_id=tid, edge_type="call", file_id=1, line=1)
 
-    def _make_node(self, nid: int, node_type: str = "function") -> Any:
-        ni = MagicMock()
-        ni.id = nid
-        ni.node_type = node_type
-        ni.name = f"Node{nid}"
-        ni.qualified_name = f"mod.Node{nid}"
-        ni.file_id = 1
-        ni.line_start = nid * 10
-        ni.line_end = nid * 10 + 5
-        ni.col_offset = 0
-        ni.parent_node_id = None
-        ni.is_deprecated = False
-        ni.deprecation_msg = None
-        ni.type_annotation = None
-        ni.is_async = False
-        ni.decorators = []
-        ni.docstring = None
-        ni.is_entry = False
-        return ni
+    def _make_node(self, nid: int, node_type: str = "function") -> NodeInfo:
+        return NodeInfo(
+            id=nid,
+            file_id=1,
+            name=f"Node{nid}",
+            qualified_name=f"mod.Node{nid}",
+            node_type=node_type,
+            line_start=nid * 10,
+            line_end=nid * 10 + 5,
+        )
 
-    def _make_comp(self, comp_id: int, node_ids: set[int]) -> Any:
-        comp = MagicMock()
-        comp.component_id = comp_id
-        comp.node_ids = node_ids
-        comp.entry_info = []
-        comp.is_dead_code = False
-        comp.is_unreachable = False
-        return comp
+    def _make_comp(self, comp_id: int, node_ids: set[int]) -> ComponentInfo:
+        return ComponentInfo(component_id=comp_id, node_ids=node_ids)
 
     def test_precompute_edge_counts_basic(self):
         """Verify _precompute_edge_counts correctly counts edges per component."""
@@ -527,10 +501,9 @@ class TestPrecomputeEdgeCounts:
 
         comp = self._make_comp(10, {1, 2, 3, 4})
 
-        warn_mock = MagicMock()
-        warn_mock.node_id = 1
+        warn_mock = WarningInfo(node_id=1)
 
-        br = _make_mock_build_result(
+        br = _make_build_result(
             nodes=[],
             edges=[],
             files_data={},
@@ -595,7 +568,7 @@ class TestPrecomputeEdgeCounts:
 
         # Verify component 3 has no edges
         comp3 = self._make_comp(3, {6, 7, 8, 9})
-        br = _make_mock_build_result(
+        br = _make_build_result(
             nodes=[],
             edges=edges,
             files_data={},
@@ -622,7 +595,7 @@ class TestPrecomputeEdgeCounts:
 
         nid_map = {1: self._make_node(1, "function")}
         comp = self._make_comp(1, {1})
-        br = _make_mock_build_result(
+        br = _make_build_result(
             nodes=[], edges=[], files_data={}, files=[], warnings=[]
         )
         edge_counts = {1: 0}

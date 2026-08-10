@@ -27,6 +27,9 @@ class NodeInfo:
     decorators: List[str] = field(default_factory=list)
     docstring: str = ""
     is_entry: bool = False
+    is_partial: bool = False
+    canonical_name: str = ""
+    visibility: str = ""
 
 
 @dataclass

@@ -197,6 +197,9 @@ def _insert_nodes(
         node_id = node.id or 0
         if not fid or node_id == 0:
             continue
+        cn = node.canonical_name or None
+        ip = node.is_partial
+        vis = node.visibility or None
         rows.append(
             (
                 node_id, fid, node.name, node.qualified_name, node.node_type,
@@ -209,6 +212,9 @@ def _insert_nodes(
                 json.dumps(node.decorators or []),
                 node.docstring or None,
                 1 if node.is_entry else 0,
+                1 if ip else 0,
+                cn,
+                vis,
             )
         )
 
@@ -221,8 +227,8 @@ def _insert_nodes(
             "INSERT OR REPLACE INTO nodes (id, file_id, name, qualified_name, node_type, "
             "line_start, line_end, col_offset, parent_node_id, "
             "is_deprecated, deprecation_msg, type_annotation, is_async, "
-            "decorators, docstring, is_entry) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "decorators, docstring, is_entry, is_partial, canonical_name, visibility) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             batch,
         )
 

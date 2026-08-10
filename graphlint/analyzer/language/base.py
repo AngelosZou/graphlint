@@ -88,6 +88,15 @@ class LanguageAdapter(ABC):
         Example (Rust):   ``"src/lib.rs"`` → ``"crate"``
         """
 
+    def file_to_module_with_csproj(self, path: str, config: dict[str, Any]) -> str:
+        """Convert a file path to a module name, honoring project metadata.
+
+        The default implementation delegates to :meth:`file_to_module`.
+        Language adapters may override to incorporate project-level naming
+        (e.g. C# ``RootNamespace`` from the owning .csproj).
+        """
+        return self.file_to_module(path)
+
     @abstractmethod
     def is_test_file(self, file_path: str, config: dict[str, Any]) -> bool:
         """Return ``True`` when *file_path* is a test file for this language."""
@@ -115,6 +124,15 @@ class LanguageAdapter(ABC):
         may call them without an explicit call site.
         (Python: ``__init__``, ``__str__``, ``__call__``, etc.)
         """
+
+    def is_special_name(self, name: str) -> bool:
+        """Return True when *name* is an implicitly-invoked special name.
+
+        The default implementation checks against :attr:`special_names`.
+        Language adapters may override to support pattern-based matching
+        (e.g. C# property accessors ``get_Name`` / ``set_Name``).
+        """
+        return name in self.special_names
 
     # ------------------------------------------------------------------
     # File-system defaults

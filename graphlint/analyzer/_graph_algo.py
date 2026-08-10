@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 from collections import deque
-from typing import Optional
+from typing import Callable, Optional
 
 from graphlint.analyzer._types import ComponentInfo, EdgeInfo, EntryInfo, NodeInfo
 from graphlint.analyzer.warnings import WarningInfo
@@ -12,12 +12,59 @@ from graphlint.analyzer.warnings import WarningInfo
 
 _EMPTY_FROZENSET: frozenset[str] = frozenset()
 
+# Node types promoted from READ edges into the call graph (a read = a use).
+_READ_PROMOTED_TYPES: frozenset[str] = frozenset(
+    {
+        "function",
+        "class",
+        "method",
+        "property",
+        "event",
+        "indexer",
+        "enum",
+        "enum_member",
+        "struct",
+        "record",
+        "delegate",
+    }
+)
+
+
+def _is_special_node(
+    ninfo: NodeInfo,
+    special_method_names: frozenset[str] = _EMPTY_FROZENSET,
+    is_special_name: Optional[Callable[[NodeInfo], bool]] = None,
+) -> bool:
+    """Whether *ninfo* is a special (implicitly-invoked) name.
+
+    When *is_special_name* is provided it decides per node — this lets
+    callers scope special names to the node's own language so that e.g.
+    C# special names (``Dispose``, ``ToString``) never leak into Python
+    or Rust analysis.  Without it, falls back to legacy union membership.
+    """
+    if is_special_name is not None:
+        return is_special_name(ninfo)
+    return ninfo.name in special_method_names
+
+
+def _is_public_api_node(
+    ninfo: NodeInfo,
+    public_api_names: frozenset[str] = _EMPTY_FROZENSET,
+    is_public_api_name: Optional[Callable[[NodeInfo], bool]] = None,
+) -> bool:
+    """Whether *ninfo* is a public-API name, scoped per node language."""
+    if is_public_api_name is not None:
+        return is_public_api_name(ninfo)
+    return ninfo.name in public_api_names
+
 
 def _build_undirected_adj(
     edges: list[EdgeInfo],
     node_id_map: Optional[dict[int, NodeInfo]],
     special_method_names: frozenset[str] = _EMPTY_FROZENSET,
     public_api_names: frozenset[str] = _EMPTY_FROZENSET,
+    is_special_name: Optional[Callable[[NodeInfo], bool]] = None,
+    is_public_api_name: Optional[Callable[[NodeInfo], bool]] = None,
 ) -> dict[int, set[int]]:
     """Build undirected adjacency dict from edges plus synthetic containment edges."""
     adj: dict[int, set[int]] = {}
@@ -31,18 +78,24 @@ def _build_undirected_adj(
         return adj
 
     for nid, ninfo in node_id_map.items():
-        if ninfo.name in special_method_names and ninfo.parent_node_id:
+        if _is_special_node(ninfo, special_method_names, is_special_name) and ninfo.parent_node_id:
             parent = ninfo.parent_node_id
             adj.setdefault(nid, set()).add(parent)
             adj.setdefault(parent, set()).add(nid)
 
-    if public_api_names:
+    if public_api_names or is_public_api_name is not None:
         _fid_first: dict[int, int] = {}
         for _ninfo in node_id_map.values():
-            if _ninfo.name not in public_api_names and _ninfo.file_id not in _fid_first:
+            if (
+                not _is_public_api_node(_ninfo, public_api_names, is_public_api_name)
+                and _ninfo.file_id not in _fid_first
+            ):
                 _fid_first[_ninfo.file_id] = _ninfo.id
         for _ninfo in node_id_map.values():
-            if _ninfo.name in public_api_names and _ninfo.node_type in ("variable", "field"):
+            if (
+                _is_public_api_node(_ninfo, public_api_names, is_public_api_name)
+                and _ninfo.node_type in ("variable", "field")
+            ):
                 _first = _fid_first.get(_ninfo.file_id)
                 if _first is not None:
                     adj.setdefault(_ninfo.id, set()).add(_first)
@@ -62,7 +115,7 @@ def _build_call_graph(
             call_graph.setdefault(edge.source_id, []).append(edge.target_id)
         elif edge.edge_type == "read" and node_id_map:
             tgt = node_id_map.get(edge.target_id)
-            if tgt and tgt.node_type in ("function", "class", "method"):
+            if tgt and tgt.node_type in _READ_PROMOTED_TYPES:
                 call_graph.setdefault(edge.source_id, []).append(edge.target_id)
     return call_graph
 
@@ -84,12 +137,16 @@ def _build_digraph(
 def _build_class_special_map(
     node_id_map: Optional[dict[int, NodeInfo]],
     special_method_names: frozenset[str] = _EMPTY_FROZENSET,
+    is_special_name: Optional[Callable[[NodeInfo], bool]] = None,
 ) -> dict[int, list[int]]:
     """Build class -> [child special method IDs] mapping for efficient propagation."""
     class_map: dict[int, list[int]] = {}
     if node_id_map:
         for nid, ninfo in node_id_map.items():
-            if ninfo.name in special_method_names and ninfo.parent_node_id:
+            if (
+                _is_special_node(ninfo, special_method_names, is_special_name)
+                and ninfo.parent_node_id
+            ):
                 class_map.setdefault(ninfo.parent_node_id, []).append(nid)
     return class_map
 
@@ -134,6 +191,7 @@ def compute_entry_reachability(
     special_method_names: frozenset[str] = _EMPTY_FROZENSET,
     class_special_map: Optional[dict[int, list[int]]] = None,
     expanded_out: Optional[set[int]] = None,
+    is_special_name: Optional[Callable[[NodeInfo], bool]] = None,
 ) -> tuple[set[int], set[int]]:
     """Directed reachability analysis from entry points via CALL edges.
     """
@@ -152,22 +210,24 @@ def compute_entry_reachability(
                 call_graph.setdefault(edge.source_id, []).append(edge.target_id)
             elif edge.edge_type == "read" and node_id_map:
                 tgt = node_id_map.get(edge.target_id)
-                if tgt and tgt.node_type in ("function", "class", "method"):
+                if tgt and tgt.node_type in _READ_PROMOTED_TYPES:
                     call_graph.setdefault(edge.source_id, []).append(edge.target_id)
 
     reachable: set[int] = set(entry_ids)
     queue: deque[int] = deque(entry_ids)
 
-    # Track nodes whose CALL-graph downstream was fully explored by this BFS.
-    # Excluded from the output: noprop (test-file) nodes — they do not
-    # propagate reachability, so they are not safe pruning anchors.
+    # Nodes whose CALL-graph downstream was fully explored by this BFS;
+    # noprop (test-file) nodes excluded — they do not propagate.
     expanded: set[int] = set()
 
     # Precompute class -> [child special method IDs] mapping
     if class_special_map is None and node_id_map:
         class_special_map = {}
         for nid, ninfo in node_id_map.items():
-            if ninfo.name in special_method_names and ninfo.parent_node_id:
+            if (
+                _is_special_node(ninfo, special_method_names, is_special_name)
+                and ninfo.parent_node_id
+            ):
                 class_special_map.setdefault(ninfo.parent_node_id, []).append(nid)
 
     while queue:
@@ -195,6 +255,23 @@ def compute_entry_reachability(
             if nid not in reachable and ninfo.parent_node_id in reachable:
                 if ninfo.node_type in ("variable", "field"):
                     reachable.add(nid)
+
+    # Containers (class/enum/interface/struct) of reachable members
+    # are themselves reachable.
+    if node_id_map:
+        parent_q: deque[int] = deque()
+        for nid in reachable:
+            ninfo = node_id_map.get(nid)
+            if ninfo and ninfo.parent_node_id:
+                parent_q.append(ninfo.parent_node_id)
+        while parent_q:
+            p = parent_q.popleft()
+            if p == 0 or p in reachable:
+                continue
+            reachable.add(p)
+            pinfo = node_id_map.get(p)
+            if pinfo and pinfo.parent_node_id:
+                parent_q.append(pinfo.parent_node_id)
 
     if expanded_out is not None:
         expanded_out.clear()
@@ -295,8 +372,56 @@ def _incremental_reachability(
                 if ninfo.node_type in ("variable", "field"):
                     reachable.add(nid)
 
+    # Containers (class/enum/interface/struct) of reachable members
+    # are themselves reachable.
+    if node_id_map:
+        parent_q: deque[int] = deque()
+        for nid in reachable:
+            ninfo = node_id_map.get(nid)
+            if ninfo and ninfo.parent_node_id:
+                parent_q.append(ninfo.parent_node_id)
+        while parent_q:
+            p = parent_q.popleft()
+            if p == 0 or p in reachable:
+                continue
+            reachable.add(p)
+            pinfo = node_id_map.get(p)
+            if pinfo and pinfo.parent_node_id:
+                parent_q.append(pinfo.parent_node_id)
+
     reachable.update(_noprop)
     return reachable, _noprop
+
+
+def _propagate_partial_reachability(
+    reachable: set[int],
+    edges: list[EdgeInfo],
+) -> set[int]:
+    """Share reachability between C# partial-class fragments and
+    their merged node.
+
+    ``part_of`` edges run from each partial fragment node (``is_partial``) to
+    the virtual merged node of the logical type.  A type is in use when any
+    of its fragments is in use (fragments contain the called members), and a
+    fragment of a live type is itself in use — the file cannot be removed
+    while the type lives, even if it only declares currently-dead members.
+    """
+    if not edges:
+        return reachable
+    changed = True
+    while changed:
+        changed = False
+        for e in edges:
+            if e.edge_type != "part_of":
+                continue
+            s, t = e.source_id, e.target_id
+            if s in reachable and t not in reachable:
+                reachable.add(t)
+                changed = True
+            elif t in reachable and s not in reachable:
+                reachable.add(s)
+                changed = True
+    return reachable
 
 
 def _split_unreachable_by_call(
@@ -307,6 +432,7 @@ def _split_unreachable_by_call(
     special_method_names: frozenset[str] = _EMPTY_FROZENSET,
     class_special_map: Optional[dict[int, list[int]]] = None,
     cached_adj: Optional[dict[int, set[int]]] = None,
+    is_special_name: Optional[Callable[[NodeInfo], bool]] = None,
 ) -> tuple[dict[int, int], list[ComponentInfo], int]:
     """Split unreachable nodes by CALL edges (undirected) into potential dead code components."""
     if cached_adj is not None:
@@ -334,7 +460,7 @@ def _split_unreachable_by_call(
         elif node_id_map:
             for nid, ninfo in node_id_map.items():
                 if (
-                    ninfo.name in special_method_names
+                    _is_special_node(ninfo, special_method_names, is_special_name)
                     and ninfo.parent_node_id
                     and nid in unreachable
                     and ninfo.parent_node_id in unreachable
@@ -393,6 +519,8 @@ def find_connected_components(
     cached_adj: Optional[dict[int, set[int]]] = None,
     cached_call_graph: Optional[dict[int, list[int]]] = None,
     cached_class_special_map: Optional[dict[int, list[int]]] = None,
+    is_special_name: Optional[Callable[[NodeInfo], bool]] = None,
+    is_public_api_name: Optional[Callable[[NodeInfo], bool]] = None,
 ) -> tuple[dict[int, int], list[ComponentInfo]]:
     """Find all connected components."""
     if cached_adj is not None:
@@ -408,19 +536,28 @@ def find_connected_components(
         # Add synthetic containment edges for special method overloads.
         if node_id_map:
             for nid, ninfo in node_id_map.items():
-                if ninfo.name in special_method_names and ninfo.parent_node_id:
+                if (
+                    _is_special_node(ninfo, special_method_names, is_special_name)
+                    and ninfo.parent_node_id
+                ):
                     parent = ninfo.parent_node_id
                     adj.setdefault(nid, set()).add(parent)
                     adj.setdefault(parent, set()).add(nid)
 
         # Connect public API dunders to their file's first non-dunder node.
-        if node_id_map:
+        if node_id_map and (public_api_names or is_public_api_name is not None):
             _fid_first: dict[int, int] = {}
             for _ninfo in node_id_map.values():
-                if _ninfo.name not in public_api_names and _ninfo.file_id not in _fid_first:
+                if (
+                    not _is_public_api_node(_ninfo, public_api_names, is_public_api_name)
+                    and _ninfo.file_id not in _fid_first
+                ):
                     _fid_first[_ninfo.file_id] = _ninfo.id
             for _ninfo in node_id_map.values():
-                if _ninfo.name in public_api_names and _ninfo.node_type in ("variable", "field"):
+                if (
+                    _is_public_api_node(_ninfo, public_api_names, is_public_api_name)
+                    and _ninfo.node_type in ("variable", "field")
+                ):
                     _first = _fid_first.get(_ninfo.file_id)
                     if _first is not None:
                         adj.setdefault(_ninfo.id, set()).add(_first)
@@ -435,7 +572,7 @@ def find_connected_components(
                 call_graph.setdefault(edge.source_id, []).append(edge.target_id)
             elif edge.edge_type == "read" and node_id_map:
                 tgt = node_id_map.get(edge.target_id)
-                if tgt and tgt.node_type in ("function", "class", "method"):
+                if tgt and tgt.node_type in _READ_PROMOTED_TYPES:
                     call_graph.setdefault(edge.source_id, []).append(edge.target_id)
 
     if cached_class_special_map is not None:
@@ -444,16 +581,24 @@ def find_connected_components(
         class_special_map = {}
         if node_id_map:
             for _nid, _ninfo in node_id_map.items():
-                if _ninfo.name in special_method_names and _ninfo.parent_node_id:
+                if (
+                    _is_special_node(_ninfo, special_method_names, is_special_name)
+                    and _ninfo.parent_node_id
+                ):
                     class_special_map.setdefault(_ninfo.parent_node_id, []).append(_nid)
 
-    # Build undirected call adjacency for reachability propagation.
+    # Build call adjacency: CALL edges are undirected, READ edges directed.
     _call_adj: dict[int, set[int]] = {}
-    for src, targets in call_graph.items():
-        _src_set = _call_adj.setdefault(src, set())
-        for tgt in targets:
-            _src_set.add(tgt)
-            _call_adj.setdefault(tgt, set()).add(src)
+    for edge in edges:
+        if edge.source_id == 0 or edge.target_id == 0:
+            continue
+        if edge.edge_type == "call":
+            _call_adj.setdefault(edge.source_id, set()).add(edge.target_id)
+            _call_adj.setdefault(edge.target_id, set()).add(edge.source_id)
+        elif edge.edge_type == "read":
+            tgt = node_id_map.get(edge.target_id) if node_id_map else None
+            if tgt and tgt.node_type in _READ_PROMOTED_TYPES:
+                _call_adj.setdefault(edge.source_id, set()).add(edge.target_id)
 
     if old_reachable is not None and changed_node_ids is not None:
         reachable, noprop_ids = _incremental_reachability(
@@ -468,7 +613,11 @@ def find_connected_components(
             special_method_names=special_method_names,
             class_special_map=class_special_map,
             expanded_out=expanded_out,
+            is_special_name=is_special_name,
         )
+
+    # Partial class fragments (C#) share reachability with their merged node.
+    reachable = _propagate_partial_reachability(reachable, edges)
 
     # Pre-compute globally reachable file IDs (excluding test-only nodes)
     global_reachable_fids: set[int] = set()
@@ -532,7 +681,6 @@ def find_connected_components(
             entries, comp_nodes, node_id_map, file_id_map,
             nid_to_entries=_nid_to_entries, fid_to_entries=_fid_to_entries,
         )
-        has_entry = len(comp_entries) > 0
         comp_nodes.discard(0)
         comp_reachable.discard(0)
         comp_unreachable = comp_nodes - comp_reachable
@@ -572,9 +720,8 @@ def find_connected_components(
                                 comp_unreachable.discard(nb)
                                 q.append(nb)
 
-        # Expand via module pseudo-node (id=0) edges for components
-        # with non-test reachable nodes or isolated vars in reachable
-        # files.  Skip test-only (noprop) components.
+        # Expand via module pseudo-node (id=0) edges for components with
+        # non-test reachable nodes; skip test-only (noprop) components.
         _non_noprop = (
             comp_reachable - noprop_ids
             if noprop_ids and comp_reachable
@@ -592,9 +739,10 @@ def find_connected_components(
                         comp_unreachable.discard(_nid)
                 elif node_id_map:
                     _ni = node_id_map.get(_nid)
-                    if _ni and _ni.file_id in global_reachable_fids and _ni.node_type in ("variable", "field"):
-                        comp_reachable.add(_nid)
-                        comp_unreachable.discard(_nid)
+                    if _ni and _ni.file_id in global_reachable_fids:
+                        if _ni.node_type in ("variable", "field"):
+                            comp_reachable.add(_nid)
+                            comp_unreachable.discard(_nid)
 
         # Merge public API dunders into reachable components from the same file.
         if comp_reachable and comp_unreachable and node_id_map:
@@ -617,7 +765,8 @@ def find_connected_components(
                     component_id=comp_id,
                     node_ids=comp_reachable,
                     entry_info=comp_entries,
-                    is_dead_code=not has_entry,
+                    # A component with reachable nodes is alive.
+                    is_dead_code=False,
                 )
             )
             comp_id += 1
@@ -631,6 +780,7 @@ def find_connected_components(
                 special_method_names=special_method_names,
                 class_special_map=class_special_map,
                 cached_adj=cached_adj,
+                is_special_name=is_special_name,
             )
             component_map.update(sub_map)
             components.extend(sub_comps)
@@ -649,8 +799,8 @@ def find_connected_components(
     comp_by_id: dict[int, ComponentInfo] = {c.component_id: c for c in components}
     live_comp_ids: set[int] = {c.component_id for c in components if not c.is_dead_code}
 
-    # each connected group containing a live
-    # component merges all its dead members into the largest live one.
+    # A connected group with live components merges its dead members
+    # into the largest live one.
     comp_visited: set[int] = set()
     for live_cid in sorted(live_comp_ids):
         if live_cid in comp_visited:

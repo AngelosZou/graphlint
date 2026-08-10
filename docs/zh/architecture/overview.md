@@ -1,6 +1,6 @@
 # 架构概览
 
-graphlint 定位为 AI 生成代码场景下的死代码检测工具（支持 Python, Rust, 以及计划中的更多语言）。它通过分析依赖关系图，找出从所有入口点均不可达的组件（死代码），帮助 Agent 清理冗余代码、减少上下文污染和注意力稀释。
+graphlint 定位为 AI 生成代码场景下的死代码检测工具（支持 Python、Rust、C#，以及计划中的更多语言）。它通过分析依赖关系图，找出从所有入口点均不可达的组件（死代码），帮助 Agent 清理冗余代码、减少上下文污染和注意力稀释。
 
 ## 整体架构
 
@@ -86,10 +86,10 @@ graphlint 采用分层模块化架构，各层职责清晰，依赖方向从上�
 ### 4. 分析引擎层
 
 - **`LanguageRegistry`** (`graphlint/analyzer/language/registry.py`) — 语言适配器注册中心，按文件扩展名路由到对应的语言后端，为未来多语言支持提供基础
-- **`LanguageAdapter`** (`graphlint/analyzer/language/base.py`) — 语言后端抽象基类，定义解析、入口检测、节点匹配等统一接口；当前 Python 实现位于 `language/python/`
+- **`LanguageAdapter`** (`graphlint/analyzer/language/base.py`) — 语言后端抽象基类，定义解析、入口检测、节点匹配等统一接口；实现位于 `language/python/`、`language/rust/` 和 `language/csharp/`
 - **`SourceParser`** (`graphlint/analyzer/language/python/parser.py`) — 递归扫描目录，对每个 `.py` 文件执行 AST 解析
-- **`GraphBuilder`** (`graphlint/analyzer/graph.py`) — 从解析结果构建依赖关系图，包括节点、边、连通分量分析。边构建按文件并行执行，直接从 AST 解析阶段收集的结构化 `ReferenceInfo` 构建边——无需二次 AST 遍历。
-- **`EntryPointDetector`** (`graphlint/analyzer/language/python/entry.py`) — 10 种内置入口检测规则 + 自定义规则支持
+- **`GraphBuilder`** (`graphlint/analyzer/graph.py`) — 从解析结果构建依赖关系图，包括节点、边、连通分量分析。边构建按文件并行执行，直接从 AST 解析阶段收集的结构化 `ReferenceInfo` 构建边——无需二次 AST 遍历。C# 分部类会合并为虚拟逻辑节点（`part_of` 边），使各片段共享可达性。
+- **`EntryPointDetector`** (`graphlint/analyzer/language/python/entry.py`) — 28 种内置入口检测规则（Python 10 + Rust 8 + C# 10）+ 自定义规则支持
 - **`WarningCollector`** (`graphlint/analyzer/warnings.py`) — 警告的收集、去重、过滤和统计
 - **`ImportAnalyzer`** (`graphlint/analyzer/language/python/imports.py`) — import 语句解析与未使用 import 检测
 
@@ -106,8 +106,8 @@ AST 解析 (ast.parse / 其他语言解析器)
     │
     ▼
 ASTVisitor 遍历（单次遍历）
-    ├── 提取节点 (类/函数/方法/结构体/枚举/trait/impl/变量/字段)
-    ├── 解析 import 语句（Python）/ use 声明（Rust）
+    ├── 提取节点 (类/函数/方法/结构体/枚举/trait/impl/宏/变量/字段/属性/索引器/事件)
+    ├── 解析 import 语句（Python）/ use 声明（Rust）/ using 指令（C#）
     ├── 收集名称使用
     └── 收集结构化引用 (ReferenceInfo — read/write/call/inherit/decorate)
     │
@@ -179,7 +179,7 @@ query() 调用
 build() 调用
     │
     ▼
-扫描目录，收集 .py 文件
+扫描目录，收集源文件（.py / .rs / .cs）
     │
     ├── 增量模式? ──→ 计算 SHA256 → 与缓存对比 → 仅处理变更文件
     │

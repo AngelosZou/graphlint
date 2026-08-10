@@ -394,3 +394,63 @@ class TestDatabasePragma:
                 assert cursor.fetchone() is not None, f"Missing index {idx} after Database init"
         finally:
             db.close()
+
+
+# =============================================================================
+# Schema versioning tests
+# =============================================================================
+
+
+@pytest.mark.timeout(30)
+class TestSchemaVersioning:
+    """Schema version stamp + incompatibility classification."""
+
+    @pytest.fixture(autouse=True)
+    def setup(self):
+        """Each test uses a separate in-memory database."""
+        self.conn = sqlite3.connect(":memory:")
+        yield
+        self.conn.close()
+
+    def test_create_tables_stamps_current_version(self):
+        """create_tables must record SCHEMA_VERSION in user_version."""
+        create_tables(self.conn)
+        from graphlint.storage.schema import SCHEMA_VERSION, get_user_version
+
+        assert get_user_version(self.conn) == SCHEMA_VERSION
+
+    def test_fresh_db_reports_version_zero(self):
+        """A brand-new (no DDL) database reports user_version 0."""
+        from graphlint.storage.schema import get_user_version
+
+        assert get_user_version(self.conn) == 0
+
+    def test_get_user_version_tolerates_broken_db(self, tmp_path):
+        """get_user_version falls back to 0 when the database is unreadable."""
+        from graphlint.storage.schema import get_user_version
+
+        bad = tmp_path / "bad.sqlite"
+        bad.write_bytes(b"this is not a sqlite database" * 10)
+        conn = sqlite3.connect(str(bad))
+        try:
+            assert get_user_version(conn) == 0
+        finally:
+            conn.close()
+
+    def test_is_schema_mismatch_error_classification(self):
+        """Column/table shape errors are schema mismatches; other
+        errors are not."""
+        from graphlint.storage.schema import is_schema_mismatch_error
+
+        assert is_schema_mismatch_error(
+            sqlite3.OperationalError("table nodes has no column named is_partial")
+        )
+        assert is_schema_mismatch_error(sqlite3.OperationalError("no such column: foo"))
+        assert is_schema_mismatch_error(
+            sqlite3.OperationalError("duplicate column name: is_partial")
+        )
+        assert is_schema_mismatch_error(sqlite3.OperationalError("no such table: nodes"))
+        assert not is_schema_mismatch_error(sqlite3.OperationalError("database is locked"))
+        assert not is_schema_mismatch_error(
+            sqlite3.OperationalError("FOREIGN KEY constraint failed")
+        )

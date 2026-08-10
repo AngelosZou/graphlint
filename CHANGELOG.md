@@ -2,6 +2,51 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.0] - 2026-08-10
+
+### Added
+- **C# language support** (`graphlint/analyzer/language/csharp/`): new `LanguageAdapter`
+  backend for `.cs` files built on `tree-sitter-c-sharp` (install via the new
+  `[csharp]` optional dependency group: `pip install graphlint[csharp]`). The
+  backend extracts classes, structs, interfaces, enums, records, delegates,
+  methods, constructors, destructors, properties, indexers, operators, events,
+  and fields; resolves `using` directives for import tracking; and reads
+  `.csproj` metadata (RootNamespace → qualified names, test-project detection,
+  output type) with UTF-8/UTF-16 tolerance
+- **C# entry point rules** (10 new rules, 28 total): `csharp_console_app`
+  (static `Main` / top-level statements in `Program.cs`), `csharp_xunit`,
+  `csharp_nunit`, `csharp_mstest`, `csharp_webapi`, `csharp_minimal_api`,
+  `csharp_generic_host`, `csharp_winforms`, `csharp_wpf`, and `csharp_test`
+  (`no_propagate`). New pattern prefixes: `class_definition:`,
+  `visibility:public`, and `file_is_program`; `function_call:`, `function_def:`,
+  `decorator:` (C# attributes), `file_match:`, and `test_file` now also apply
+  to C#
+- **Partial class merging** (C#): `partial` class/struct/record fragments
+  across files are merged into a single virtual node keyed by canonical name
+  (`is_partial` / `canonical_name` node fields, new `part_of` edge type);
+  reachability is shared between fragments and the merged type, and merged
+  nodes are persisted in the DB
+- **Language-scoped special-name checks**: special-method and public-API-name
+  matching is now resolved per node via language adapter callbacks
+  (`is_special_name` / `is_public_api_name`) instead of a global name union,
+  preventing e.g. C# special names from leaking into Python/Rust analysis;
+  READ edges are promoted into the call graph for the extended node-type set
+  (property, event, indexer, enum, enum member, struct, record, delegate)
+- **Schema versioning + automatic stale-index recovery**: `storage/schema.py`
+  now carries a `SCHEMA_VERSION` constant, stamped into `PRAGMA user_version`
+  by `create_tables`. `Database.__init__` compares the stored version on open
+  and, on mismatch (older or newer — i.e. a version update or downgrade),
+  prints a warning, drops the stale `db.sqlite` (+ WAL/SHM), and recreates
+  with the current schema (`Database.schema_reset` reports whether this
+  happened). Future data-structure refactors only need to bump
+  `SCHEMA_VERSION`.
+- C# test-file patterns (`*Tests.cs`, `*Test.cs`, `*.Tests.cs`) and test
+  directories (`Tests/`, `Test/`) in `test_patterns` defaults
+
+### Changed
+- `LanguageAdapter` gains `file_to_module_with_csproj` (module naming that
+  honors project metadata) and overridable `is_special_name`
+
 ## [0.3.8] - 2026-07-28
 
 ### Changed

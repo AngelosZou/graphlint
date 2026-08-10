@@ -2,6 +2,7 @@
 """GraphBuilder edge creation and graph algorithm tests."""
 
 import pytest
+from typing import Any
 
 from graphlint.analyzer._types import (
     NodeInfo,
@@ -412,3 +413,96 @@ class TestSuffixIndexAndResolveCache:
 
         assert r1 == r1_serial
         assert r2 == r2_serial
+
+
+class TestLanguageScopedSpecialNames:
+    """Language-specific special / public-API names must not leak across
+    languages: a Python method named like a C# special (``Dispose``) or a
+    Python class named ``Main`` is ordinary code and stays detectable."""
+
+    def _build(self, files: dict[str, str]) -> tuple[Any, WarningCollector]:
+        import os
+        import tempfile
+
+        from graphlint.analyzer.graph import GraphBuilder
+        from graphlint.analyzer.warnings import WarningCollector
+        from graphlint.api import _build_registry
+        from graphlint.config.manager import ConfigManager
+
+        tmp = tempfile.mkdtemp()
+        for rel, content in files.items():
+            full = os.path.join(tmp, rel)
+            os.makedirs(os.path.dirname(full), exist_ok=True)
+            with open(full, "w", encoding="utf-8") as fh:
+                fh.write(content)
+        config = ConfigManager(tmp).load()
+        config["_root_dir"] = tmp
+        registry = _build_registry()
+        adapter = registry.adapter_for_file("app.py")
+        prs = {}
+        for root, _d, fns in os.walk(tmp):
+            for fn in fns:
+                if fn.endswith(".py"):
+                    full = os.path.join(root, fn)
+                    rel = os.path.relpath(full, tmp).replace(os.sep, "/")
+                    prs[rel] = adapter.parse_file(full, tmp, config)
+        wb = WarningCollector()
+        gb = GraphBuilder(wb, registry=registry, config=config)
+        return gb.build(prs), wb
+
+    def _dead_names(self, br: Any, wb: WarningCollector) -> set[str]:
+        nid_map = br.node_id_map
+        return {
+            nid_map[w.node_id].qualified_name
+            for w in wb.get_all()
+            if w.warn_type == "dead_code" and w.node_id in nid_map
+        }
+
+    def test_python_dispose_method_flagged_dead(self):
+        """Unused Python method named ``Dispose`` must be reported dead — the
+        C# special name must not shield it (regression: union set leaked)."""
+        br, wb = self._build({
+            "svc.py": (
+                "class Service:\n"
+                "    def Used(self):\n"
+                "        pass\n"
+                "    def Dispose(self):\n"
+                "        pass\n"
+            ),
+            "app.py": (
+                "from svc import Service\n"
+                "def main():\n"
+                "    s = Service()\n"
+                "    s.Used()\n"
+                "if __name__ == '__main__':\n"
+                "    main()\n"
+            ),
+        })
+        nid_map = br.node_id_map
+        # the service is live (main calls Used)
+        assert any(
+            n.qualified_name == "svc.Service.Used" and n.id in br.reachable
+            for n in nid_map.values()
+        )
+        # Dispose is genuinely unused -> dead code warning
+        dead = self._dead_names(br, wb)
+        assert "svc.Service.Dispose" in dead, dead
+
+    def test_python_class_named_main_flagged_dead(self):
+        """Unused Python class named ``Main`` must be reported dead — the C#
+        public-API name must not shield it."""
+        br, wb = self._build({
+            "svc.py": (
+                "class Main:\n"
+                "    def run(self):\n"
+                "        pass\n"
+            ),
+            "app.py": (
+                "def main():\n"
+                "    pass\n"
+                "if __name__ == '__main__':\n"
+                "    main()\n"
+            ),
+        })
+        dead = self._dead_names(br, wb)
+        assert "svc.Main" in dead, dead

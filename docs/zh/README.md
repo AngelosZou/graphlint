@@ -16,21 +16,27 @@ AI Agent 在快速生成代码的同时，也会留下大量冗余和死代码�
 |------|------|--------|------|
 | **Python** (`.py`) | 内置 | `ast`（标准库） | 装饰器、类型注解、动态导入、框架感知入口检测 |
 | **Rust** (`.rs`) | 内置（可选依赖） | `tree-sitter` | 属性宏、Trait、`pub` 可见性、`macro_rules!` |
+| **C#** (`.cs`) | 内置（可选依赖） | `tree-sitter` | 分部类、属性/索引器/事件、特性（Attribute）、`.csproj` 感知、测试框架入口 |
 
-安装含 Rust 支持的版本：`pip install graphlint[rust]`（额外引入 `tree-sitter` 和 `tree-sitter-rust`）。
+安装可选语言支持：
+
+```bash
+pip install graphlint[rust]    # 引入 tree-sitter 和 tree-sitter-rust
+pip install graphlint[csharp]  # 引入 tree-sitter 和 tree-sitter-c-sharp
+```
 
 ## 特性
 
 - **死代码检测** — 通过图遍历找出所有入口点不可达的组件
-- **多语言支持** — Python 和 Rust 后端，通过语言适配器抽象层实现；Python 使用标准库 `ast`，Rust 使用 `tree-sitter`
-- **语言专有特性感知** — Python 装饰器、Rust 属性宏（`#[tokio::main]`、`#[test]`）、Trait 实现、`pub` 可见性等
-- **AST/CST 解析** — 提取函数、方法、结构体、枚举、Trait、实现块、宏、变量、字段；感知类型声明，自动处理循环解包等变量绑定
+- **多语言支持** — Python、Rust 和 C# 后端，通过语言适配器抽象层实现；Python 使用标准库 `ast`，Rust 和 C# 使用 `tree-sitter`
+- **语言专有特性感知** — Python 装饰器、Rust 属性宏（`#[tokio::main]`、`#[test]`）、C# 特性（`[Fact]`、`[HttpGet]`）、Trait 实现、`pub`/`public` 可见性、分部类等
+- **AST/CST 解析** — 提取函数、方法、结构体、枚举、Trait、实现块、宏、类、属性、索引器、事件、变量、字段；感知类型声明、泛型，自动处理循环解包等变量绑定
 - **依赖图构建** — 有向边：`read`、`write`、`call`、`inherit`、`decorate`
-- **入口点检测** — 17 种内置规则，覆盖 Python 框架（FastAPI、Flask、Django、Click、Typer、Celery、pytest）和 Rust 惯例（main、异步运行时、WASM、proc 宏、FFI、测试、pub API）及自定义规则
-- **可配置入口模板** — 通过 `ast_pattern` 前缀添加自定义入口规则，包括 `function_call:`、`function_def:`、`decorator:`、`file_match:`、`visibility:pub`（Rust）、`trait_impl:`（Rust）、`macro_def:`（Rust）等
-- **`--public-as-entry` 标志** — 将所有公开项（Rust `pub`）视为入口点，用于库代码分析
+- **入口点检测** — 28 种内置规则，覆盖 Python 框架（FastAPI、Flask、Django、Click、Typer、Celery、pytest）、Rust 惯例（main、异步运行时、WASM、proc 宏、FFI、测试、pub API）和 .NET 惯例（控制台、xUnit、NUnit、MSTest、Web API、Minimal API、Generic Host、WinForms、WPF）及自定义规则
+- **可配置入口模板** — 通过 `ast_pattern` 前缀添加自定义入口规则，包括 `function_call:`、`function_def:`、`decorator:`、`class_definition:`（C#）、`file_match:`、`file_is_program`（C#）、`visibility:pub`（Rust）、`visibility:public`（C#）、`trait_impl:`（Rust）、`macro_def:`（Rust）等
+- **`--public-as-entry` 标志** — 将所有公开项（Rust `pub`、C# `public`）视为入口点，用于库代码分析
 - **警告检测** — 11 种警告类型：循环引用、未使用 import、只写变量、死代码等
-- **增量更新** — 首次全量扫描后，仅对变更文件进行增量重建；增量感知可达性分析避免了对全图的重复计算。
+- **增量更新** — 首次全量扫描后，仅对变更文件进行增量重建；增量感知可达性分析避免了对全图的重复计算；不兼容的索引 schema 版本会被自动检测并重建
 - **Python API + CLI** — 可集成到任何 Tool 开发、CI 流程，或直接供 Agent 自行分析和清理
 
 ## 安装
@@ -45,6 +51,12 @@ pip install graphlint
 
 ```bash
 pip install graphlint[rust]
+```
+
+如需支持 C#（`.cs` 文件），安装可选的 `tree-sitter` 依赖：
+
+```bash
+pip install graphlint[csharp]
 ```
 
 ## 快速开始
@@ -83,7 +95,7 @@ graphlint query -g 1 --detail full
 # 检测到死代码或循环引用时返回非零退出码（用于 CI）
 graphlint query --json --fail-on dead_code,circular_ref
 
-# 将所有公开项视为入口点（库模式分析）
+# 将所有公开项视为入口点（库分析模式）
 graphlint query --public-as-entry
 
 # 重建索引
@@ -186,7 +198,8 @@ Graphlint 将配置存储在分析目录下的 `.graphlint/config.json` 中。�
 - **纯静态分析** — graphlint 基于静态分析执行，无法检测 `getattr`、`importlib` 等运行时动态链接或动态分发模式，这可能会导致假阳性。此问题主要影响 Python；Rust 的静态分发模型产生的假阳性较少。**缓解方案：** 根据代码库的实际约定添加自定义入口规则。例如，graphlint 自身的代码库使用了 `function_def:_detect_*` 和 `function_def:visit_*` 两种 ast_pattern，防止通过 `getattr` 发现的函数被误报为死代码。
 - **Python 动态导入** — 由于 Python 的动态导入机制（`importlib`、`getattr`、元类等），默认入口模板在重度依赖运行时调度的代码库中可能产生假阳性。用户应根据项目约定调整 `entry_rules` 配置。
 - **Rust 宏展开** — tree-sitter 解析未展开的源代码；过程宏和 `macro_rules!` 体显示为不透明标记树。部分宏生成的调用路径可能遗漏。`#[derive]` 属性通过隐式 `inherit` 边部分识别。
-- **`--public-as-entry` 适用范围** — 此标志仅适用于具有 `public` 可见性声明的语言（Rust `pub`），对 Python 文件无效。开关此标志会触发全量重新索引。对于长期库代码分析，建议通过 `graphlint config` 启用 `rust_pub_api` 入口规则以持久化设置。
+- **C# 分部类与反射** — tree-sitter 逐个解析 `.cs` 文件；分部类片段通过 `part_of` 边合并为单一逻辑节点，但仅通过反射（`Activator.CreateInstance`、DI 容器注册）调用的成员可能被遗漏，与 Python 动态导入的局限类似。
+- **`--public-as-entry` 适用范围** — 此标志适用于具有 `public` 可见性声明的语言（Rust `pub`、C# `public`），对 Python 文件无效。开关此标志会触发全量重新索引。对于长期库代码分析，建议通过 `graphlint config` 启用 `rust_pub_api` 入口规则以持久化设置。
 - **大规模代码库构建耗时** — 在包含 700+ 个 Python 文件、1,000+ 个类定义和 14,000+ 个函数的大规模代码库上，完整重构需要约 200 秒（实际时间与设备性能有关）。小型项目（~60 个文件）约 1 秒完成。首次全量扫描后，后续查询采用增量更新，仅重新计算变更文件。
 
 ## 许可证

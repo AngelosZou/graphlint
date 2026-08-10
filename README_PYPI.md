@@ -16,21 +16,27 @@ AI agents generate code rapidly, leaving behind dead and redundant code that pol
 |----------|--------|--------|----------|
 | **Python** (`.py`) | Built-in | `ast` (stdlib) | Decorators, type annotations, dynamic imports, framework-aware entry detection |
 | **Rust** (`.rs`) | Built-in (opt-in deps) | `tree-sitter` | Attribute macros, traits, `pub` visibility, `macro_rules!` |
+| **C#** (`.cs`) | Built-in (opt-in deps) | `tree-sitter` | Partial classes, properties/indexers/events, attributes, `.csproj` awareness, test framework entries |
 
-Install with Rust support: `pip install graphlint[rust]` (adds `tree-sitter` and `tree-sitter-rust`).
+Install optional language support:
+
+```bash
+pip install graphlint[rust]    # adds tree-sitter and tree-sitter-rust
+pip install graphlint[csharp]  # adds tree-sitter and tree-sitter-c-sharp
+```
 
 ## Features
 
 - **Dead code detection** — finds components unreachable from any entry point via graph traversal
-- **Multi-language support** — Python and Rust backends via a language adapter abstraction; Python uses stdlib `ast`, Rust uses `tree-sitter`
-- **Language-specific awareness** — Python decorators, Rust attribute macros (`#[tokio::main]`, `#[test]`), trait implementations, `pub` visibility, and more
-- **AST/CST parsing** — extracts functions, methods, structs, enums, traits, impls, macros, variables, and fields; aware of type annotations and unpacked variables
+- **Multi-language support** — Python, Rust, and C# backends via a language adapter abstraction; Python uses stdlib `ast`, Rust and C# use `tree-sitter`
+- **Language-specific awareness** — Python decorators, Rust attribute macros (`#[tokio::main]`, `#[test]`), C# attributes (`[Fact]`, `[HttpGet]`), trait implementations, `pub`/`public` visibility, partial classes, and more
+- **AST/CST parsing** — extracts functions, methods, structs, enums, traits, impls, macros, classes, properties, indexers, events, variables, and fields; aware of type annotations, unpacked variables, and generics
 - **Dependency graph** — builds directed edges: `read`, `write`, `call`, `inherit`, `decorate`
-- **Entry point detection** — 17 built-in rules covering Python frameworks (FastAPI, Flask, Django, Click, Typer, Celery, pytest) and Rust conventions (main, async runtimes, WASM, proc macros, FFI, tests, pub API) plus custom rules
-- **Configurable entry templates** — add custom entry rules via `ast_pattern` prefixes including `function_call:`, `function_def:`, `decorator:`, `file_match:`, `visibility:pub` (Rust), `trait_impl:` (Rust), `macro_def:` (Rust), and more
-- **`--public-as-entry` flag** — treat all public items (Rust `pub`) as entry points for library-crate analysis
+- **Entry point detection** — 28 built-in rules covering Python frameworks (FastAPI, Flask, Django, Click, Typer, Celery, pytest), Rust conventions (main, async runtimes, WASM, proc macros, FFI, tests, pub API), and .NET conventions (console, xUnit, NUnit, MSTest, Web API, Minimal API, Generic Host, WinForms, WPF) plus custom rules
+- **Configurable entry templates** — add custom entry rules via `ast_pattern` prefixes including `function_call:`, `function_def:`, `decorator:`, `class_definition:` (C#), `file_match:`, `file_is_program` (C#), `visibility:pub` (Rust), `visibility:public` (C#), `trait_impl:` (Rust), `macro_def:` (Rust), and more
+- **`--public-as-entry` flag** — treat all public items (Rust `pub`, C# `public`) as entry points for library analysis
 - **Warning detection** — 11 warning types including circular references, unused imports, write-only variables, and more
-- **Incremental updates** — after initial full scan, only changed files are re-indexed; delta-aware reachability analysis avoids full-graph recomputation.
+- **Incremental updates** — after initial full scan, only changed files are re-indexed; delta-aware reachability analysis avoids full-graph recomputation; incompatible index schema versions are auto-detected and rebuilt
 - **Python API + CLI** — integrate into any Tool, CI pipeline, or let agents self-analyze and self-clean
 
 ## Installation
@@ -45,6 +51,12 @@ For Rust support (`.rs` files), install the optional `tree-sitter` dependencies:
 
 ```bash
 pip install graphlint[rust]
+```
+
+For C# support (`.cs` files), install the optional `tree-sitter` dependencies:
+
+```bash
+pip install graphlint[csharp]
 ```
 
 ## Quick Start
@@ -83,7 +95,7 @@ graphlint query -g 1 --detail full
 # Exit non-zero when dead code or circular refs found (for CI)
 graphlint query --json --fail-on dead_code,circular_ref
 
-# Treat all public items as entry points (library-crate mode)
+# Treat all public items as entry points (library analysis mode)
 graphlint query --public-as-entry
 
 # Rebuild index
@@ -186,7 +198,8 @@ Full documentation is available in the [docs/](https://github.com/AngelosZou/gra
 - **Static analysis only** — graphlint performs static analysis and cannot detect runtime linkage such as `getattr`, `importlib`, or dynamic dispatch patterns, which may result in false positives. This primarily affects Python; Rust's static dispatch model produces fewer false positives. **Mitigation:** add custom entry rules matching your codebase's conventions. For example, graphlint's own codebase uses `function_def:_detect_*` and `function_def:visit_*` patterns to prevent functions discovered via `getattr` from being flagged as dead.
 - **Python dynamic imports** — due to Python's dynamic import mechanisms (`importlib`, `getattr`, metaclasses, etc.), the default entry templates may produce false positives in codebases that rely heavily on runtime dispatch. Users should tune the `entry_rules` configuration to match their project's conventions.
 - **Rust macro expansion** — tree-sitter parses unexpanded source; procedural macros and `macro_rules!` bodies appear as opaque token trees. Some macro-generated call paths may be missed. `#[derive]` attributes are partially recognized via implicit `inherit` edges.
-- **`--public-as-entry` scope** — this flag only applies to languages with `public` visibility declarations (Rust `pub`). It has no effect on Python files. Toggling this flag triggers a full re-index. For long-term library-crate analysis, prefer enabling the `rust_pub_api` entry rule via `graphlint config` to persist the setting.
+- **C# partial classes & reflection** — tree-sitter parses each `.cs` file independently; partial class fragments are merged into a single logical node via `part_of` edges, but members called only through reflection (`Activator.CreateInstance`, DI container registration) may be missed, similar to Python's dynamic import limitations.
+- **`--public-as-entry` scope** — this flag applies to languages with `public` visibility declarations (Rust `pub`, C# `public`). It has no effect on Python files. Toggling this flag triggers a full re-index. For long-term library analysis, prefer enabling the `rust_pub_api` entry rule via `graphlint config` to persist the setting.
 - **Large codebase build time** — on a large codebase with 700+ `.py` files, 1,000+ classes, and 14,000+ functions, a full rebuild takes approximately 200 seconds (actual performance depends on hardware). Small projects (~60 files) complete in ~1 second. This cost is one-time, after the initial full scan, subsequent queries use incremental updates.
 
 ## License

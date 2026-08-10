@@ -17,13 +17,24 @@ graphlint 的配置文件位于项目根目录的 `.graphlint/config.json`，使
     {"name": "celery_app",       "ast_pattern": "class_instantiation:Celery | class_instantiation:celery.Celery", "file_pattern": "**/*.py", "enabled": true},
     {"name": "pytest_plugin",    "ast_pattern": "function_def:pytest_addoption | decorator:pytest.fixture", "file_pattern": "**/conftest.py", "enabled": true},
     {"name": "pytest_test",      "ast_pattern": "test_file",                         "file_pattern": "**/*.py",         "enabled": true, "no_propagate": true},
+    {"name": "rust_default_bin_path", "ast_pattern": "file_match:src/main.rs | file_match:src/bin/*.rs", "file_pattern": "**/*.rs", "enabled": true},
     {"name": "rust_main",        "ast_pattern": "function_def:main",                 "file_pattern": "**/*.rs",         "enabled": true},
     {"name": "rust_async_main",  "ast_pattern": "decorator:tokio::main | decorator:actix_rt::main | decorator:actix_web::main | decorator:async_std::main | decorator:rocket::main | decorator:rocket::launch | decorator:main", "file_pattern": "**/*.rs", "enabled": true},
     {"name": "rust_wasm_entry",  "ast_pattern": "decorator:wasm_bindgen",            "file_pattern": "**/*.rs",         "enabled": true},
     {"name": "rust_proc_macro",  "ast_pattern": "decorator:proc_macro | decorator:proc_macro_derive | decorator:proc_macro_attribute", "file_pattern": "**/*.rs", "enabled": true},
     {"name": "rust_ffi_export",  "ast_pattern": "decorator:no_mangle | decorator:export_name", "file_pattern": "**/*.rs", "enabled": true},
     {"name": "rust_test",        "ast_pattern": "test_file",                         "file_pattern": "**/*.rs",         "enabled": true, "no_propagate": true},
-    {"name": "rust_pub_api",     "ast_pattern": "visibility:pub",                    "file_pattern": "**/*.rs",         "enabled": false}
+    {"name": "rust_pub_api",     "ast_pattern": "visibility:pub",                    "file_pattern": "**/*.rs",         "enabled": false},
+    {"name": "csharp_console_app", "ast_pattern": "function_def:Main | file_is_program", "file_pattern": "**/Program.cs", "enabled": true},
+    {"name": "csharp_xunit",     "ast_pattern": "decorator:Fact | decorator:Theory",  "file_pattern": "**/*.cs",         "enabled": true},
+    {"name": "csharp_nunit",     "ast_pattern": "decorator:TestFixture | decorator:Test | decorator:TestCase | decorator:SetUp | decorator:OneTimeSetUp", "file_pattern": "**/*.cs", "enabled": true},
+    {"name": "csharp_mstest",    "ast_pattern": "decorator:TestClass | decorator:TestMethod | decorator:ClassInitialize | decorator:TestInitialize", "file_pattern": "**/*.cs", "enabled": true},
+    {"name": "csharp_webapi",    "ast_pattern": "decorator:ApiController | decorator:Route | decorator:HttpGet | decorator:HttpPost | decorator:HttpPut | decorator:HttpDelete | decorator:HttpPatch", "file_pattern": "**/*.cs", "enabled": true},
+    {"name": "csharp_minimal_api", "ast_pattern": "function_call:MapGet | function_call:MapPost | function_call:MapPut | function_call:MapDelete | function_call:MapMethods", "file_pattern": "**/*.cs", "enabled": true},
+    {"name": "csharp_generic_host", "ast_pattern": "function_call:CreateDefaultBuilder | function_call:ConfigureWebHostDefaults | function_call:Run", "file_pattern": "**/*.cs", "enabled": true},
+    {"name": "csharp_winforms",  "ast_pattern": "function_call:Application.Run | function_call:Application.EnableVisualStyles", "file_pattern": "**/*.cs", "enabled": true},
+    {"name": "csharp_wpf",       "ast_pattern": "class_definition:App",               "file_pattern": "**/*.cs",         "enabled": true},
+    {"name": "csharp_test",      "ast_pattern": "test_file",                         "file_pattern": "**/*.cs",         "enabled": true, "no_propagate": true}
   ],
   "exclude_patterns": {
     "always_exclude": ["__pycache__/", ".mypy_cache/", ".pytest_cache/", ".tox/", ".venv/", "venv/", "env/", "virtualenv/", ".env/", "node_modules/", ".git/", ".svn/", ".hg/", ".idea/", ".vscode/", ".vs/", ".graphlint/", "build/", "dist/", "target/", ".cargo/", "*.egg-info/", "*.pyc", "*.pyo"],
@@ -42,8 +53,8 @@ graphlint 的配置文件位于项目根目录的 `.graphlint/config.json`，使
   },
   "test_patterns": {
     "config_files": ["conftest.py"],
-    "dir_patterns": ["tests/", "test/", "__tests__/"],
-    "file_patterns": ["test_*.py", "*_test.py", "test_*.rs", "*_test.rs"],
+    "dir_patterns": ["tests/", "test/", "__tests__/", "Tests/", "Test/"],
+    "file_patterns": ["test_*.py", "*_test.py", "test_*.rs", "*_test.rs", "*Tests.cs", "*Test.cs", "*.Tests.cs"],
     "function_patterns": ["test_*"]
   },
   "version": 1
@@ -75,7 +86,7 @@ graphlint 的配置文件位于项目根目录的 `.graphlint/config.json`，使
 graphlint query --public-as-entry
 ```
 
-- **适用范围：** 仅影响具有 `public` 可见性声明的语言（Rust `pub`），对 Python 文件无效。
+- **适用范围：** 仅影响具有 `public` 可见性声明的语言（Rust `pub`、C# `public`），对 Python 文件无效。
 - **重新索引：** 开关此标志会触发全量重建（标志值存储在扫描戳中）。长期使用建议启用 `rust_pub_api` 配置规则或添加自定义 `visibility:pub` 入口规则，以避免反复重建。
 - **配置交互：** 与 `rust_pub_api` 配置规则独立——两者是正交的机制，互不干扰。
 
@@ -85,14 +96,17 @@ graphlint query --public-as-entry
 
 | 前缀 | 匹配目标 | 示例 | 适用语言 |
 |------|----------|------|----------|
-| `function_call:` | 函数调用 | `"function_call:my_entry"` | Python |
-| `function_def:` | 函数定义名（支持 glob） | `"function_def:run_*"` | Python、Rust |
-| `decorator:` | 装饰器或属性宏（`#[...]`） | `"decorator:app.route"` / `"decorator:tokio::main"` | Python、Rust |
+| `function_call:` | 函数调用 | `"function_call:my_entry"` | Python、C# |
+| `function_def:` | 函数定义名（支持 glob） | `"function_def:run_*"` | Python、Rust、C# |
+| `decorator:` | 装饰器或属性宏（`#[...]`）/ 特性（`[...]`） | `"decorator:app.route"` / `"decorator:tokio::main"` / `"decorator:Fact"` | Python、Rust、C# |
 | `class_instantiation:` | 类实例化 | `"class_instantiation:MyApp"` | Python |
-| `file_match:` | 文件名匹配 | `"file_match:**/main.py"` | Python、Rust |
+| `class_definition:` | 类/结构体/记录/接口定义（支持 glob） | `"class_definition:App"` | C# |
+| `file_match:` | 文件名匹配 | `"file_match:**/main.py"` | Python、Rust、C# |
+| `file_is_program` | 含顶级语句的 `Program.cs` | `"file_is_program"` | C# |
 | `if_name_main` | `if __name__ == '__main__'` 检测 | `"if_name_main"` | Python |
-| `test_file` | 测试文件检测（使用 `test_patterns` 配置） | `"test_file"` | Python、Rust |
+| `test_file` | 测试文件检测（使用 `test_patterns` 配置） | `"test_file"` | Python、Rust、C# |
 | `visibility:pub` | 匹配具有 `pub` 可见性修饰符的项目 | `"visibility:pub"` | Rust |
+| `visibility:public` | 匹配具有 `public` 可见性修饰符的项目 | `"visibility:public"` | C# |
 | `trait_impl:` | 匹配 `impl Trait for Type` 实现块 | `"trait_impl:Default"` | Rust |
 | `macro_def:` | 匹配 `macro_rules!` 定义 | `"macro_def:my_macro"` | Rust |
 

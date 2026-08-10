@@ -15,6 +15,25 @@ try:
 except ImportError:
     fcntl = None  # type: ignore[assignment]
 
+from graphlint.storage.schema import SCHEMA_VERSION, create_tables, get_user_version
+
+
+def remove_database_files(db_path: str) -> None:
+    """Delete a SQLite database file plus its WAL/SHM sidecars, best-effort.
+
+    Callers must close any open connection first (Windows locks open files).
+    """
+    for path in (db_path, f"{db_path}-wal", f"{db_path}-shm"):
+        try:
+            os.remove(path)
+        except FileNotFoundError:
+            pass
+        except OSError as exc:
+            print(
+                f"[graphlint] Warning: failed to remove {path}: {exc}",
+                file=sys.stderr,
+            )
+
 
 class IndexLock:
     """Exclusive lock for concurrent writes."""
@@ -80,47 +99,63 @@ class Database:
     """SQLite database operations wrapper with parameterized queries."""
 
     def __init__(self, root_dir: str) -> None:
-        """Initialize the database connection."""
+        """Initialize the database connection.
+
+        An existing database whose schema version differs from
+        SCHEMA_VERSION is incompatible with the current code (usually a
+        version update). Such a database is dropped and recreated from
+        scratch — the index is derived data, so rebuilding is always safe.
+        Callers can inspect ``self.schema_reset`` to learn whether this
+        happened.
+        """
         real_root = os.path.realpath(root_dir)
         meta_dir = os.path.join(real_root, ".graphlint")
         os.makedirs(meta_dir, exist_ok=True)
         self.db_path: str = os.path.join(meta_dir, "db.sqlite")
         self.root_dir: str = real_root
-        self.conn: sqlite3.Connection = sqlite3.connect(
-            self.db_path,
-            isolation_level=None,
-        )
-        self.conn.row_factory = sqlite3.Row
-        # Set PRAGMAs before creating tables
-        import sqlite3 as _sqlite3
-
-        try:
-            self.conn.execute("PRAGMA journal_mode=WAL")
-        except _sqlite3.OperationalError:
-            pass
-        try:
-            self.conn.execute("PRAGMA foreign_keys=ON")
-        except _sqlite3.OperationalError:
-            pass
-        try:
-            self.conn.execute("PRAGMA synchronous=NORMAL")
-        except _sqlite3.OperationalError:
-            pass
-        try:
-            self.conn.execute("PRAGMA cache_size=-8000")  # 8 MB cache
-        except _sqlite3.OperationalError:
-            pass
-        try:
-            self.conn.execute("PRAGMA mmap_size=268435456")  # 256 MB memory-mapped I/O
-        except _sqlite3.OperationalError:
-            pass
-        try:
-            self.conn.execute("PRAGMA temp_store=MEMORY")  # Store temp tables in memory
-        except _sqlite3.OperationalError:
-            pass
-        from graphlint.storage.schema import create_tables
-
+        self.schema_reset: bool = False
+        db_existed = os.path.isfile(self.db_path)
+        self.conn = self._connect()
+        if db_existed and not self._schema_compatible():
+            self._reset_incompatible_db()
+            self.schema_reset = True
         create_tables(self.conn)
+
+    def _connect(self) -> sqlite3.Connection:
+        """Open a connection and apply PRAGMA settings."""
+        conn = sqlite3.connect(self.db_path, isolation_level=None)
+        conn.row_factory = sqlite3.Row
+        for pragma in (
+            "PRAGMA journal_mode=WAL",
+            "PRAGMA foreign_keys=ON",
+            "PRAGMA synchronous=NORMAL",
+            "PRAGMA cache_size=-8000",  # 8 MB cache
+            "PRAGMA mmap_size=268435456",  # 256 MB memory-mapped I/O
+            "PRAGMA temp_store=MEMORY",  # Store temp tables in memory
+        ):
+            try:
+                conn.execute(pragma)
+            except sqlite3.OperationalError:
+                pass
+        return conn
+
+    def _schema_compatible(self) -> bool:
+        """True when the stored schema version matches the current code."""
+        return get_user_version(self.conn) == SCHEMA_VERSION
+
+    def _reset_incompatible_db(self) -> None:
+        """Drop an incompatible stored database and reconnect fresh."""
+        stored = get_user_version(self.conn)
+        print(
+            f"[graphlint] Index schema mismatch (db schema v{stored} != "
+            f"code schema v{SCHEMA_VERSION}): dropping stale index at "
+            f"{self.db_path} and rebuilding.",
+            file=sys.stderr,
+        )
+        self.conn.close()
+        self.conn = None
+        remove_database_files(self.db_path)
+        self.conn = self._connect()
 
     # ------------------------------------------------------------------
     # Query methods (parameterized)

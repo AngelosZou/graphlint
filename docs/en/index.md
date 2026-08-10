@@ -16,9 +16,9 @@
 | Feature | Description |
 |---------|-------------|
 | **Dead Code Detection** | Finds components unreachable from any entry point via graph traversal |
-| **AST Parsing** | Extracts classes, functions, methods, variables, fields as nodes |
+| **AST Parsing** | Extracts classes, functions, methods, variables, fields as nodes (Python `ast`; Rust/C# `tree-sitter`) |
 | **Dependency Graph** | Five edge types: read / write / call / inherit / decorate |
-| **Entry Point Detection** | 10 built-in rules: main / package / fastapi / flask / django / click / typer / celery / pytest / pytest_test |
+| **Entry Point Detection** | 28 built-in rules: Python (main / FastAPI / Flask / Django / Click / Typer / Celery / pytest), Rust (main / async / WASM / proc macros / FFI / tests / pub API), C# (console / xUnit / NUnit / MSTest / Web API / Minimal API / Generic Host / WinForms / WPF / tests) |
 | **Warning Detection** | 11 warning types: circular refs, unused imports, write-only variables, dead code, and more |
 | **Incremental Indexing** | SHA256-based change detection, parses only modified files |
 | **Python API + CLI** | Integrate into any Tool pipeline, CI workflow, or let agents self-analyze and self-clean via CLI |

@@ -18,6 +18,12 @@ For Rust support (`.rs` files), install the optional `tree-sitter` dependencies:
 pip install graphlint[rust]
 ```
 
+For C# support (`.cs` files), install the optional `tree-sitter` dependencies:
+
+```bash
+pip install graphlint[csharp]
+```
+
 ## Agent Integration
 
 Graphlint can inject its usage prompt directly into your AI coding tools at the **global level**, so every project automatically has graphlint's guidance:

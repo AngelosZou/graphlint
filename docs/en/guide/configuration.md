@@ -17,13 +17,24 @@ graphlint's configuration file is located at `.graphlint/config.json` in the pro
     {"name": "celery_app",       "ast_pattern": "class_instantiation:Celery | class_instantiation:celery.Celery", "file_pattern": "**/*.py", "enabled": true},
     {"name": "pytest_plugin",    "ast_pattern": "function_def:pytest_addoption | decorator:pytest.fixture", "file_pattern": "**/conftest.py", "enabled": true},
     {"name": "pytest_test",      "ast_pattern": "test_file",                         "file_pattern": "**/*.py",         "enabled": true, "no_propagate": true},
+    {"name": "rust_default_bin_path", "ast_pattern": "file_match:src/main.rs | file_match:src/bin/*.rs", "file_pattern": "**/*.rs", "enabled": true},
     {"name": "rust_main",        "ast_pattern": "function_def:main",                 "file_pattern": "**/*.rs",         "enabled": true},
     {"name": "rust_async_main",  "ast_pattern": "decorator:tokio::main | decorator:actix_rt::main | decorator:actix_web::main | decorator:async_std::main | decorator:rocket::main | decorator:rocket::launch | decorator:main", "file_pattern": "**/*.rs", "enabled": true},
     {"name": "rust_wasm_entry",  "ast_pattern": "decorator:wasm_bindgen",            "file_pattern": "**/*.rs",         "enabled": true},
     {"name": "rust_proc_macro",  "ast_pattern": "decorator:proc_macro | decorator:proc_macro_derive | decorator:proc_macro_attribute", "file_pattern": "**/*.rs", "enabled": true},
     {"name": "rust_ffi_export",  "ast_pattern": "decorator:no_mangle | decorator:export_name", "file_pattern": "**/*.rs", "enabled": true},
     {"name": "rust_test",        "ast_pattern": "test_file",                         "file_pattern": "**/*.rs",         "enabled": true, "no_propagate": true},
-    {"name": "rust_pub_api",     "ast_pattern": "visibility:pub",                    "file_pattern": "**/*.rs",         "enabled": false}
+    {"name": "rust_pub_api",     "ast_pattern": "visibility:pub",                    "file_pattern": "**/*.rs",         "enabled": false},
+    {"name": "csharp_console_app", "ast_pattern": "function_def:Main | file_is_program", "file_pattern": "**/Program.cs", "enabled": true},
+    {"name": "csharp_xunit",     "ast_pattern": "decorator:Fact | decorator:Theory",  "file_pattern": "**/*.cs",         "enabled": true},
+    {"name": "csharp_nunit",     "ast_pattern": "decorator:TestFixture | decorator:Test | decorator:TestCase | decorator:SetUp | decorator:OneTimeSetUp", "file_pattern": "**/*.cs", "enabled": true},
+    {"name": "csharp_mstest",    "ast_pattern": "decorator:TestClass | decorator:TestMethod | decorator:ClassInitialize | decorator:TestInitialize", "file_pattern": "**/*.cs", "enabled": true},
+    {"name": "csharp_webapi",    "ast_pattern": "decorator:ApiController | decorator:Route | decorator:HttpGet | decorator:HttpPost | decorator:HttpPut | decorator:HttpDelete | decorator:HttpPatch", "file_pattern": "**/*.cs", "enabled": true},
+    {"name": "csharp_minimal_api", "ast_pattern": "function_call:MapGet | function_call:MapPost | function_call:MapPut | function_call:MapDelete | function_call:MapMethods", "file_pattern": "**/*.cs", "enabled": true},
+    {"name": "csharp_generic_host", "ast_pattern": "function_call:CreateDefaultBuilder | function_call:ConfigureWebHostDefaults | function_call:Run", "file_pattern": "**/*.cs", "enabled": true},
+    {"name": "csharp_winforms",  "ast_pattern": "function_call:Application.Run | function_call:Application.EnableVisualStyles", "file_pattern": "**/*.cs", "enabled": true},
+    {"name": "csharp_wpf",       "ast_pattern": "class_definition:App",               "file_pattern": "**/*.cs",         "enabled": true},
+    {"name": "csharp_test",      "ast_pattern": "test_file",                         "file_pattern": "**/*.cs",         "enabled": true, "no_propagate": true}
   ],
   "exclude_patterns": {
     "always_exclude": ["__pycache__/", ".mypy_cache/", ".pytest_cache/", ".tox/", ".venv/", "venv/", "env/", "virtualenv/", ".env/", "node_modules/", ".git/", ".svn/", ".hg/", ".idea/", ".vscode/", ".vs/", ".graphlint/", "build/", "dist/", "target/", ".cargo/", "*.egg-info/", "*.pyc", "*.pyo"],
@@ -42,8 +53,8 @@ graphlint's configuration file is located at `.graphlint/config.json` in the pro
   },
   "test_patterns": {
     "config_files": ["conftest.py"],
-    "dir_patterns": ["tests/", "test/", "__tests__/"],
-    "file_patterns": ["test_*.py", "*_test.py", "test_*.rs", "*_test.rs"],
+    "dir_patterns": ["tests/", "test/", "__tests__/", "Tests/", "Test/"],
+    "file_patterns": ["test_*.py", "*_test.py", "test_*.rs", "*_test.rs", "*Tests.cs", "*Test.cs", "*.Tests.cs"],
     "function_patterns": ["test_*"]
   },
   "version": 1
@@ -75,7 +86,7 @@ The `--public-as-entry` CLI flag (or `public_as_entry=True` API parameter) treat
 graphlint query --public-as-entry
 ```
 
-- **Scope:** Only affects languages with `public` visibility declarations (Rust `pub`). Has no effect on Python files.
+- **Scope:** Only affects languages with `public` visibility declarations (Rust `pub`, C# `public`). Has no effect on Python files.
 - **Re-indexing:** Toggling the flag triggers a full rebuild (the flag value is stored in the scan stamp). For long-term use, prefer enabling the `rust_pub_api` config rule or adding custom `visibility:pub` entry rules to avoid repeated rebuilds.
 - **Config interaction:** Independent of the `rust_pub_api` config rule — the two mechanisms are orthogonal and do not interfere.
 
@@ -85,14 +96,17 @@ All rules use the same prefix pattern syntax, supporting OR combinations with ` 
 
 | Prefix | Match Target | Example | Languages |
 |--------|-------------|---------|-----------|
-| `function_call:` | Function call | `"function_call:my_entry"` | Python |
-| `function_def:` | Function definition name (supports glob) | `"function_def:run_*"` | Python, Rust |
-| `decorator:` | Decorator or attribute macro (`#[...]`) | `"decorator:app.route"` / `"decorator:tokio::main"` | Python, Rust |
+| `function_call:` | Function call | `"function_call:my_entry"` | Python, C# |
+| `function_def:` | Function definition name (supports glob) | `"function_def:run_*"` | Python, Rust, C# |
+| `decorator:` | Decorator or attribute macro (`#[...]`) / attribute (`[...]`) | `"decorator:app.route"` / `"decorator:tokio::main"` / `"decorator:Fact"` | Python, Rust, C# |
 | `class_instantiation:` | Class instantiation | `"class_instantiation:MyApp"` | Python |
-| `file_match:` | Filename match | `"file_match:**/main.py"` | Python, Rust |
+| `class_definition:` | Class/struct/record/interface definition (supports glob) | `"class_definition:App"` | C# |
+| `file_match:` | Filename match | `"file_match:**/main.py"` | Python, Rust, C# |
+| `file_is_program` | `Program.cs` with top-level statements | `"file_is_program"` | C# |
 | `if_name_main` | `if __name__ == '__main__'` check | `"if_name_main"` | Python |
-| `test_file` | Test file detection (uses `test_patterns` config) | `"test_file"` | Python, Rust |
+| `test_file` | Test file detection (uses `test_patterns` config) | `"test_file"` | Python, Rust, C# |
 | `visibility:pub` | Items with `pub` visibility modifier | `"visibility:pub"` | Rust |
+| `visibility:public` | Items with `public` visibility modifier | `"visibility:public"` | C# |
 | `trait_impl:` | Trait implementation block | `"trait_impl:Default"` | Rust |
 | `macro_def:` | `macro_rules!` definition | `"macro_def:my_macro"` | Rust |
 

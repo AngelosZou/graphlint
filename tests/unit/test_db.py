@@ -33,6 +33,85 @@ class TestIndexLock:
 
 
 @pytest.mark.timeout(30)
+class TestDatabaseSchemaReconciliation:
+    """Stored schema incompatible with code → drop + recreate on open."""
+
+    def test_fresh_db_stamps_schema_version(self, tmp_path):
+        """A brand-new Database must carry the current schema version."""
+        from graphlint.storage.schema import SCHEMA_VERSION, get_user_version
+
+        db = Database(str(tmp_path))
+        try:
+            assert db.schema_reset is False
+            assert get_user_version(db.conn) == SCHEMA_VERSION
+        finally:
+            db.close()
+
+    def test_compatible_db_is_preserved(self, tmp_path):
+        """A matching-version database is reused as-is (no reset)."""
+        db = Database(str(tmp_path))
+        db.execute(
+            "INSERT INTO files (path, hash, size_bytes, mtime_ns) "
+            "VALUES ('a.py', 'h', 1, 1)"
+        )
+        db.close()
+
+        db2 = Database(str(tmp_path))
+        try:
+            assert db2.schema_reset is False
+            row = db2.fetchone("SELECT path FROM files")
+            assert row is not None and row["path"] == "a.py"
+        finally:
+            db2.close()
+
+    def test_unversioned_db_is_reset(self, tmp_path, capsys):
+        """A pre-versioning DB (user_version=0, missing new columns)
+        is dropped."""
+        from graphlint.storage.schema import SCHEMA_VERSION, get_user_version
+
+        db = Database(str(tmp_path))
+        db.execute(
+            "INSERT INTO files (path, hash, size_bytes, mtime_ns) "
+            "VALUES ('a.py', 'h', 1, 1)"
+        )
+        # Simulate a database written by an older graphlint: unversioned and
+        # lacking the columns the current INSERT statements rely on.
+        db.execute("ALTER TABLE nodes DROP COLUMN is_partial")
+        db.execute("ALTER TABLE nodes DROP COLUMN canonical_name")
+        db.execute("ALTER TABLE nodes DROP COLUMN visibility")
+        db.execute("PRAGMA user_version = 0")
+        db.close()
+
+        db2 = Database(str(tmp_path))
+        try:
+            assert db2.schema_reset is True
+            # Old data gone, fresh schema restored
+            assert db2.fetchone("SELECT COUNT(*) AS c FROM files")["c"] == 0
+            cols = [r[1] for r in db2.execute("PRAGMA table_info(nodes)")]
+            assert "is_partial" in cols
+            assert get_user_version(db2.conn) == SCHEMA_VERSION
+            err = capsys.readouterr().err
+            assert "schema mismatch" in err
+        finally:
+            db2.close()
+
+    def test_newer_version_db_is_reset(self, tmp_path):
+        """A DB written by a newer graphlint (future schema) is dropped too."""
+        from graphlint.storage.schema import SCHEMA_VERSION, get_user_version
+
+        db = Database(str(tmp_path))
+        db.execute("PRAGMA user_version = 999")
+        db.close()
+
+        db2 = Database(str(tmp_path))
+        try:
+            assert db2.schema_reset is True
+            assert get_user_version(db2.conn) == SCHEMA_VERSION
+        finally:
+            db2.close()
+
+
+@pytest.mark.timeout(30)
 class TestDatabase:
     """Database class tests."""
 

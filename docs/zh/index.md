@@ -16,9 +16,9 @@
 | 功能 | 说明 |
 |------|------|
 | **死代码检测** | 通过图遍历找出所有入口点不可达的组件，是项目的核心目标 |
-| **AST 解析** | 提取类、函数、方法、变量、字段等节点 |
+| **AST 解析** | 提取类、函数、方法、变量、字段等节点（Python `ast`；Rust/C# `tree-sitter`） |
 | **依赖图构建** | read / write / call / inherit / decorate 五类边 |
-| **入口点检测** | 10 种内置规则：main / package / fastapi / flask / django / click / typer / celery / pytest / pytest_test |
+| **入口点检测** | 28 种内置规则：Python（main / FastAPI / Flask / Django / Click / Typer / Celery / pytest）、Rust（main / 异步 / WASM / proc 宏 / FFI / 测试 / pub API）、C#（控制台 / xUnit / NUnit / MSTest / Web API / Minimal API / Generic Host / WinForms / WPF / 测试） |
 | **警告检测** | 循环引用、未使用 import、只写变量、死代码等 11 种警告 |
 | **增量索引** | 基于 SHA256 哈希，仅解析变更文件 |
 | **Python API + CLI** | 支持 Tool 开发集成、CI 流程，或直接供 Agent 命令行调用进行自行分析和清理 |

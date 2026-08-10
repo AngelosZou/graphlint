@@ -11,6 +11,10 @@ from graphlint.analyzer._types import (
     EntryInfo,
     NodeInfo,
 )
+from graphlint.analyzer._graph_algo import (
+    _build_undirected_adj,
+    _propagate_partial_reachability,
+)
 from graphlint.analyzer.language.python.constants import _PYTHON_SPECIAL_METHOD_DUNDERS
 
 
@@ -611,3 +615,76 @@ class TestBuildClassSpecialMap:
         csm = _build_class_special_map(node_id_map, frozenset())
 
         assert csm == {}
+
+
+# =============================================================================
+# Partial-class reachability propagation
+# =============================================================================
+
+
+class TestPropagatePartialReachability:
+    """``part_of`` edges share reachability between partial fragments and the
+    merged node in both directions."""
+
+    def test_merged_reachable_from_fragment(self):
+        reachable = {1}  # fragment 1 reachable via its members
+        edges = [
+            _make_edge(1, 2, "part_of"),  # fragment1 -> merged
+            _make_edge(3, 2, "part_of"),  # fragment2 -> merged
+        ]
+        out = _propagate_partial_reachability(set(reachable), edges)
+        assert out == {1, 2, 3}
+
+    def test_fragments_reachable_from_merged(self):
+        reachable = {2}  # merged node reachable (e.g. type name referenced)
+        edges = [_make_edge(1, 2, "part_of"), _make_edge(3, 2, "part_of")]
+        out = _propagate_partial_reachability(set(reachable), edges)
+        assert out == {1, 2, 3}
+
+    def test_other_edge_types_ignored(self):
+        reachable = {1}
+        edges = [_make_edge(1, 2, "call"), _make_edge(2, 3, "inherit")]
+        out = _propagate_partial_reachability(set(reachable), edges)
+        assert out == {1}
+
+    def test_empty_edges(self):
+        out = _propagate_partial_reachability({1, 2}, [])
+        assert out == {1, 2}
+
+
+class TestBuildUndirectedAdjLanguageScoped:
+    """Special-name decisions are scoped per node (language) when a checker
+    callback is supplied — C# names must not leak into Python analysis."""
+
+    def _nodes(self) -> dict[int, NodeInfo]:
+        cls = _make_node(1, "Service", "class")
+        cls.parent_node_id = None
+        dispose = _make_node(2, "Dispose", "method")
+        dispose.parent_node_id = 1
+        return {1: cls, 2: dispose}
+
+    def test_union_set_treats_dispose_as_special(self):
+        # Legacy behaviour: the union set marks it special -> synthetic edge
+        adj = _build_undirected_adj(
+            [], self._nodes(), frozenset({"Dispose"})
+        )
+        assert 2 in adj.get(1, set())
+
+    def test_callback_overrides_union(self):
+        # Python adapter would not consider "Dispose" special
+        def is_special(node: NodeInfo) -> bool:
+            return node.name in _PYTHON_SPECIAL_METHOD_DUNDERS
+
+        adj = _build_undirected_adj(
+            [], self._nodes(), frozenset({"Dispose"}), is_special_name=is_special
+        )
+        assert adj.get(1, set()) == set()
+
+    def test_callback_marking_special(self):
+        def is_special(node: NodeInfo) -> bool:
+            return node.name == "Dispose"
+
+        adj = _build_undirected_adj(
+            [], self._nodes(), frozenset(), is_special_name=is_special
+        )
+        assert 2 in adj.get(1, set())

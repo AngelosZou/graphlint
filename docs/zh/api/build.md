@@ -44,7 +44,7 @@ def build(
 
 `build()` 默认使用增量索引，流程如下：
 
-1. **扫描文件**：遍历项目目录，收集所有 `.py` 文件
+1. **扫描文件**：遍历项目目录，收集源文件（`.py` / `.rs` / `.cs`）
 2. **计算哈希**：对每个文件计算 SHA256 哈希值
 3. **比较缓存**：与 `.graphlint/` 缓存中的哈希值对比
 4. **仅解析变更**：只对哈希变化的文件执行 AST 解析
@@ -52,6 +52,10 @@ def build(
 6. **收集警告**：检测循环引用、未使用 import 等问题
 
 当 `force_rebuild=True` 时，跳过步骤 2-4，直接全量重建。
+
+## 过期索引自动恢复
+
+索引 schema 带有版本号（`PRAGMA user_version`）。当存储的数据库与当前安装的 graphlint 版本不兼容时（版本升级/降级，或出现 `no column named` / `no such table` / `FOREIGN KEY constraint failed` 等 schema 不匹配错误），`build()` 会自动删除过期的 `.graphlint/db.sqlite` 并执行全量重建，而不是抛出异常——返回值反映的是重建后的结果。`query()` 触发的隐式自动构建也采用相同的恢复机制。
 
 ## 并行构建
 

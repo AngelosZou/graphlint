@@ -68,6 +68,65 @@ greet()
         result = api.configure(action="show", root_dir=self.tmpdir)
         assert isinstance(result, dict)
 
+    def _corrupt_db_schema(self):
+        """Simulate a DB from an older graphlint: unversioned + missing
+        columns."""
+        import sqlite3
+
+        db_path = os.path.join(self.tmpdir, ".graphlint", "db.sqlite")
+        conn = sqlite3.connect(db_path)
+        conn.execute("ALTER TABLE nodes DROP COLUMN is_partial")
+        conn.execute("ALTER TABLE nodes DROP COLUMN canonical_name")
+        conn.execute("ALTER TABLE nodes DROP COLUMN visibility")
+        conn.execute("PRAGMA user_version = 0")
+        conn.close()
+
+    def _db_columns(self, table: str) -> list[str]:
+        import sqlite3
+
+        db_path = os.path.join(self.tmpdir, ".graphlint", "db.sqlite")
+        conn = sqlite3.connect(db_path)
+        try:
+            return [r[1] for r in conn.execute(f"PRAGMA table_info({table})")]
+        finally:
+            conn.close()
+
+    def test_api_build_heals_incompatible_db(self):
+        """build --force on a stale-schema DB drops it and rebuilds
+        (was Error)."""
+        assert api.build(root_dir=self.tmpdir, force_rebuild=True, parallel=1)["status"] == "ok"
+        self._corrupt_db_schema()
+
+        result = api.build(root_dir=self.tmpdir, force_rebuild=True, parallel=1)
+        assert result["status"] == "ok"
+        assert "is_partial" in self._db_columns("nodes")
+
+    def test_api_build_heals_corrupt_stamped_db(self):
+        """build --force on a version-stamped but shape-corrupt DB recovers."""
+        import sqlite3
+
+        assert api.build(root_dir=self.tmpdir, force_rebuild=True, parallel=1)["status"] == "ok"
+        # Version stamp matches code, but a column is missing (e.g. tampered
+        # DB): the INSERT fails at build time and the defensive retry kicks in.
+        db_path = os.path.join(self.tmpdir, ".graphlint", "db.sqlite")
+        conn = sqlite3.connect(db_path)
+        conn.execute("ALTER TABLE nodes DROP COLUMN is_partial")
+        conn.close()
+
+        result = api.build(root_dir=self.tmpdir, force_rebuild=True, parallel=1)
+        assert result["status"] == "ok"
+        assert "is_partial" in self._db_columns("nodes")
+
+    def test_api_query_heals_incompatible_db(self):
+        """query auto-build on a stale-schema DB drops it and rebuilds
+        (was 0 nodes)."""
+        api.build(root_dir=self.tmpdir, force_rebuild=True, parallel=1)
+        self._corrupt_db_schema()
+
+        result = api.query(root_dir=self.tmpdir, json_output=True)
+        assert result is not None
+        assert "is_partial" in self._db_columns("nodes")
+
     def test_api_configure_set(self):
         """api.configure(action='set', key='lang', value='en') returns ok."""
         result = api.configure(
