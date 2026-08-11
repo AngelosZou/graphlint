@@ -307,6 +307,20 @@ DEFAULT_CONFIG: Dict[str, Any] = {
             "description": "C test files",
             "no_propagate": True,
         },
+        {
+            "name": "cpp_main",
+            "file_pattern": "**/*.{cpp,cc,cxx,c,hpp,hh,hxx,h}",
+            "ast_pattern": "function_def:main",
+            "enabled": True,
+            "description": "C++ main() entry point",
+        },
+        {
+            "name": "cpp_test",
+            "file_pattern": "**/*.{cpp,cc,cxx,hpp,hh,hxx}",
+            "ast_pattern": "test_file",
+            "enabled": True,
+            "description": "C++ test files (gtest/Catch2/conventions)",
+        },
     ],
     # -------- Test file patterns --------
     "test_patterns": {

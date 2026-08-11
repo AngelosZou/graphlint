@@ -61,6 +61,10 @@ c = [
     "tree-sitter>=0.22,<0.27",
     "tree-sitter-c>=0.21,<0.25",
 ]
+cpp = [
+    "tree-sitter>=0.22,<0.27",
+    "tree-sitter-cpp>=0.22,<0.24",
+]
 
 [project.urls]
 Homepage = "https://github.com/AngelosZou/graphlint"

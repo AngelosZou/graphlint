@@ -64,6 +64,8 @@ def _build_registry() -> LanguageRegistry:
     _try_register_typescript(registry)
     # C adapter — silently skipped when tree-sitter-c is not installed
     _try_register_c(registry)
+    # C++ adapter — silently skipped when tree-sitter-cpp is not installed
+    _try_register_cpp(registry)
     return registry
 
 
@@ -154,6 +156,17 @@ def _try_register_typescript(registry: LanguageRegistry) -> None:
         exts.update({".js", ".jsx", ".mjs", ".cjs"})
     if exts:
         registry.register(TypeScriptAdapter(extensions=frozenset(exts)))
+
+
+def _try_register_cpp(registry: LanguageRegistry) -> None:
+    """Register the C++ adapter if tree-sitter-cpp is available."""
+    try:
+        from graphlint.analyzer.language.cpp import CppAdapter
+        from graphlint.analyzer.language.cpp.constants import _TREE_SITTER_CPP_AVAILABLE
+    except ImportError:
+        return
+    if _TREE_SITTER_CPP_AVAILABLE:
+        _try_register(registry, CppAdapter)
 
 
 # ---------------------------------------------------------------------------
