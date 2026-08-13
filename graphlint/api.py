@@ -30,25 +30,36 @@ from graphlint.storage.schema import SCHEMA_VERSION, get_user_version, is_schema
 # Language registry
 # ---------------------------------------------------------------------------
 
+# Optional languages needing extra deps.  Hints fire only when the
+# project has files for a missing language; pure-Python projects
+# see nothing.
+_OPTIONAL_LANG_SUPPORT: dict[str, tuple[str, str]] = {
+    ".rs": ("Rust", "pip install graphlint[rust]"),
+    ".cs": ("C#", "pip install graphlint[csharp]"),
+}
+
+# Languages already hinted at in this process (dedupe).
+_reported_missing_langs: set[str] = set()
+
 
 def _build_registry() -> LanguageRegistry:
-    """Build the default language registry with all built-in adapters."""
+    """Build the default language registry."""
     registry = LanguageRegistry()
     registry.register(PythonAdapter())
-    # Rust adapter — silently skipped when tree-sitter is not installed
+    # Rust adapter — skipped when tree-sitter is missing
     _try_register_rust(registry)
-    # C# adapter — silently skipped when tree-sitter-c-sharp is not installed
+    # C# adapter — skipped when tree-sitter-c-sharp is missing
     _try_register_csharp(registry)
     return registry
 
 
-def _try_register(registry: LanguageRegistry, adapter_cls: type, available: bool,
-                   install_msg: str) -> None:
-    """Register *adapter_cls* when its tree-sitter grammar is installed."""
-    if available:
-        registry.register(adapter_cls())
-    else:
-        print(install_msg)
+def _try_register(registry: LanguageRegistry, adapter_cls: type) -> None:
+    """Register *adapter_cls* when its tree-sitter grammar is installed.
+
+    Silent; missing-language hints are handled by
+    :func:`_warn_missing_lang_support`.
+    """
+    registry.register(adapter_cls())
 
 
 def _try_register_rust(registry: LanguageRegistry) -> None:
@@ -57,12 +68,9 @@ def _try_register_rust(registry: LanguageRegistry) -> None:
         from graphlint.analyzer.language.rust import RustAdapter
         from graphlint.analyzer.language.rust.constants import _TREE_SITTER_AVAILABLE
     except ImportError:
-        print("Rust support requires tree-sitter. "
-              "Please install it with: pip install graphlint[rust]")
         return
-    _try_register(registry, RustAdapter, _TREE_SITTER_AVAILABLE,
-                  "Rust support requires tree-sitter. "
-                  "Please install it with: pip install graphlint[rust]")
+    if _TREE_SITTER_AVAILABLE:
+        _try_register(registry, RustAdapter)
 
 
 def _try_register_csharp(registry: LanguageRegistry) -> None:
@@ -71,12 +79,34 @@ def _try_register_csharp(registry: LanguageRegistry) -> None:
         from graphlint.analyzer.language.csharp import CSharpAdapter
         from graphlint.analyzer.language.csharp.constants import _TREE_SITTER_CSHARP_AVAILABLE
     except ImportError:
-        print("C# support requires tree-sitter-c-sharp. "
-              "Please install it with: pip install graphlint[csharp]")
         return
-    _try_register(registry, CSharpAdapter, _TREE_SITTER_CSHARP_AVAILABLE,
-                  "C# support requires tree-sitter-c-sharp. "
-                  "Please install it with: pip install graphlint[csharp]")
+    if _TREE_SITTER_CSHARP_AVAILABLE:
+        _try_register(registry, CSharpAdapter)
+
+
+def _warn_missing_lang_support(root_dir: str, registry: LanguageRegistry) -> None:
+    """Print a per-language install hint to stderr when the project has
+    source files for a language whose adapter is not registered.
+
+    No-op when all optional languages are registered; otherwise the
+    tree is scanned with the same exclusion rules as the index scan.
+    """
+    registered = registry.all_extensions()
+    pending = [ext for ext in _OPTIONAL_LANG_SUPPORT if ext not in registered]
+    if not pending:
+        return
+    missing = registry.detect_unhandled(root_dir, frozenset(pending))
+    for ext in sorted(missing):
+        if ext in _reported_missing_langs:
+            continue
+        _reported_missing_langs.add(ext)
+        lang, install_cmd = _OPTIONAL_LANG_SUPPORT[ext]
+        print(
+            f"[graphlint] {lang} support not installed — {missing[ext]} "
+            f".{ext.lstrip('.')} file(s) will be skipped. "
+            f"Install with: {install_cmd}",
+            file=sys.stderr,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -218,6 +248,7 @@ def build(
     cm = ConfigManager(root_dir)
     cm.load()
     registry = _build_registry()
+    _warn_missing_lang_support(root_dir, registry)
     db = Database(root_dir)
     wc = WarningCollector()
     db2: Optional[Database] = None
@@ -232,8 +263,7 @@ def build(
     except Exception as exc:
         if not (_is_fk_error(exc) or is_schema_mismatch_error(exc)):
             raise
-        # Stale schema (version update) or broken constraints — drop the
-        # stored DB and rebuild from scratch, then report the fresh result.
+        # Stale schema or broken constraints — drop the DB and rebuild.
         print(
             f"[graphlint] Build failed: {exc} — dropping stale database and "
             "running full rebuild...",
@@ -423,11 +453,10 @@ def _is_fk_error(exc: BaseException) -> bool:
 
 
 def _is_stale_db(root_dir: str) -> bool:
-    """True when the stored index DB carries an incompatible schema version.
+    """True when the stored index DB schema version is incompatible.
 
-    Read-only probe (no tables created, no reset): lets the auto-build
-    decide whether a full rebuild is required even when no source file
-    changed — e.g. right after upgrading graphlint.
+    Read-only probe: lets auto-build decide whether a full rebuild is
+    required even when no source file changed (e.g. after an upgrade).
     """
     db_path = os.path.join(root_dir, ".graphlint", "db.sqlite")
     if not os.path.isfile(db_path):
@@ -453,6 +482,8 @@ def _auto_build(
     if registry is None:
         registry = _build_registry()
     changed, current_files = _scan_current(root_dir, registry, public_as_entry)
+    # Hint only when the project contains files for a missing language.
+    _warn_missing_lang_support(root_dir, registry)
     if not changed and not _is_stale_db(root_dir):
         return True
 
@@ -468,7 +499,7 @@ def _auto_build(
             public_as_entry=public_as_entry,
         )
 
-        # Use incremental rebuild when DB exists; full rebuild for first time
+        # Incremental rebuild when DB exists; full rebuild on first run.
         indexer.run(
             force_rebuild=(not db_exists or db.schema_reset),
             warning_collector=wc,
@@ -481,8 +512,7 @@ def _auto_build(
             traceback.print_exc(file=sys.stderr)
         print(f"[graphlint] Auto build failed: {msg}", file=sys.stderr)
         if _is_fk_error(exc) or is_schema_mismatch_error(exc):
-            # Stale schema (version update) or broken constraints — the
-            # stored DB cannot be reused. Drop it and rebuild from scratch.
+            # Stored DB cannot be reused — drop it and rebuild.
             print(
                 "[graphlint] Stale index detected — dropping database and "
                 "running full rebuild...",

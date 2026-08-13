@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.1] - 2026-08-13
+
+### Fixed
+- Optional-language (Rust / C#) install hints are no longer printed
+  unconditionally at registry-build time. Registration is now silent; a
+  targeted hint is emitted (once per language, to stderr) only when the
+  analyzed project actually contains `.rs` / `.cs` files whose adapter is
+  not installed. Pure-Python projects produce no output, and the messages
+  no longer pollute stdout (which previously corrupted `--json` output).
+
 ## [0.4.0] - 2026-08-10
 
 ### Added

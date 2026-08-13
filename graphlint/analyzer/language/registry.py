@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""LanguageRegistry — discovers and caches language adapters by file extension."""
+"""Language registry — maps file extensions to language adapters."""
 
 from __future__ import annotations
 
@@ -25,7 +25,7 @@ _COMMON_EXCLUDE_DIRS: frozenset[str] = frozenset(
 
 
 class LanguageRegistry:
-    """Central registry that maps file extensions to language adapters."""
+    """Central registry mapping file extensions to adapters."""
 
     def __init__(self) -> None:
         self._by_extension: dict[str, LanguageAdapter] = {}
@@ -91,12 +91,41 @@ class LanguageRegistry:
                 result.append((rel, mtime))
         return result
 
+    def detect_unhandled(
+        self, root_dir: str, known_exts: frozenset[str]
+    ) -> dict[str, int]:
+        """Count files of a known language with no registered adapter.
+
+        ``known_exts`` are extensions this tool understands but that are
+        not currently registered.  Uses the same exclusion rules as
+        :meth:`scan_files`.  Returns ``{ext: count}`` for every
+        known-but-unhandled extension actually found.
+        """
+        lang_exts = self.all_extensions()
+        exclude_dirs = _COMMON_EXCLUDE_DIRS | self.all_default_excludes()
+        missing: dict[str, int] = {}
+        for dp, dns, fns in os.walk(root_dir, topdown=True, followlinks=False):
+            dns[:] = [
+                d
+                for d in dns
+                if d not in exclude_dirs
+                and not d.endswith(".egg-info")
+                and not d.startswith(".")
+            ]
+            for fn in fns:
+                if fn.startswith("."):
+                    continue
+                ext = os.path.splitext(fn)[1].lower()
+                if ext in known_exts and ext not in lang_exts:
+                    missing[ext] = missing.get(ext, 0) + 1
+        return missing
+
     # ------------------------------------------------------------------
     # Bulk queries
     # ------------------------------------------------------------------
 
     def all_extensions(self) -> frozenset[str]:
-        """Union of all file extensions across every registered adapter."""
+        """Union of file extensions across all registered adapters."""
         exts: set[str] = set()
         for adapter in self._adapters:
             exts.update(adapter.file_extensions)
