@@ -80,6 +80,30 @@ Run `graphlint install` and select the tools you use — the prompt (usage scena
 
 If your agent tool is not listed in `install`, run `graphlint prompt` to copy the prompt to your clipboard and provide it to your agent manually. For tools you'd like native support for, feel free to submit an [issue](https://github.com/AngelosZou/graphlint/issues) — these requests are typically handled quickly.
 
+### DeepSeek Harness Plugin
+
+A plugin bundle for the [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) plugin ecosystem ships in this repository under [integrations/dsh](https://github.com/AngelosZou/graphlint/tree/main/integrations/dsh):
+
+- **Tools** — `graphlint_query` (dependency-graph queries with structured results), `graphlint_build` (index build as a background job, polled with `job_output`), `graphlint_config` (show/get/set for `.graphlint/config.json`).
+- **Skill** — a `graphlint` skill teaches the agent when and how to use the tools.
+- **Safety** — tools default to the session working directory and hard-refuse any root outside it, so an accidental high-level scan cannot block a turn.
+
+The bundle is not yet published to npm — the only installation method for now is from the repository:
+
+```bash
+# 1. Clone the repository and build the bundle (requires Node.js >= 20)
+git clone https://github.com/AngelosZou/graphlint.git
+cd graphlint/integrations/dsh
+npm install
+npm run build
+
+# 2. Link the bundle into a profile (run from the repository root)
+cd ..
+dsh plugin --profile web add link:./integrations/dsh
+
+# 3. Restart dsh web
+```
+
 ### CLI
 
 ```bash

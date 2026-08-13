@@ -23,3 +23,7 @@ venv/
 .DS_Store
 Thumbs.db
 uv.lock
+
+# DSH plugin (integrations/dsh)
+integrations/dsh/node_modules/
+integrations/dsh/lib/

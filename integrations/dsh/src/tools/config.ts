@@ -1,0 +1,83 @@
+import { defineTool } from '@deepseek-ai/dsh-tools'
+
+import type { JsonValue, PluginContext, ToolExecutionLike } from '../types.js'
+import { configArgv, type ConfigAction } from '../args.js'
+import { resolveGraphlint } from '../python.js'
+import { guardRoot, sessionCwd } from '../root.js'
+import { runGraphlint } from '../runner.js'
+
+const ROOT_DESCRIPTION =
+  'Project root directory whose .graphlint/config.json is read or updated. Defaults to the session working directory. ' +
+  'Only pass the working directory itself or one of its subdirectories.'
+
+interface ConfigArgs {
+  action?: string
+  key?: string
+  value?: string
+  root_dir?: string
+}
+
+const LIMITS = { doneCapMs: 25_000, graceMs: 10_000 }
+
+export function registerConfigTool(ctx: PluginContext): void {
+  ctx.tools.register(
+    defineTool({
+      name: 'graphlint_config',
+      description:
+        'Read or update the project .graphlint/config.json via the graphlint CLI (runs `graphlint config` with the ' +
+        'project root as its working directory). ' +
+        ROOT_DESCRIPTION,
+      parameters: {
+        action: {
+          type: 'string',
+          description: 'show: display the full effective config; get: read one key; set: write one key/value pair.',
+        },
+        key: { type: 'string', description: 'Config key, required for get/set.' },
+        value: {
+          type: 'string',
+          description: 'New value for set (pass lists/objects as compact JSON text).',
+        },
+        root_dir: { type: 'string', description: ROOT_DESCRIPTION },
+      },
+      output: {
+        schema: { type: 'object', additionalProperties: true },
+        render(_args, value: unknown) {
+          const v = value as { error?: string; ok?: boolean; stdout?: string; stderr?: string } | null
+          if (v && typeof v.error === 'string') return [{ type: 'text', text: `[graphlint] error: ${v.error}` }]
+          const stdout = v && typeof v.stdout === 'string' ? v.stdout : ''
+          const stderr = v && typeof v.stderr === 'string' ? v.stderr : ''
+          return [{ type: 'text', text: stdout || stderr || '[graphlint] config ok' }]
+        },
+      },
+      timeoutMs: 30_000,
+      async execute(args, exec): Promise<Record<string, JsonValue>> {
+        const typed = (args ?? {}) as ConfigArgs
+        const action: ConfigAction = typed.action === 'get' || typed.action === 'set' ? typed.action : 'show'
+        const sessionRoot = sessionCwd(exec as ToolExecutionLike | undefined)
+        let rootDir: string
+        try {
+          rootDir = guardRoot(typed.root_dir, sessionRoot)
+        } catch (err) {
+          return { error: err instanceof Error ? err.message : String(err) }
+        }
+        const exe = await resolveGraphlint(ctx.subprocess, ctx.fs, rootDir)
+        if (!exe) return { error: 'graphlint CLI not found. Install with: pip install graphlint' }
+        const out = await runGraphlint(
+          ctx.subprocess,
+          ctx.timer,
+          configArgv(exe, action, typed.key, typed.value),
+          rootDir,
+          LIMITS,
+          (exec as ToolExecutionLike | undefined)?.signal,
+        )
+        if (out.timedOut) return { error: `graphlint config timed out after ${LIMITS.doneCapMs}ms.` }
+        return {
+          ok: out.exitCode === 0,
+          exit_code: out.exitCode,
+          stdout: out.stdout.slice(0, 4000),
+          stderr: out.stderr.slice(0, 1000),
+        }
+      },
+    }),
+  )
+}
