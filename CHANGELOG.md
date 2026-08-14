@@ -5,15 +5,16 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 
 ### Added
-- **DeepSeek Harness plugin bundle** (`integrations/dsh`; npm package name
-  `@angeloszou/dsh-graphlint`, **not yet published — repository installation
-  only**): three agent tools — `graphlint_query` (dependency-graph queries
-  with structured results), `graphlint_build` (index build as a background
-  job polled via `job_output`), and `graphlint_config` (show/get/set for
-  `.graphlint/config.json`) — plus a `graphlint` skill with usage guidance.
+- **DeepSeek Harness plugin bundle** (`integrations/dsh`; npm package
+  `dsh-graphlint`): three agent tools — `graphlint_query`
+  (dependency-graph queries with structured results), `graphlint_build`
+  (index build as a background job polled via `job_output`), and
+  `graphlint_config` (show/get/set for `.graphlint/config.json`) — plus a
+  `graphlint` skill with usage guidance. Install with
+  `dsh plugin --profile web add dsh-graphlint`.
   Tools default to the session working directory, hard-refuse roots outside
   it, wire the tool-call abort signal into the spawned process, and cap every
-  wait phase. npm installation will follow in a later release.
+  wait phase.
 
 ## [0.4.1] - 2026-08-13
 

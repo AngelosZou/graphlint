@@ -5,4 +5,4 @@
 # cordis.patch.yml) can address it by id with the last write winning.
 - insert:
     - id: dsh-graphlint
-      name: '@angeloszou/dsh-graphlint'
+      name: 'dsh-graphlint'

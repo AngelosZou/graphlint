@@ -88,7 +88,13 @@ graphlint uninstall
 - **Skill** — 随附 `graphlint` skill，教 Agent 何时及如何使用这些工具。
 - **安全设计** — 工具默认使用会话工作目录，并硬性拒绝工作目录之外的任何根目录，避免误扫高层目录导致长时间阻塞。
 
-插件包将于最近的更新中发布至 npm，当前可通过克隆仓库手动安装：
+插件包已发布至 npm，可直接安装：
+
+```bash
+dsh plugin --profile web add dsh-graphlint
+```
+
+随后重启 `dsh web`。如需链接本地开发版本：
 
 ```bash
 # 1. 克隆仓库并构建 bundle（需要 Node.js >= 20）

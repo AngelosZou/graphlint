@@ -1,4 +1,4 @@
-# @angeloszou/dsh-graphlint
+# dsh-graphlint
 
 DeepSeek Harness plugin bundle for [graphlint](https://github.com/AngelosZou/graphlint) —
 dead-code detection for AI-generated codebases.
@@ -16,8 +16,17 @@ skill describing when and how to use them.
 
 ## Install
 
-The bundle is not yet published to npm — repository installation is the
-only method for now:
+Install the published bundle into a DeepSeek Harness profile:
+
+```bash
+dsh plugin --profile web add dsh-graphlint
+```
+
+Then restart the profile (and refresh the browser page). The bundle's patch
+layer inserts the plugin row at the profile root; you can address it by id
+`dsh-graphlint` in your own `cordis.patch.yml` (e.g. to disable it per profile).
+
+Development / repository install (linking a local checkout):
 
 ```bash
 # 1. Clone the repository and build the bundle
@@ -32,12 +41,6 @@ dsh plugin --profile web add link:./integrations/dsh
 
 # 3. Restart dsh web
 ```
-
-Then restart the profile. The bundle's patch layer inserts the plugin row at the
-profile root; you can address it by id `dsh-graphlint` in your own
-`cordis.patch.yml` (e.g. to disable it per profile).
-
-npm publication is planned for a follow-up release.
 
 ## Tools
 

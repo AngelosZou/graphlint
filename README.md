@@ -88,7 +88,13 @@ A plugin bundle for the [DeepSeek Harness](https://github.com/deepseek-ai/deepse
 - **Skill** — a `graphlint` skill teaches the agent when and how to use the tools.
 - **Safety** — tools default to the session working directory and hard-refuse any root outside it, so an accidental high-level scan cannot block a turn.
 
-The bundle is not yet published to npm — the only installation method for now is from the repository:
+Install the bundle from npm:
+
+```bash
+dsh plugin --profile web add dsh-graphlint
+```
+
+Then restart `dsh web`. To link a local checkout instead (development):
 
 ```bash
 # 1. Clone the repository and build the bundle (requires Node.js >= 20)

@@ -4,7 +4,7 @@
  * attribute resources to this plugin. No runtime invariant is installed.
  */
 
-const PACKAGE_NAME = '@angeloszou/dsh-graphlint'
+const PACKAGE_NAME = 'dsh-graphlint'
 
 export const name = 'dsh-graphlint-invariant'
 
