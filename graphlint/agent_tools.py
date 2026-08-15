@@ -323,26 +323,25 @@ SKILL_TARGETS: dict[str, str] = {
     "claude": "~/.claude/skills/graphlint/SKILL.md",
 }
 
-_SKILL_MSG_FALLBACKS: dict[str, str] = {
-    "cli.install.skill.installed": "✓ Installed graphlint skill v{version} -> {path}",
-    "cli.install.skill.updated": "✓ Updated graphlint skill v{old} -> v{new} at {path}",
-    "cli.install.skill.uptodate": "- graphlint skill already up to date at {path}",
-    "cli.install.skill.failed": "✗ Failed to write {path}",
-    "cli.install.dsh.not_found": "dsh CLI not found on PATH. Install the DeepSeek Harness first, then retry.",
-    "cli.install.dsh.local_missing": "Local integrations/dsh not found at {path}. Run from the graphlint repository root or pass --local PATH.",
-    "cli.install.dsh.done": "✓ dsh-graphlint plugin added to profile '{profile}'. Restart dsh web and refresh the browser page.",
-    "cli.install.dsh.failed": "✗ dsh plugin install failed.",
-    "cli.uninstall.skill.removed": "✓ Removed graphlint skill from {path}",
-    "cli.uninstall.skill.not_found": "- No graphlint skill found at {path}",
-    "cli.uninstall.skill.foreign": "- {path} exists but was not installed by graphlint — skipped",
-}
+# English translator used when callers (e.g. the Python API) do not pass _t.
+# Built lazily from the i18n table so user-facing text has a single source.
+_EN_T = None
+
+
+def _fallback_t():
+    """Return the English translator from the i18n table (built lazily)."""
+    global _EN_T
+    if _EN_T is None:
+        from graphlint.i18n import I18nManager
+
+        _EN_T = I18nManager("en").t
+    return _EN_T
 
 
 def _skill_msg(_t, key: str, **kwargs: str) -> str:
-    """Format a skill message via i18n when available, else the English fallback."""
-    if _t is not None:
-        return _t(key, **kwargs)
-    return _SKILL_MSG_FALLBACKS.get(key, key).format(**kwargs)
+    """Format a skill message via i18n; defaults to the English table when no translator is given."""
+    translator = _t if _t is not None else _fallback_t()
+    return translator(key, **kwargs)
 
 
 def _resolve_skill_targets(raw: Optional[str]) -> List[Tuple[str, str]]:
@@ -491,7 +490,10 @@ def install_dsh(profile: Optional[str] = None, local=None, _t=None) -> str:
     *local* is None (npm package), True (link ./integrations/dsh from cwd),
     or an explicit path to a local integrations/dsh checkout.
     """
-    dsh = shutil.which("dsh")
+    # shutil.which accepts PathLike only from Python 3.12 on Windows (earlier
+    # versions would fail or return None); os.fspath normalizes to str so the
+    # lookup stays correct on the whole supported range (Python >= 3.9).
+    dsh = shutil.which(os.fspath("dsh"))
     if not dsh:
         return _skill_msg(_t, "cli.install.dsh.not_found")
 

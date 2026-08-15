@@ -223,7 +223,7 @@ def _run_install(args: argparse.Namespace, i18n: I18nManager) -> str:
     action = getattr(args, "install_action", None)
 
     if action == "prompt":
-        # Legacy behavior: inject the prompt block into agent config files.
+        # Prompt injection into agent config files.
         from graphlint.agent_tools import install_tools
 
         result = install_tools(_t=i18n.t)
@@ -261,7 +261,7 @@ def _run_uninstall(args: argparse.Namespace, i18n: I18nManager) -> str:
     action = getattr(args, "uninstall_action", None)
 
     if action == "prompt":
-        # Legacy behavior: remove the prompt block from agent config files.
+        # Remove the prompt block from agent config files.
         from graphlint.agent_tools import uninstall_tools
 
         return uninstall_tools(_t=i18n.t)

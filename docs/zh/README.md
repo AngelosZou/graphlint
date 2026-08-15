@@ -66,14 +66,14 @@ pip install graphlint[csharp]
 Graphlint 将使用指南安装到 AI 编码工具的**全局配置**中：
 
 ```bash
-# 安装 graphlint skill（~/.agents/skills/graphlint/SKILL.md）—— 默认行为
+# 安装 graphlint skill（~/.agents/skills/graphlint/SKILL.md）—— 默认行为，推荐
 graphlint install
 graphlint install --targets all      # 同时安装到 ~/.claude/skills/graphlint/SKILL.md
 
-# 安装 DeepSeek Harness 插件（原生工具 + skill）
+# 安装 DeepSeek Harness 插件（DSH 环境推荐 —— 工具化集成）
 graphlint install dsh --profile web
 
-# 旧行为：将提示词注入 Agent 配置文件（opencode, cursor, codex, cc）
+# 将提示词注入 Agent 配置文件（opencode, cursor, codex, cc）
 graphlint install prompt
 
 # 将提示词复制到粘贴板，供手动粘贴到 Agent

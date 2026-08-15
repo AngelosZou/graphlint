@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Tests for agent tool installation — skills, legacy prompts, DSH plugin."""
+"""Tests for agent tool installation — skills, prompt injection, DSH plugin."""
 
 from __future__ import annotations
 
@@ -220,12 +220,37 @@ def test_install_dsh_failure_includes_stderr(fake_dsh, monkeypatch) -> None:
     assert "boom" in result
 
 
+def test_skill_msg_fallback_uses_i18n_table() -> None:
+    """Without a translator, messages come from the i18n English table (single source)."""
+    from graphlint.i18n import I18nManager
+
+    expected = I18nManager("en").t(
+        "cli.install.skill.installed", version=__version__, path="X"
+    )
+    actual = agent_tools._skill_msg(
+        None, "cli.install.skill.installed", version=__version__, path="X"
+    )
+    assert actual == expected
+    assert "Installed" in actual
+
+
+def test_skill_msg_prefers_provided_translator() -> None:
+    """An explicit translator wins over the English fallback."""
+    result = agent_tools._skill_msg(
+        lambda key, **kw: f"zh:{key}",
+        "cli.install.skill.installed",
+        version=__version__,
+        path="X",
+    )
+    assert result == "zh:cli.install.skill.installed"
+
+
 # ---------------------------------------------------------------------------
-# Legacy prompt install still works
+# Prompt injection (install prompt / uninstall prompt)
 # ---------------------------------------------------------------------------
 
 
-def test_legacy_prompt_block_roundtrip(fake_home) -> None:
+def test_prompt_block_roundtrip(fake_home) -> None:
     """The prompt injection path (install prompt) writes/removes marker blocks."""
     path = _skill_path(fake_home, "AGENTS.md")
     status = agent_tools._write_prompt(path)

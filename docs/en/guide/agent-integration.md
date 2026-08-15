@@ -2,11 +2,11 @@
 
 Graphlint supports three installation channels for AI coding agents:
 
-1. **Skill install (default)** — writes the canonical skill document as `SKILL.md` into the emerging cross-agent skill directories. This is the recommended path: it does not touch your agent's own config files, and works with any agent that reads the `~/.agents/skills` convention.
-2. **Prompt injection (legacy)** — injects the prompt block into agent config files (`AGENTS.md`, `CLAUDE.md`, …). Still available as `install prompt`.
-3. **DeepSeek Harness plugin** — installs the `dsh-graphlint` bundle (native tools + skill) into a DSH profile.
+1. **Skill install (default, recommended)** — writes the canonical skill document as `SKILL.md` into the emerging cross-agent skill directories. It does not touch your agent's own config files, and works with any agent that reads the `~/.agents/skills` convention.
+2. **DeepSeek Harness plugin (recommended in DSH)** — installs the `dsh-graphlint` bundle (native tools + skill) into a DSH profile. The tool-based integration is more robust than a skill file alone: structured results, background job builds, and working-directory guards.
+3. **Prompt injection** — injects the prompt block into agent config files (`AGENTS.md`, `CLAUDE.md`, …). Available as `install prompt`.
 
-## Install the Skill (default)
+## Install the Skill (default, recommended)
 
 ```bash
 graphlint install
@@ -32,7 +32,7 @@ Re-running `install` reports `up to date` or upgrades an older installed version
 | **Examples** | Refactor check, dead code by severity, graph detail, CI gate |
 | **Limitations** | Static analysis only (dynamic references), full-build time cost |
 
-## Install the DeepSeek Harness Plugin
+## Install the DeepSeek Harness Plugin (recommended in DSH)
 
 ```bash
 graphlint install dsh --profile web
@@ -40,7 +40,9 @@ graphlint install dsh --profile web
 
 Runs `dsh plugin --profile web add dsh-graphlint`. Use `--local [PATH]` to link a local `integrations/dsh` checkout instead of the npm package (defaults to `./integrations/dsh` from the repository root). Restart `dsh web` and refresh the browser page afterwards.
 
-## Install the Prompt (legacy)
+In the DSH environment the plugin's tools (`graphlint_query` / `graphlint_build` / `graphlint_config`) are the primary interface: they run inside the session working directory, return structured results, and refuse unsafe roots — the plugin registers its own `graphlint` skill alongside the tools, kept separate from the file-based `SKILL.md` install.
+
+## Install the Prompt
 
 ```bash
 graphlint install prompt
@@ -73,7 +75,7 @@ graphlint uninstall --targets all
 graphlint uninstall prompt       # remove injected prompt blocks
 ```
 
-`uninstall` removes the `SKILL.md` written by graphlint (and its directory when empty); foreign files with the same path are left untouched. `uninstall prompt` scans the legacy config paths for the marker block and removes it interactively.
+`uninstall` removes the `SKILL.md` written by graphlint (and its directory when empty); foreign files with the same path are left untouched. `uninstall prompt` scans the agent config paths for the marker block and removes it interactively.
 
 ## Single Content Source
 

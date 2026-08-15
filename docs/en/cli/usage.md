@@ -91,11 +91,11 @@ Installs graphlint support for AI coding agents. Without a subcommand, the **ski
 ### Usage
 
 ```bash
-graphlint install                        # skill (default)
+graphlint install                        # skill (default, recommended)
 graphlint install skill --targets agents # ~/.agents/skills/graphlint/SKILL.md
 graphlint install skill --targets all    # agents + claude directories
-graphlint install dsh --profile web      # dsh plugin add dsh-graphlint
-graphlint install prompt                 # legacy prompt injection
+graphlint install dsh --profile web      # dsh plugin add dsh-graphlint (recommended in DSH)
+graphlint install prompt                 # prompt injection into agent config files
 ```
 
 `install skill` writes the canonical `graphlint/skill.md` (with a `version` frontmatter field) and reports `installed` / `updated` / `up to date` on re-runs. `install dsh` requires the `dsh` CLI on PATH; `--local [PATH]` links a local `integrations/dsh` checkout. See [Agent Integration](../guide/agent-integration.md).
@@ -109,10 +109,10 @@ Removes previously installed graphlint skills or prompt blocks.
 ```bash
 graphlint uninstall                        # skill (default)
 graphlint uninstall skill --targets all
-graphlint uninstall prompt                 # legacy prompt removal
+graphlint uninstall prompt                 # prompt-block removal
 ```
 
-`uninstall` removes only the `SKILL.md` files written by graphlint (foreign files at the same path are left untouched); `uninstall prompt` scans the legacy config paths for marker blocks and removes them interactively.
+`uninstall` removes only the `SKILL.md` files written by graphlint (foreign files at the same path are left untouched); `uninstall prompt` scans the agent config paths for marker blocks and removes them interactively.
 
 ## prompt — Copy Prompt to Clipboard
 

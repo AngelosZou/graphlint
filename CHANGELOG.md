@@ -12,7 +12,7 @@ All notable changes to this project will be documented in this file.
   update tracking (`installed` / `updated` / `up to date`). `graphlint
   uninstall` removes only graphlint-written `SKILL.md` files (foreign files at
   the same path are left untouched). The previous prompt injection remains
-  available as `graphlint install prompt` / `uninstall prompt` (legacy).
+  available as `graphlint install prompt` / `uninstall prompt`.
 - **DeepSeek Harness plugin auto-install**: `graphlint install dsh
   [--profile NAME] [--local [PATH]]` runs `dsh plugin add dsh-graphlint` (or
   links a local `integrations/dsh` checkout).

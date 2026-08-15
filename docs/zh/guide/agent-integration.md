@@ -2,11 +2,11 @@
 
 Graphlint 为 AI 编码 Agent 提供三种安装渠道：
 
-1. **Skill 安装（默认）** — 将规范 skill 文档以 `SKILL.md` 形式写入新兴的跨 Agent skill 目录。推荐路径：不修改 Agent 自身的配置文件，兼容所有读取 `~/.agents/skills` 约定的 Agent。
-2. **提示词注入（旧行为）** — 将提示词块注入 Agent 配置文件（`AGENTS.md`、`CLAUDE.md` 等）。仍可通过 `install prompt` 使用。
-3. **DeepSeek Harness 插件** — 将 `dsh-graphlint` bundle（原生工具 + skill）安装到 DSH profile。
+1. **Skill 安装（默认，推荐）** — 将规范 skill 文档以 `SKILL.md` 形式写入新兴的跨 Agent skill 目录。不修改 Agent 自身的配置文件，兼容所有读取 `~/.agents/skills` 约定的 Agent。
+2. **DeepSeek Harness 插件（DSH 环境推荐）** — 将 `dsh-graphlint` bundle（原生工具 + skill）安装到 DSH profile。工具化集成比单纯的 skill 文件更稳健：结构化结果、后台任务构建、工作目录守卫。
+3. **提示词注入** — 将提示词块注入 Agent 配置文件（`AGENTS.md`、`CLAUDE.md` 等）。通过 `install prompt` 使用。
 
-## 安装 Skill（默认）
+## 安装 Skill（默认，推荐）
 
 ```bash
 graphlint install
@@ -32,7 +32,7 @@ graphlint install
 | **使用示例** | 重构后检查、按严重度排序死代码、图详情、CI 门禁 |
 | **局限性** | 仅静态分析（动态引用盲区）、全量构建耗时 |
 
-## 安装 DeepSeek Harness 插件
+## 安装 DeepSeek Harness 插件（DSH 环境推荐）
 
 ```bash
 graphlint install dsh --profile web
@@ -40,7 +40,9 @@ graphlint install dsh --profile web
 
 等价于 `dsh plugin --profile web add dsh-graphlint`。使用 `--local [PATH]` 可链接本地 `integrations/dsh` 仓库而非 npm 包（默认取仓库根目录下的 `./integrations/dsh`）。完成后请重启 `dsh web` 并刷新浏览器页面。
 
-## 安装提示词（旧行为）
+在 DSH 环境中，插件工具（`graphlint_query` / `graphlint_build` / `graphlint_config`）是主要接口：它们在会话工作目录内运行、返回结构化结果、拒绝不安全的根目录 — 插件在工具旁注册自己的 `graphlint` skill，与基于文件的 `SKILL.md` 安装相互独立。
+
+## 安装提示词
 
 ```bash
 graphlint install prompt
@@ -73,7 +75,7 @@ graphlint uninstall --targets all
 graphlint uninstall prompt       # 移除注入的提示词块
 ```
 
-`uninstall` 移除 graphlint 写入的 `SKILL.md`（目录为空时一并删除）；同路径下非 graphlint 安装的文件会被跳过。`uninstall prompt` 扫描旧配置文件中的标记块并交互式移除。
+`uninstall` 移除 graphlint 写入的 `SKILL.md`（目录为空时一并删除）；同路径下非 graphlint 安装的文件会被跳过。`uninstall prompt` 扫描 Agent 配置文件中的标记块并交互式移除。
 
 ## 单一内容源
 

@@ -66,14 +66,14 @@ pip install graphlint[csharp]
 Graphlint installs its usage guidance into your AI coding tools at the **global level**:
 
 ```bash
-# Install the graphlint skill (~/.agents/skills/graphlint/SKILL.md) — default
+# Install the graphlint skill (~/.agents/skills/graphlint/SKILL.md) — default, recommended
 graphlint install
 graphlint install --targets all      # also ~/.claude/skills/graphlint/SKILL.md
 
-# Install the DeepSeek Harness plugin (native tools + skill)
+# Install the DeepSeek Harness plugin (recommended in DSH — tool-based integration)
 graphlint install dsh --profile web
 
-# Legacy: inject the prompt into agent config files (opencode, cursor, codex, cc)
+# Inject the prompt into agent config files (opencode, cursor, codex, cc)
 graphlint install prompt
 
 # Copy the prompt to clipboard for manual paste into your agent

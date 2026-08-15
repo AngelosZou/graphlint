@@ -91,11 +91,11 @@ graphlint query --json --fail-on dead_code,circular_ref || exit 1
 ### 用法
 
 ```bash
-graphlint install                        # skill（默认）
+graphlint install                        # skill（默认，推荐）
 graphlint install skill --targets agents # ~/.agents/skills/graphlint/SKILL.md
 graphlint install skill --targets all    # agents + claude 两个目录
-graphlint install dsh --profile web      # dsh plugin add dsh-graphlint
-graphlint install prompt                 # 旧式提示词注入
+graphlint install dsh --profile web      # dsh plugin add dsh-graphlint（DSH 环境推荐）
+graphlint install prompt                 # 提示词注入到 Agent 配置文件
 ```
 
 `install skill` 原样写入规范 `graphlint/skill.md`（附加 `version` frontmatter 字段），重复运行会报告 installed / updated / up to date。`install dsh` 要求 PATH 上有 `dsh` CLI；`--local [PATH]` 可链接本地 `integrations/dsh` 仓库。详见 [Agent 集成](../guide/agent-integration.md)。
@@ -109,10 +109,10 @@ graphlint install prompt                 # 旧式提示词注入
 ```bash
 graphlint uninstall                        # skill（默认）
 graphlint uninstall skill --targets all
-graphlint uninstall prompt                 # 移除旧式提示词
+graphlint uninstall prompt                 # 移除提示词块
 ```
 
-`uninstall` 只移除 graphlint 写入的 `SKILL.md`（同路径下非 graphlint 安装的文件会被跳过）；`uninstall prompt` 扫描旧配置文件中的标记块并交互式移除。
+`uninstall` 只移除 graphlint 写入的 `SKILL.md`（同路径下非 graphlint 安装的文件会被跳过）；`uninstall prompt` 扫描 Agent 配置文件中的标记块并交互式移除。
 
 ## prompt — 复制提示词到粘贴板
 
