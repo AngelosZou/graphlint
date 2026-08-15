@@ -1838,9 +1838,11 @@ class CSharpVisitor:
         use_info = self.import_analyzer.analyze_using(node)
         if use_info:
             self.uses.append(use_info)
-            for n in use_info.imported_names:
-                if n != "*":
-                    self.name_usages.add(n)
+            # Note: type-resolution logic elsewhere records real identifier
+            # uses into self.name_usages.  We deliberately do NOT add the
+            # alias/imported names here — declaring ``using Timer = …`` is a
+            # directive, not a use of ``Timer``; pre-seeding name_usages
+            # would mask genuinely unused aliases.
 
     # ------------------------------------------------------------------
     # Write / Read ref helpers
