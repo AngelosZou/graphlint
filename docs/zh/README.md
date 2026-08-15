@@ -76,7 +76,7 @@ graphlint prompt
 graphlint uninstall
 ```
 
-运行 `graphlint install` 并选择你使用的工具 — 提示词（使用场景、核心命令、关键参数）将被添加到全局配置中。详见 [Agent 集成](guide/agent-integration.md)。
+运行 `graphlint install` 并选择你使用的工具 — 提示词（使用场景、核心命令、关键参数）将被添加到全局配置中。提示词文本派生自随包发布的规范 skill 文档（`graphlint/skill.md`），与 DeepSeek Harness 插件中 `graphlint` skill 内嵌的内容同源。详见 [Agent 集成](guide/agent-integration.md)。
 
 如果你的 Agent 工具未在 install 中列出，可以运行 `graphlint prompt` 将提示词复制到剪贴板并手动提供给 Agent。对于希望添加原生支持的 Agent，欢迎提交 [issue](https://github.com/AngelosZou/graphlint/issues) —— 这类需求通常会被快速响应。
 

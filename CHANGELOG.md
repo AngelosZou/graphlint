@@ -16,6 +16,21 @@ All notable changes to this project will be documented in this file.
   it, wire the tool-call abort signal into the spawned process, and cap every
   wait phase.
 
+### Changed
+- **Agent prompt single-sourced and refreshed**: the canonical skill document
+  now lives in `graphlint/skill.md` (shipped as package data, YAML frontmatter
+  included). `graphlint install` / `graphlint prompt` derive their text from it
+  with the frontmatter stripped, and the DSH plugin embeds the same body at
+  build time (`scripts/generate-skill.mjs` → `src/skill-content.generated.ts`),
+  guarded by a byte-identical sync test on both sides. Content rewritten to
+  match the current CLI and kept deliberately concise: Python/Rust/C# support,
+  the full warn-type set, `--reachability`, `--public-as-entry`,
+  `--dead-code-tests`, `--fail-on`, build `-P/--parallel`, guidance to prefer
+  `query` (automatic incremental build) over `build --force`, custom
+  entry-rule config (`add-entry-rule`/`remove-entry-rule`/`add-exclude`),
+  usage examples, and the static-analysis/build-cost limitations. The stale
+  `.graphlint/agent-prompt.md` documentation claims were removed.
+
 ## [0.4.1] - 2026-08-13
 
 ### Fixed

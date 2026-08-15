@@ -94,7 +94,7 @@ Install graphlint's usage prompt into AI coding tools at the **global level**, s
 graphlint install
 ```
 
-Runs an interactive selector; pick one or more tools (opencode → `~/.config/opencode/AGENTS.md`, cursor → `~/.cursorrules`, codex → `~/.codex/rules/graphlint.md`, cc → `~/.claude/CLAUDE.md`). See [Agent Integration](../guide/agent-integration.md).
+Runs an interactive selector; pick one or more tools (opencode → `~/.config/opencode/AGENTS.md`, cursor → `~/.cursorrules`, codex → `~/.codex/rules/graphlint.md`, cc → `~/.claude/CLAUDE.md`). The installed text derives from the canonical skill document shipped in the package (`graphlint/skill.md`, frontmatter stripped). See [Agent Integration](../guide/agent-integration.md).
 
 ## uninstall — Remove Agent Prompt
 

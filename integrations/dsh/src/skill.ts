@@ -1,4 +1,17 @@
 import type { PluginContext, SkillRegistration } from './types.js'
+import { SKILL_BODY } from './skill-content.generated.js'
+
+// The canonical skill body is embedded at build time from graphlint/skill.md
+// (see scripts/generate-skill.mjs and test/skill-sync.test.ts); the
+// DSH-specific tool mapping below is the only plugin-local content.
+
+const DSH_TOOLS = `## Tools in this environment
+- \`graphlint_query\` — runs \`graphlint query\` with structured results. Auto-rebuilds the index incrementally on first use; prefer it over an explicit build.
+- \`graphlint_build\` — \`graphlint build\` as a **background job** (poll with \`job_output\`). Use only when query results look wrong or stale.
+- \`graphlint_config\` — \`graphlint config\` operations: show/get/set the project's \`.graphlint/config.json\`, add/remove custom entry rules and excludes.
+
+Tool parameters mirror the CLI flags above (\`root_dir\`, \`warn_types\`, \`include_tests\`, \`graph_id\`, \`public_as_entry\`, \`force\`). \`root_dir\` must stay inside the session working directory (the default) — scanning a high-level root can block for minutes.
+`
 
 const GRAPHLINT_SKILL: SkillRegistration = {
   name: 'graphlint',
@@ -6,25 +19,7 @@ const GRAPHLINT_SKILL: SkillRegistration = {
   whenToUse:
     'After code modifications, or before analyzing a codebase, to find dead code, circular references, unused imports and other warnings.',
   invocation: { modelInvocable: true, userInvocable: true },
-  content: `# graphlint — dead code detection
-
-## When to use
-- After code modifications: check whether your edits left dead or redundant code (components unreachable from any entry point).
-- Before analyzing a codebase: understand whether a feature is well integrated.
-
-## Tools
-- graphlint_query — query the dependency graph (fast incremental mode; auto-rebuilds the index when files changed).
-- graphlint_build (force: true) — full index rebuild as a background job; poll with job_output. Only needed for a fresh checkout or after many changes.
-- graphlint_config — show/get/set the project's .graphlint/config.json, e.g. add custom entry rules matching framework conventions.
-
-## Key parameters (graphlint_query)
-- root_dir — project root. MUST stay inside the session working directory (the default). Scanning a high-level root builds a huge index and can block for many minutes.
-- warn_types — comma-separated filter, e.g. dead_code, circular_ref, unused_import.
-- include_tests / public_as_entry / graph_id.
-
-## Limitations
-Static analysis only: dynamic references (getattr, importlib, reflection, DI containers) can produce false positives. Mitigate by adding custom entry rules for your conventions via graphlint_config.
-`,
+  content: SKILL_BODY + DSH_TOOLS,
 }
 
 export function registerGraphlintSkill(ctx: PluginContext): void {

@@ -10,55 +10,42 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+from importlib import resources
 from typing import List, Optional, Tuple
 
 from graphlint import __version__
 
-AGENT_PROMPT = """# graphlint — Dead Code Detection for Python
+# ---------------------------------------------------------------------------
+# Canonical skill document
+# ---------------------------------------------------------------------------
+# The agent-facing usage guidance lives in a single file — graphlint/skill.md —
+# shipped as package data.  AGENT_PROMPT (used by `graphlint install` and
+# `graphlint prompt`) is that file with its YAML frontmatter stripped, so the
+# prompt, the DSH skill and future SKILL.md installs can never drift apart.
 
-## When to Use It
-- **After code modifications**: **Always** use graphlint check if your edits left behind dead or redundant code — components no longer reachable from any entry point
-- **Before analyzing a codebase**: **Always** use graphlint to understand whether a feature is well integrated in the codebase.
-- If you are unable to use the CLI, you should declare that you can not use graphlint for dead code detect.
+SKILL_FILENAME = "skill.md"
 
-## Quick Commands
-```bash
-graphlint build --force              # Build/rebuild index (Full codebase scan, time consuming for large codebase)
-graphlint query                      # List dependency graphs (recommanded, auto incremental rebuild)
-graphlint query --json               # JSON output
-graphlint query -g <id> --detail full  # Full detail on one graph
-graphlint config show                # View current config
-```
 
-Use the -h option in each command to query detailed instructions (use only when necessary).
+def load_skill_markdown() -> str:
+    """Return the canonical skill.md content shipped with the package."""
+    return (
+        resources.files("graphlint")
+        .joinpath(SKILL_FILENAME)
+        .read_text(encoding="utf-8")
+    )
 
-## Key Parameters
-- `-g, --graph-id <int>` — Inspect a specific dependency graph
-- `--json, -j` — Structured output (JSON)
-- `-w, --warn-types <str>` — Filter: `dead_code`, `circular_ref`, `unused_import`
-- `-t, --include-tests` — Include test files in analysis
-- `-d, --detail <level>` — Detail: `auto`/`summary`/`full`/`minimal`
-- `-r, --root-dir <path>` — Project root directory
-- `-C, --exclude-clean` — Show only graphs with issues
-- `-f, --force` — Force full index rebuild
-- `--sort-by <field>` — Sort: `warnings`/`nodes`/`edges`/`name`
 
-## Usage Examples
-```bash
-# Check for dead code after a refactor
-graphlint query --json
+def skill_body() -> str:
+    """Return the canonical skill markdown with its YAML frontmatter stripped."""
+    text = load_skill_markdown()
+    if text.startswith("---"):
+        end = text.find("\n---", 3)
+        if end != -1:
+            text = text[end + 4:].lstrip("\r\n")
+    return text.strip() + "\n"
 
-# Inspect a specific component's connections
-graphlint query -g 5 -d full
 
-# Scan all warnings sorted by severity
-graphlint query -C --sort-by warnings --json
-```
-
-## Limitations
-- **Static analysis only** — graphlint cannot detect runtime linkage (`getattr`, `importlib`, etc.) or dynamic dispatch patterns. May cause false positives. Mitigation: add custom entry rules matching your codebase's conventions. For example, graphlint's own codebase uses `function_def:_detect_*` and `function_def:visit_*` patterns to prevent functions discovered via `getattr` from being flagged as dead.
-- **Large codebase build time** — a full rebuild on 700+ `.py` files / 1,000+ classes / 14,000+ functions takes ~200s (hardware-dependent). Small codebases (~60 files) complete in ~1s. Best practice: run `query` before making changes to plan, and avoid invoking `query` during refactoring to prevent unnecessary index rebuilds.\
-"""
+AGENT_PROMPT = skill_body()
 
 MARKER_START = "<!-- graphlint:start -->"
 MARKER_END = "<!-- graphlint:end -->"

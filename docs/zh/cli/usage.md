@@ -94,7 +94,7 @@ graphlint query --json --fail-on dead_code,circular_ref || exit 1
 graphlint install
 ```
 
-运行交互式选择器，选择一个或多个工具（opencode → `~/.config/opencode/AGENTS.md`、cursor → `~/.cursorrules`、codex → `~/.codex/rules/graphlint.md`、cc → `~/.claude/CLAUDE.md`）。详见 [Agent 集成](../guide/agent-integration.md)。
+运行交互式选择器，选择一个或多个工具（opencode → `~/.config/opencode/AGENTS.md`、cursor → `~/.cursorrules`、codex → `~/.codex/rules/graphlint.md`、cc → `~/.claude/CLAUDE.md`）。安装的文本派生自随包发布的规范 skill 文档（`graphlint/skill.md`，去除 frontmatter）。详见 [Agent 集成](../guide/agent-integration.md)。
 
 ## uninstall — 卸载 Agent 提示词
 

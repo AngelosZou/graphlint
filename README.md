@@ -76,7 +76,7 @@ graphlint prompt
 graphlint uninstall
 ```
 
-Run `graphlint install` and select the tools you use — the prompt (usage scenarios, essential commands, and parameters) will be added to their global configuration. For details, see [Agent Integration](docs/en/guide/agent-integration.md).
+Run `graphlint install` and select the tools you use — the prompt (usage scenarios, essential commands, and parameters) will be added to their global configuration. The prompt text derives from the canonical skill document shipped in the package (`graphlint/skill.md`) — the same content the DeepSeek Harness plugin's `graphlint` skill embeds. For details, see [Agent Integration](docs/en/guide/agent-integration.md).
 
 If your agent tool is not listed in `install`, run `graphlint prompt` to copy the prompt to your clipboard and provide it to your agent manually. For tools you'd like native support for, feel free to submit an [issue](https://github.com/AngelosZou/graphlint/issues) — these requests are typically handled quickly.
 

@@ -39,14 +39,16 @@ Enter numbers separated by comma (e.g. 1,3) or 'all':
 
 ### 安装内容
 
-提示词仅包含 Agent 所需信息，无任何冗余：
+提示词刻意保持简洁，只涵盖用途最广的核心内容：
 
 | 部分 | 内容 |
 |------|------|
 | **使用场景** | 何时运行 graphlint — 修改后清理、分析前审计 |
-| **快速命令** | `build`、`query`、`config` — 核心操作 |
-| **关键参数** | `-g`/`--graph-id`、`--json`、`-w`/`--warn-types`、`-t`、`-d`、`-r`、`-C`、`-f`、`--sort-by` |
-| **使用示例** | 死代码检测、图详情、过滤查询、典型工作流 |
+| **核心命令** | `query`（自动增量构建）、`query --json`、`query -g <id>`、`config show`；仅当 query 结果异常时才用 `build --force` |
+| **关键参数** | `-g`/`--graph-id`、`-j`/`--json`、`-w`/`--warn-types`、`-C`、`-R`/`--reachability`、`--public-as-entry`、`-t`、`--dead-code-tests`、`--sort-by`、`--fail-on`、build 的 `-f`/`-P` |
+| **自定义入口规则** | `config add-entry-rule` / `remove-entry-rule` / `add-exclude`，适配项目框架约定 |
+| **使用示例** | 重构后检查、按严重度排序死代码、图详情、CI 门禁 |
+| **局限性** | 仅静态分析（动态引用盲区）、全量构建耗时 |
 
 ## 卸载
 
@@ -58,7 +60,7 @@ graphlint uninstall
 
 ## 提示词文件
 
-规范提示词也存储在项目元数据目录下的 `.graphlint/agent-prompt.md` 中，供手动查看。
+规范 skill 文档随 Python 包一起发布，位于 `graphlint/skill.md`（含 YAML frontmatter）。`install` 与 `prompt` 的文本均由此派生（去除 frontmatter），所有分发渠道共享同一内容源。
 
 ## 支持的 Agent 工具
 
@@ -69,4 +71,4 @@ graphlint uninstall
 | `codex` | Codex CLI | `~/.codex/rules/graphlint.md` |
 | `cc` | Claude Code (CLI) | `~/.claude/CLAUDE.md` |
 
-> **注意：** 这些是**全局**配置路径。如果您希望按项目安装，请手动将 `.graphlint/agent-prompt.md` 中的提示词内容复制到项目本地的配置文件中（如 `AGENTS.md`、`CLAUDE.md`、`.cursorrules`）。
+> **注意：** 这些是**全局**配置路径。如果您希望按项目安装，请将 `graphlint prompt` 输出的提示词（或已安装包中的规范 `graphlint/skill.md`）复制到项目本地的配置文件中（如 `AGENTS.md`、`CLAUDE.md`、`.cursorrules`）。

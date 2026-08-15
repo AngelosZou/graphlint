@@ -66,6 +66,9 @@ graphlint = "graphlint.cli:main"
 [tool.setuptools.packages.find]
 include = ["graphlint*"]
 
+[tool.setuptools.package-data]
+graphlint = ["skill.md"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = ["test_*.py"]

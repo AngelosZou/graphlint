@@ -39,14 +39,16 @@ Select one or more tools. The prompt block is wrapped in HTML comments (`<!-- gr
 
 ### What Gets Installed
 
-The prompt includes only what an agent needs — no fluff:
+The prompt is deliberately concise — only the broadly useful core:
 
 | Section | Content |
 |---------|---------|
 | **Usage scenarios** | When to run graphlint — post-modification cleanup, pre-analysis audit |
-| **Quick commands** | `build`, `query`, `config` — the essential commands |
-| **Key parameters** | `-g`/`--graph-id`, `--json`, `-w`/`--warn-types`, `-t`, `-d`, `-r`, `-C`, `-f`, `--sort-by` |
-| **Examples** | Dead code detection, graph detail, filtered queries, typical workflow |
+| **Core commands** | `query` (auto incremental build), `query --json`, `query -g <id>`, `config show`; `build --force` only when query results look stale |
+| **Key parameters** | `-g`/`--graph-id`, `-j`/`--json`, `-w`/`--warn-types`, `-C`, `-R`/`--reachability`, `--public-as-entry`, `-t`, `--dead-code-tests`, `--sort-by`, `--fail-on`, build `-f`/`-P` |
+| **Custom entry rules** | `config add-entry-rule` / `remove-entry-rule` / `add-exclude` for framework-specific conventions |
+| **Examples** | Refactor check, dead code by severity, graph detail, CI gate |
+| **Limitations** | Static analysis only (dynamic references), full-build time cost |
 
 ## Uninstall
 
@@ -58,7 +60,7 @@ Scans the global config paths for the `graphlint:start`/`graphlint:end` markers 
 
 ## Prompt File
 
-The canonical prompt is also stored at `.graphlint/agent-prompt.md` in each project's metadata directory for manual review.
+The canonical skill document ships inside the Python package as `graphlint/skill.md` (with YAML frontmatter). `install` and `prompt` derive their text from it — the frontmatter is stripped — so every distribution channel shares one source.
 
 ## Supported Tools
 
@@ -69,4 +71,4 @@ The canonical prompt is also stored at `.graphlint/agent-prompt.md` in each proj
 | `codex` | Codex CLI | `~/.codex/rules/graphlint.md` |
 | `cc` | Claude Code (CLI) | `~/.claude/CLAUDE.md` |
 
-> **Note:** These are **global** config paths. If you prefer per-project installation, manually copy the prompt block from `.graphlint/agent-prompt.md` into your project's local config file (e.g., `AGENTS.md`, `CLAUDE.md`, `.cursorrules`).
+> **Note:** These are **global** config paths. If you prefer per-project installation, copy the prompt block from `graphlint prompt` (or the canonical `graphlint/skill.md` in the installed package) into your project's local config file (e.g., `AGENTS.md`, `CLAUDE.md`, `.cursorrules`).
