@@ -1,6 +1,6 @@
 {
   "name": "dsh-graphlint",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "DeepSeek Harness plugin bundle: graphlint dead-code detection tools for agents (graphlint_query / graphlint_build / graphlint_config + graphlint skill).",
   "keywords": [
     "dsh-plugin",
