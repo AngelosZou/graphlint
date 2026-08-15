@@ -20,6 +20,9 @@ Install the published bundle into a DeepSeek Harness profile:
 
 ```bash
 dsh plugin --profile web add dsh-graphlint
+
+# or via the graphlint CLI (requires dsh on PATH):
+graphlint install dsh --profile web
 ```
 
 Then restart the profile (and refresh the browser page). The bundle's patch
@@ -46,9 +49,13 @@ dsh plugin --profile web add link:./integrations/dsh
 
 | Tool | Purpose |
 |------|---------|
-| `graphlint_query` | Query the dependency graph for dead code, circular refs, unused imports, and other warnings. Fast incremental mode; JSON result. |
+| `graphlint_query` | Query the dependency graph for dead code, circular refs, unused imports, and other warnings. Fast incremental mode; JSON result. Common filters: `warn_types`, `graph_id`, `exclude_clean`, `include_tests`, `public_as_entry`. |
 | `graphlint_build` | Full or incremental index rebuild as a **background job** (poll with `job_output`). |
-| `graphlint_config` | `show` / `get` / `set` entries in the project's `.graphlint/config.json`. |
+| `graphlint_config` | `show` / `get` / `set` entries in the project's `.graphlint/config.json`, plus `add-entry-rule` / `remove-entry-rule` / `add-exclude` / `remove-exclude` for custom entry rules and excludes. |
+
+The `graphlint` skill leads with these tools (they run inside the session working
+directory and return structured results); the canonical CLI guidance follows as
+reference.
 
 ### `root_dir` restriction
 

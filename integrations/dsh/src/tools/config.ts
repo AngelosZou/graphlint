@@ -14,8 +14,21 @@ interface ConfigArgs {
   action?: string
   key?: string
   value?: string
+  rule_json?: string
+  name?: string
+  exclude_pattern?: string
   root_dir?: string
 }
+
+const CONFIG_ACTIONS = new Set([
+  'show',
+  'get',
+  'set',
+  'add-entry-rule',
+  'remove-entry-rule',
+  'add-exclude',
+  'remove-exclude',
+])
 
 const LIMITS = { doneCapMs: 25_000, graceMs: 10_000 }
 
@@ -30,13 +43,23 @@ export function registerConfigTool(ctx: PluginContext): void {
       parameters: {
         action: {
           type: 'string',
-          description: 'show: display the full effective config; get: read one key; set: write one key/value pair.',
+          description:
+            'show: display the full effective config; get: read one key; set: write one key/value pair; ' +
+            'add-entry-rule: add a custom entry rule (needs rule_json); remove-entry-rule: remove a rule (needs name); ' +
+            'add-exclude / remove-exclude: add or remove an exclude pattern (needs exclude_pattern).',
         },
         key: { type: 'string', description: 'Config key, required for get/set.' },
         value: {
           type: 'string',
           description: 'New value for set (pass lists/objects as compact JSON text).',
         },
+        rule_json: {
+          type: 'string',
+          description:
+            'JSON rule for add-entry-rule, e.g. {"name":"my_service","ast_pattern":"class_instantiation:FastAPI","file_pattern":"**/service.py"}.',
+        },
+        name: { type: 'string', description: 'Rule name for remove-entry-rule.' },
+        exclude_pattern: { type: 'string', description: 'Pattern for add-exclude / remove-exclude.' },
         root_dir: { type: 'string', description: ROOT_DESCRIPTION },
       },
       output: {
@@ -52,7 +75,8 @@ export function registerConfigTool(ctx: PluginContext): void {
       timeoutMs: 30_000,
       async execute(args, exec): Promise<Record<string, JsonValue>> {
         const typed = (args ?? {}) as ConfigArgs
-        const action: ConfigAction = typed.action === 'get' || typed.action === 'set' ? typed.action : 'show'
+        const requested = typeof typed.action === 'string' ? typed.action : 'show'
+        const action: ConfigAction = CONFIG_ACTIONS.has(requested) ? (requested as ConfigAction) : 'show'
         const sessionRoot = sessionCwd(exec as ToolExecutionLike | undefined)
         let rootDir: string
         try {
@@ -65,7 +89,13 @@ export function registerConfigTool(ctx: PluginContext): void {
         const out = await runGraphlint(
           ctx.subprocess,
           ctx.timer,
-          configArgv(exe, action, typed.key, typed.value),
+          configArgv(exe, action, {
+            key: typed.key,
+            value: typed.value,
+            ruleJson: typed.rule_json,
+            name: typed.name,
+            excludePattern: typed.exclude_pattern,
+          }),
           rootDir,
           LIMITS,
           (exec as ToolExecutionLike | undefined)?.signal,

@@ -84,29 +84,35 @@ graphlint query --json --fail-on dead_code,circular_ref
 graphlint query --json --fail-on dead_code,circular_ref || exit 1
 ```
 
-## install — 安装 Agent 提示词（全局）
+## install — 为 Agent 工具安装
 
-将 graphlint 的使用提示词安装到 AI 编码工具的**全局配置**中，让每个项目自动获得 graphlint 的使用指南。
-
-### 用法
-
-```bash
-graphlint install
-```
-
-运行交互式选择器，选择一个或多个工具（opencode → `~/.config/opencode/AGENTS.md`、cursor → `~/.cursorrules`、codex → `~/.codex/rules/graphlint.md`、cc → `~/.claude/CLAUDE.md`）。安装的文本派生自随包发布的规范 skill 文档（`graphlint/skill.md`，去除 frontmatter）。详见 [Agent 集成](../guide/agent-integration.md)。
-
-## uninstall — 卸载 Agent 提示词
-
-从 AI 编码工具中移除 graphlint 的使用提示词。
+为 AI 编码 Agent 安装 graphlint 支持。不带子命令时默认将 **skill** 安装到跨 Agent 的 skill 目录。
 
 ### 用法
 
 ```bash
-graphlint uninstall
+graphlint install                        # skill（默认）
+graphlint install skill --targets agents # ~/.agents/skills/graphlint/SKILL.md
+graphlint install skill --targets all    # agents + claude 两个目录
+graphlint install dsh --profile web      # dsh plugin add dsh-graphlint
+graphlint install prompt                 # 旧式提示词注入
 ```
 
-扫描全局配置文件中的已安装提示词，交互式移除。
+`install skill` 原样写入规范 `graphlint/skill.md`（附加 `version` frontmatter 字段），重复运行会报告 installed / updated / up to date。`install dsh` 要求 PATH 上有 `dsh` CLI；`--local [PATH]` 可链接本地 `integrations/dsh` 仓库。详见 [Agent 集成](../guide/agent-integration.md)。
+
+## uninstall — 移除已安装的 skill/提示词
+
+移除此前安装的 graphlint skill 或提示词块。
+
+### 用法
+
+```bash
+graphlint uninstall                        # skill（默认）
+graphlint uninstall skill --targets all
+graphlint uninstall prompt                 # 移除旧式提示词
+```
+
+`uninstall` 只移除 graphlint 写入的 `SKILL.md`（同路径下非 graphlint 安装的文件会被跳过）；`uninstall prompt` 扫描旧配置文件中的标记块并交互式移除。
 
 ## prompt — 复制提示词到粘贴板
 

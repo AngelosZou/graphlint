@@ -8,6 +8,7 @@ available in every project the agent opens.
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 import sys
 from importlib import resources
@@ -307,3 +308,218 @@ def uninstall_tools(cwd: Optional[str] = None, _t=None) -> str:
         else:
             results.append(f"  ✗ {display_name} ({rel_path}) — failed to remove")
     return "Uninstall results:\n" + "\n".join(results)
+
+
+# ---------------------------------------------------------------------------
+# Skill installation (agents-compatible SKILL.md files)
+# ---------------------------------------------------------------------------
+# `graphlint install skill` writes the canonical skill document into the
+# emerging cross-agent skill directories (~/.agents/skills is the default
+# convention; Claude Code uses ~/.claude/skills).  The installed copy carries
+# a `version` field in its frontmatter so re-installs can report updates.
+
+SKILL_TARGETS: dict[str, str] = {
+    "agents": "~/.agents/skills/graphlint/SKILL.md",
+    "claude": "~/.claude/skills/graphlint/SKILL.md",
+}
+
+_SKILL_MSG_FALLBACKS: dict[str, str] = {
+    "cli.install.skill.installed": "✓ Installed graphlint skill v{version} -> {path}",
+    "cli.install.skill.updated": "✓ Updated graphlint skill v{old} -> v{new} at {path}",
+    "cli.install.skill.uptodate": "- graphlint skill already up to date at {path}",
+    "cli.install.skill.failed": "✗ Failed to write {path}",
+    "cli.install.dsh.not_found": "dsh CLI not found on PATH. Install the DeepSeek Harness first, then retry.",
+    "cli.install.dsh.local_missing": "Local integrations/dsh not found at {path}. Run from the graphlint repository root or pass --local PATH.",
+    "cli.install.dsh.done": "✓ dsh-graphlint plugin added to profile '{profile}'. Restart dsh web and refresh the browser page.",
+    "cli.install.dsh.failed": "✗ dsh plugin install failed.",
+    "cli.uninstall.skill.removed": "✓ Removed graphlint skill from {path}",
+    "cli.uninstall.skill.not_found": "- No graphlint skill found at {path}",
+    "cli.uninstall.skill.foreign": "- {path} exists but was not installed by graphlint — skipped",
+}
+
+
+def _skill_msg(_t, key: str, **kwargs: str) -> str:
+    """Format a skill message via i18n when available, else the English fallback."""
+    if _t is not None:
+        return _t(key, **kwargs)
+    return _SKILL_MSG_FALLBACKS.get(key, key).format(**kwargs)
+
+
+def _resolve_skill_targets(raw: Optional[str]) -> List[Tuple[str, str]]:
+    """Parse a targets string ('agents', 'claude', comma list, 'all') into (id, path)."""
+    if not raw or raw.strip().lower() == "all":
+        ids = list(SKILL_TARGETS)
+    else:
+        ids = [p.strip().lower() for p in raw.split(",") if p.strip()]
+    unknown = [tid for tid in ids if tid not in SKILL_TARGETS]
+    if unknown:
+        raise ValueError(
+            f"Unknown skill target(s): {', '.join(unknown)}. "
+            f"Allowed: {', '.join(SKILL_TARGETS)}, all"
+        )
+    result = []
+    for tid in ids:
+        if tid not in [r[0] for r in result]:
+            result.append((tid, SKILL_TARGETS[tid]))
+    return result
+
+
+def _skill_file_with_version() -> str:
+    """Canonical skill.md with a `version` field injected into the frontmatter."""
+    md = load_skill_markdown()
+    end = md.find("\n---", 3)
+    if end == -1:
+        return md
+    return md[:end] + f"\nversion: {__version__}\n" + md[end:]
+
+
+def _read_skill_version(path: str) -> str:
+    """Read the `version` field from an installed SKILL.md frontmatter."""
+    if not os.path.isfile(path):
+        return ""
+    try:
+        with open(path, encoding="utf-8") as f:
+            head = f.read(4096)
+    except OSError:
+        return ""
+    if not head.startswith("---"):
+        return ""
+    end = head.find("\n---", 3)
+    if end == -1:
+        return ""
+    for line in head[:end].splitlines():
+        if line.startswith("version:"):
+            return line.split(":", 1)[1].strip()
+    return ""
+
+
+def install_skills(targets: str = "agents", _t=None) -> str:
+    """Install the graphlint SKILL.md into the requested skill directories."""
+    try:
+        resolved = _resolve_skill_targets(targets)
+    except ValueError as exc:
+        return str(exc)
+    results = []
+    for tid, rel_path in resolved:
+        full_path = _expand(rel_path)
+        installed_version = _read_skill_version(full_path)
+        try:
+            os.makedirs(os.path.dirname(full_path), exist_ok=True)
+            with open(full_path, "w", encoding="utf-8") as f:
+                f.write(_skill_file_with_version())
+        except OSError:
+            results.append(_skill_msg(_t, "cli.install.skill.failed", path=full_path))
+            continue
+        if installed_version == "":
+            results.append(
+                _skill_msg(
+                    _t,
+                    "cli.install.skill.installed",
+                    version=__version__,
+                    path=full_path,
+                )
+            )
+        elif installed_version == __version__:
+            results.append(_skill_msg(_t, "cli.install.skill.uptodate", path=full_path))
+        else:
+            results.append(
+                _skill_msg(
+                    _t,
+                    "cli.install.skill.updated",
+                    old=installed_version,
+                    new=__version__,
+                    path=full_path,
+                )
+            )
+    return "Install results:\n" + "\n".join(results)
+
+
+def _remove_skill_file(path: str) -> Optional[bool]:
+    """Remove an installed SKILL.md (and its dir when empty).
+
+    Returns True when removed, False when nothing to do, None when the file
+    exists but was not installed by graphlint.
+    """
+    if not os.path.isfile(path):
+        return False
+    try:
+        with open(path, encoding="utf-8") as f:
+            head = f.read(512)
+    except OSError:
+        return False
+    if "name: graphlint" not in head:
+        return None
+    try:
+        os.remove(path)
+        try:
+            os.rmdir(os.path.dirname(path))
+        except OSError:
+            pass
+        return True
+    except OSError:
+        return False
+
+
+def uninstall_skills(targets: str = "agents", _t=None) -> str:
+    """Remove the graphlint SKILL.md from the requested skill directories."""
+    try:
+        resolved = _resolve_skill_targets(targets)
+    except ValueError as exc:
+        return str(exc)
+    results = []
+    for tid, rel_path in resolved:
+        full_path = _expand(rel_path)
+        outcome = _remove_skill_file(full_path)
+        if outcome is True:
+            results.append(_skill_msg(_t, "cli.uninstall.skill.removed", path=full_path))
+        elif outcome is None:
+            results.append(_skill_msg(_t, "cli.uninstall.skill.foreign", path=full_path))
+        else:
+            results.append(_skill_msg(_t, "cli.uninstall.skill.not_found", path=full_path))
+    return "Uninstall results:\n" + "\n".join(results)
+
+
+# ---------------------------------------------------------------------------
+# DeepSeek Harness plugin installation
+# ---------------------------------------------------------------------------
+
+
+def install_dsh(profile: Optional[str] = None, local=None, _t=None) -> str:
+    """Install the dsh-graphlint plugin into a DeepSeek Harness profile.
+
+    *profile* is the dsh profile name (``--profile`` is omitted when None).
+    *local* is None (npm package), True (link ./integrations/dsh from cwd),
+    or an explicit path to a local integrations/dsh checkout.
+    """
+    dsh = shutil.which("dsh")
+    if not dsh:
+        return _skill_msg(_t, "cli.install.dsh.not_found")
+
+    if local is None:
+        target = "dsh-graphlint"
+    else:
+        if local is True:
+            local_path = os.path.normpath(os.path.join(os.getcwd(), "integrations", "dsh"))
+        else:
+            local_path = os.path.normpath(os.path.abspath(str(local)))
+        if not os.path.isfile(os.path.join(local_path, "package.json")):
+            return _skill_msg(_t, "cli.install.dsh.local_missing", path=local_path)
+        target = f"link:{local_path}"
+
+    cmd = [dsh, "plugin"]
+    if profile:
+        cmd += ["--profile", profile]
+    cmd += ["add", target]
+
+    try:
+        proc = subprocess.run(
+            cmd, capture_output=True, text=True, timeout=300
+        )
+    except subprocess.TimeoutExpired:
+        return _skill_msg(_t, "cli.install.dsh.failed") + "\n(command timed out)"
+    except OSError:
+        return _skill_msg(_t, "cli.install.dsh.failed")
+    if proc.returncode != 0:
+        detail = (proc.stderr or proc.stdout or "").strip()
+        return _skill_msg(_t, "cli.install.dsh.failed") + (f"\n{detail}" if detail else "")
+    return _skill_msg(_t, "cli.install.dsh.done", profile=profile or "default")

@@ -1,45 +1,27 @@
 # Agent 集成
 
-Graphlint 提供 `install` 和 `uninstall` 子命令，将使用提示词注入到您的 AI 编码工具的**全局配置**中。安装后，您使用该工具打开的每个项目都将自动获得 graphlint 的使用指南 — 无需重复配置。
+Graphlint 为 AI 编码 Agent 提供三种安装渠道：
 
-## 提示词命令
+1. **Skill 安装（默认）** — 将规范 skill 文档以 `SKILL.md` 形式写入新兴的跨 Agent skill 目录。推荐路径：不修改 Agent 自身的配置文件，兼容所有读取 `~/.agents/skills` 约定的 Agent。
+2. **提示词注入（旧行为）** — 将提示词块注入 Agent 配置文件（`AGENTS.md`、`CLAUDE.md` 等）。仍可通过 `install prompt` 使用。
+3. **DeepSeek Harness 插件** — 将 `dsh-graphlint` bundle（原生工具 + skill）安装到 DSH profile。
 
-如果您使用的 Agent 工具不在支持列表中，或者您更倾向于手动配置，可以使用以下命令将提示词复制到粘贴板：
-
-```bash
-graphlint prompt
-```
-
-这会复制与 `install` 命令相同的 `AGENT_PROMPT` 内容 — 将其粘贴到您的 Agent 系统提示词或配置文件中即可。
-
-## 安装
+## 安装 Skill（默认）
 
 ```bash
 graphlint install
+# 或显式指定：graphlint install skill
 ```
 
-您将看到交互式提示，列出支持的工具及其全局配置路径：
+写入 `~/.agents/skills/graphlint/SKILL.md`（YAML frontmatter 包含 `name`、`description`，以及用于更新跟踪的 `version` 字段）。
 
-```
-Select agent tool(s) to install graphlint prompt:
+| 选项 | 行为 |
+|------|------|
+| `--targets agents`（默认） | `~/.agents/skills/graphlint/SKILL.md` |
+| `--targets claude` | `~/.claude/skills/graphlint/SKILL.md`（Claude Code 约定） |
+| `--targets all` / `--targets agents,claude` | 两个目录都写入 |
 
-  [1] OpenCode CLI          ~/.config/opencode/AGENTS.md
-      Global AGENTS.md — read by opencode in every project
-  [2] Cursor Editor         ~/.cursorrules
-      Global .cursorrules — applies to all Cursor projects
-  [3] Codex CLI             ~/.codex/rules/graphlint.md
-      Global rules directory — recognized by Codex CLI
-  [4] Claude Code (CLI)     ~/.claude/CLAUDE.md
-      Global CLAUDE.md — read by Claude Code in every project
-
-Enter numbers separated by comma (e.g. 1,3) or 'all':
-```
-
-选择一个或多个工具。提示词内容被 HTML 注释包裹（`<!-- graphlint:start -->` … `<!-- graphlint:end -->`），便于检测和干净移除。
-
-### 安装内容
-
-提示词刻意保持简洁，只涵盖用途最广的核心内容：
+重复运行 `install` 会报告"已是最新版本"或升级旧版本。skill 内容刻意保持简洁，只涵盖用途最广的核心内容：
 
 | 部分 | 内容 |
 |------|------|
@@ -50,19 +32,21 @@ Enter numbers separated by comma (e.g. 1,3) or 'all':
 | **使用示例** | 重构后检查、按严重度排序死代码、图详情、CI 门禁 |
 | **局限性** | 仅静态分析（动态引用盲区）、全量构建耗时 |
 
-## 卸载
+## 安装 DeepSeek Harness 插件
 
 ```bash
-graphlint uninstall
+graphlint install dsh --profile web
 ```
 
-扫描全局配置文件中的 `graphlint:start`/`graphlint:end` 标记，显示已安装的工具。选择要移除的工具即可。
+等价于 `dsh plugin --profile web add dsh-graphlint`。使用 `--local [PATH]` 可链接本地 `integrations/dsh` 仓库而非 npm 包（默认取仓库根目录下的 `./integrations/dsh`）。完成后请重启 `dsh web` 并刷新浏览器页面。
 
-## 提示词文件
+## 安装提示词（旧行为）
 
-规范 skill 文档随 Python 包一起发布，位于 `graphlint/skill.md`（含 YAML frontmatter）。`install` 与 `prompt` 的文本均由此派生（去除 frontmatter），所有分发渠道共享同一内容源。
+```bash
+graphlint install prompt
+```
 
-## 支持的 Agent 工具
+交互式选择器将提示词块注入全局配置文件，用 HTML 注释（`<!-- graphlint:start -->` … `<!-- graphlint:end -->`）包裹以便检测和干净移除：
 
 | 工具 ID | 显示名称 | 全局配置文件 |
 |---------|---------|-------------|
@@ -71,4 +55,26 @@ graphlint uninstall
 | `codex` | Codex CLI | `~/.codex/rules/graphlint.md` |
 | `cc` | Claude Code (CLI) | `~/.claude/CLAUDE.md` |
 
-> **注意：** 这些是**全局**配置路径。如果您希望按项目安装，请将 `graphlint prompt` 输出的提示词（或已安装包中的规范 `graphlint/skill.md`）复制到项目本地的配置文件中（如 `AGENTS.md`、`CLAUDE.md`、`.cursorrules`）。
+## 提示词命令
+
+如果您使用的 Agent 工具不在支持列表中，或者您更倾向于手动配置，可以使用以下命令将提示词复制到粘贴板：
+
+```bash
+graphlint prompt
+```
+
+这会复制与 `install` 相同的内容 — 将其粘贴到您的 Agent 系统提示词或配置文件中即可。
+
+## 卸载
+
+```bash
+graphlint uninstall              # 移除已安装的 skill
+graphlint uninstall --targets all
+graphlint uninstall prompt       # 移除注入的提示词块
+```
+
+`uninstall` 移除 graphlint 写入的 `SKILL.md`（目录为空时一并删除）；同路径下非 graphlint 安装的文件会被跳过。`uninstall prompt` 扫描旧配置文件中的标记块并交互式移除。
+
+## 单一内容源
+
+规范 skill 文档随 Python 包一起发布，位于 `graphlint/skill.md`（含 YAML frontmatter）。所有渠道均由此派生：`install` 原样写入（附加 `version` 字段）、`prompt` 去除 frontmatter、DeepSeek Harness 插件在构建期内嵌同一内容 — 两侧均有同步测试防止漂移。

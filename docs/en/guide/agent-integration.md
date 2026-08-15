@@ -1,45 +1,27 @@
 # Agent Integration
 
-Graphlint provides `install` and `uninstall` subcommands to inject its usage prompt into your AI coding tools at the **global level**. Once installed, every project you open with that tool will have graphlint's guidance available — no per-project setup needed.
+Graphlint supports three installation channels for AI coding agents:
 
-## Prompt Command
+1. **Skill install (default)** — writes the canonical skill document as `SKILL.md` into the emerging cross-agent skill directories. This is the recommended path: it does not touch your agent's own config files, and works with any agent that reads the `~/.agents/skills` convention.
+2. **Prompt injection (legacy)** — injects the prompt block into agent config files (`AGENTS.md`, `CLAUDE.md`, …). Still available as `install prompt`.
+3. **DeepSeek Harness plugin** — installs the `dsh-graphlint` bundle (native tools + skill) into a DSH profile.
 
-If your agent tool is not listed or you prefer manual setup, copy the prompt to your clipboard:
-
-```bash
-graphlint prompt
-```
-
-This copies the same `AGENT_PROMPT` content that `install` would write — paste it into your agent's system prompt or configuration file.
-
-## Install
+## Install the Skill (default)
 
 ```bash
 graphlint install
+# or explicitly: graphlint install skill
 ```
 
-You will see an interactive prompt listing supported tools and their global config paths:
+Writes `~/.agents/skills/graphlint/SKILL.md` (YAML frontmatter with `name`, `description` and a `version` field for update tracking).
 
-```
-Select agent tool(s) to install graphlint prompt:
+| Option | Behavior |
+|--------|----------|
+| `--targets agents` (default) | `~/.agents/skills/graphlint/SKILL.md` |
+| `--targets claude` | `~/.claude/skills/graphlint/SKILL.md` (Claude Code convention) |
+| `--targets all` / `--targets agents,claude` | Both directories |
 
-  [1] OpenCode CLI          ~/.config/opencode/AGENTS.md
-      Global AGENTS.md — read by opencode in every project
-  [2] Cursor Editor         ~/.cursorrules
-      Global .cursorrules — applies to all Cursor projects
-  [3] Codex CLI             ~/.codex/rules/graphlint.md
-      Global rules directory — recognized by Codex CLI
-  [4] Claude Code (CLI)     ~/.claude/CLAUDE.md
-      Global CLAUDE.md — read by Claude Code in every project
-
-Enter numbers separated by comma (e.g. 1,3) or 'all':
-```
-
-Select one or more tools. The prompt block is wrapped in HTML comments (`<!-- graphlint:start -->` … `<!-- graphlint:end -->`) for clean detection and removal.
-
-### What Gets Installed
-
-The prompt is deliberately concise — only the broadly useful core:
+Re-running `install` reports `up to date` or upgrades an older installed version. The skill content is deliberately concise — only the broadly useful core:
 
 | Section | Content |
 |---------|---------|
@@ -50,19 +32,21 @@ The prompt is deliberately concise — only the broadly useful core:
 | **Examples** | Refactor check, dead code by severity, graph detail, CI gate |
 | **Limitations** | Static analysis only (dynamic references), full-build time cost |
 
-## Uninstall
+## Install the DeepSeek Harness Plugin
 
 ```bash
-graphlint uninstall
+graphlint install dsh --profile web
 ```
 
-Scans the global config paths for the `graphlint:start`/`graphlint:end` markers and shows which tools have the prompt installed. Select the ones to remove.
+Runs `dsh plugin --profile web add dsh-graphlint`. Use `--local [PATH]` to link a local `integrations/dsh` checkout instead of the npm package (defaults to `./integrations/dsh` from the repository root). Restart `dsh web` and refresh the browser page afterwards.
 
-## Prompt File
+## Install the Prompt (legacy)
 
-The canonical skill document ships inside the Python package as `graphlint/skill.md` (with YAML frontmatter). `install` and `prompt` derive their text from it — the frontmatter is stripped — so every distribution channel shares one source.
+```bash
+graphlint install prompt
+```
 
-## Supported Tools
+Interactive selector injecting the prompt block into global config files, wrapped in HTML comments (`<!-- graphlint:start -->` … `<!-- graphlint:end -->`) for clean detection and removal:
 
 | Tool ID | Display Name | Global Config File |
 |---------|-------------|-------------------|
@@ -71,4 +55,26 @@ The canonical skill document ships inside the Python package as `graphlint/skill
 | `codex` | Codex CLI | `~/.codex/rules/graphlint.md` |
 | `cc` | Claude Code (CLI) | `~/.claude/CLAUDE.md` |
 
-> **Note:** These are **global** config paths. If you prefer per-project installation, copy the prompt block from `graphlint prompt` (or the canonical `graphlint/skill.md` in the installed package) into your project's local config file (e.g., `AGENTS.md`, `CLAUDE.md`, `.cursorrules`).
+## Prompt Command
+
+If your agent tool is not listed or you prefer manual setup, copy the prompt to your clipboard:
+
+```bash
+graphlint prompt
+```
+
+This copies the same content that `install` would write — paste it into your agent's system prompt or configuration file.
+
+## Uninstall
+
+```bash
+graphlint uninstall              # remove the installed skill(s)
+graphlint uninstall --targets all
+graphlint uninstall prompt       # remove injected prompt blocks
+```
+
+`uninstall` removes the `SKILL.md` written by graphlint (and its directory when empty); foreign files with the same path are left untouched. `uninstall prompt` scans the legacy config paths for the marker block and removes it interactively.
+
+## Single Content Source
+
+The canonical skill document ships inside the Python package as `graphlint/skill.md` (with YAML frontmatter). All channels derive from it: `install` writes it verbatim (plus a `version` field), `prompt` strips the frontmatter, and the DeepSeek Harness plugin embeds the same body at build time — guarded by sync tests on both sides.

@@ -43,11 +43,22 @@ def build_parser(i18n: I18nManager) -> argparse.ArgumentParser:
         if p.category == "build" and not p.api_only:
             _add_arg(bp, p, _t)
 
-    # install subcommand
-    sub.add_parser("install", parents=[_lang_parser], help=_t("help.install"))
+    # install subcommand with sub-subcommands (skill is the default)
+    ip = sub.add_parser("install", parents=[_lang_parser], help=_t("help.install"))
+    install_sub = ip.add_subparsers(dest="install_action", help=_t("help.install.actions"))
+    iskill = install_sub.add_parser("skill", parents=[_lang_parser], help=_t("help.install.skill"))
+    iskill.add_argument("--targets", default="agents", help=_t("help.param.install_targets"))
+    install_sub.add_parser("prompt", parents=[_lang_parser], help=_t("help.install.prompt"))
+    idsh = install_sub.add_parser("dsh", parents=[_lang_parser], help=_t("help.install.dsh"))
+    idsh.add_argument("--profile", default=None, help=_t("help.param.dsh_profile"))
+    idsh.add_argument("--local", nargs="?", const=True, default=None, help=_t("help.param.dsh_local"))
 
-    # uninstall subcommand
-    sub.add_parser("uninstall", parents=[_lang_parser], help=_t("help.uninstall"))
+    # uninstall subcommand with sub-subcommands (skill is the default)
+    up = sub.add_parser("uninstall", parents=[_lang_parser], help=_t("help.uninstall"))
+    uninstall_sub = up.add_subparsers(dest="uninstall_action", help=_t("help.uninstall.actions"))
+    uskill = uninstall_sub.add_parser("skill", parents=[_lang_parser], help=_t("help.uninstall.skill"))
+    uskill.add_argument("--targets", default="agents", help=_t("help.param.install_targets"))
+    uninstall_sub.add_parser("prompt", parents=[_lang_parser], help=_t("help.uninstall.prompt"))
 
     # prompt subcommand
     sub.add_parser("prompt", parents=[_lang_parser], help=_t("help.prompt"))
@@ -159,9 +170,9 @@ def main() -> int:
         elif command == "build":
             result = _run_build(args)
         elif command == "install":
-            result = _run_install(i18n)
+            result = _run_install(args, i18n)
         elif command == "uninstall":
-            result = _run_uninstall(i18n)
+            result = _run_uninstall(args, i18n)
         elif command == "prompt":
             result = _run_prompt(i18n)
         else:
@@ -207,12 +218,30 @@ def _check_json_warnings(json_result: Any, fail_types: set[str]) -> bool:
     return False
 
 
-def _run_install(i18n: I18nManager) -> str:
-    """Execute the install command."""
-    from graphlint.agent_tools import install_tools
+def _run_install(args: argparse.Namespace, i18n: I18nManager) -> str:
+    """Execute the install command (skill by default, prompt/dsh as subcommands)."""
+    action = getattr(args, "install_action", None)
 
-    result = install_tools(_t=i18n.t)
-    return result + "\n\n" + i18n.t("cli.install.agent_not_found")
+    if action == "prompt":
+        # Legacy behavior: inject the prompt block into agent config files.
+        from graphlint.agent_tools import install_tools
+
+        result = install_tools(_t=i18n.t)
+        return result + "\n\n" + i18n.t("cli.install.agent_not_found")
+
+    if action == "dsh":
+        from graphlint.agent_tools import install_dsh
+
+        return install_dsh(
+            profile=getattr(args, "profile", None),
+            local=getattr(args, "local", None),
+            _t=i18n.t,
+        )
+
+    # Default: install the agents-compatible skill file.
+    from graphlint.agent_tools import install_skills
+
+    return install_skills(targets=getattr(args, "targets", "agents"), _t=i18n.t)
 
 
 def _run_prompt(i18n: I18nManager) -> str:
@@ -227,11 +256,19 @@ def _run_prompt(i18n: I18nManager) -> str:
     return AGENT_PROMPT + "\n\n" + i18n.t("cli.prompt.copied")
 
 
-def _run_uninstall(i18n: I18nManager) -> str:
-    """Execute the uninstall command."""
-    from graphlint.agent_tools import uninstall_tools
+def _run_uninstall(args: argparse.Namespace, i18n: I18nManager) -> str:
+    """Execute the uninstall command (skill by default, prompt as subcommand)."""
+    action = getattr(args, "uninstall_action", None)
 
-    return uninstall_tools(_t=i18n.t)
+    if action == "prompt":
+        # Legacy behavior: remove the prompt block from agent config files.
+        from graphlint.agent_tools import uninstall_tools
+
+        return uninstall_tools(_t=i18n.t)
+
+    from graphlint.agent_tools import uninstall_skills
+
+    return uninstall_skills(targets=getattr(args, "targets", "agents"), _t=i18n.t)
 
 
 def _run_query(args: argparse.Namespace) -> tuple[Any, int]:

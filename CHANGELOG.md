@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- **Skill installation for agents** (`graphlint install`, new default):
+  writes the canonical skill document to the cross-agent skill directories —
+  `~/.agents/skills/graphlint/SKILL.md` by default, `~/.claude/skills/graphlint/
+  SKILL.md` via `--targets claude|all` — with a `version` frontmatter field for
+  update tracking (`installed` / `updated` / `up to date`). `graphlint
+  uninstall` removes only graphlint-written `SKILL.md` files (foreign files at
+  the same path are left untouched). The previous prompt injection remains
+  available as `graphlint install prompt` / `uninstall prompt` (legacy).
+- **DeepSeek Harness plugin auto-install**: `graphlint install dsh
+  [--profile NAME] [--local [PATH]]` runs `dsh plugin add dsh-graphlint` (or
+  links a local `integrations/dsh` checkout).
 - **DeepSeek Harness plugin bundle** (`integrations/dsh`; npm package
   `dsh-graphlint`): three agent tools — `graphlint_query`
   (dependency-graph queries with structured results), `graphlint_build`
@@ -15,6 +26,14 @@ All notable changes to this project will be documented in this file.
   Tools default to the session working directory, hard-refuse roots outside
   it, wire the tool-call abort signal into the spawned process, and cap every
   wait phase.
+- **DSH tool surface widened to the skill's core examples**:
+  `graphlint_query` gains `exclude_clean`; `graphlint_config` gains
+  `add-entry-rule` / `remove-entry-rule` / `add-exclude` / `remove-exclude`
+  actions (with `rule_json` / `name` / `exclude_pattern`), so custom entry
+  rules — the mitigation for dynamic-reference false positives — are reachable
+  through the tools. The DSH skill now leads with a tool-first section
+  ("How to use graphlint in this environment") and keeps the canonical CLI
+  body as reference.
 
 ### Changed
 - **Agent prompt single-sourced and refreshed**: the canonical skill document

@@ -18,6 +18,7 @@ interface QueryArgs {
   include_tests?: boolean
   graph_id?: number
   public_as_entry?: boolean
+  exclude_clean?: boolean
 }
 
 export function registerQueryTool(ctx: PluginContext): void {
@@ -44,6 +45,10 @@ export function registerQueryTool(ctx: PluginContext): void {
         public_as_entry: {
           type: 'boolean',
           description: 'Treat all public items (Rust pub / C# public) as entry points for library analysis.',
+        },
+        exclude_clean: {
+          type: 'boolean',
+          description: 'Exclude clean graphs, return only those with warnings/errors (default false).',
         },
       },
       output: {
@@ -79,6 +84,7 @@ export function registerQueryTool(ctx: PluginContext): void {
             includeTests: typed.include_tests,
             graphId: typed.graph_id,
             publicAsEntry: typed.public_as_entry,
+            excludeClean: typed.exclude_clean,
           }),
           rootDir,
           DEFAULT_LIMITS,

@@ -9,6 +9,7 @@ build/
 .coverage
 htmlcov/
 .pytest_cache/
+.glhome-tests/
 *.pyc
 *.pyo
 env/

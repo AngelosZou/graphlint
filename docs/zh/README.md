@@ -63,22 +63,27 @@ pip install graphlint[csharp]
 
 ### Agent 集成
 
-Graphlint 提供命令将其使用提示词注入到 AI 编码工具的**全局配置**中，让每个项目自动获得 graphlint 的使用指南：
+Graphlint 将使用指南安装到 AI 编码工具的**全局配置**中：
 
 ```bash
-# 将 graphlint 提示词安装到 Agent 工具（opencode, cursor, codex, cc）
+# 安装 graphlint skill（~/.agents/skills/graphlint/SKILL.md）—— 默认行为
 graphlint install
+graphlint install --targets all      # 同时安装到 ~/.claude/skills/graphlint/SKILL.md
+
+# 安装 DeepSeek Harness 插件（原生工具 + skill）
+graphlint install dsh --profile web
+
+# 旧行为：将提示词注入 Agent 配置文件（opencode, cursor, codex, cc）
+graphlint install prompt
 
 # 将提示词复制到粘贴板，供手动粘贴到 Agent
 graphlint prompt
 
-# 从 Agent 工具中移除 graphlint 提示词
+# 移除已安装的 skill / 提示词
 graphlint uninstall
 ```
 
-运行 `graphlint install` 并选择你使用的工具 — 提示词（使用场景、核心命令、关键参数）将被添加到全局配置中。提示词文本派生自随包发布的规范 skill 文档（`graphlint/skill.md`），与 DeepSeek Harness 插件中 `graphlint` skill 内嵌的内容同源。详见 [Agent 集成](guide/agent-integration.md)。
-
-如果你的 Agent 工具未在 install 中列出，可以运行 `graphlint prompt` 将提示词复制到剪贴板并手动提供给 Agent。对于希望添加原生支持的 Agent，欢迎提交 [issue](https://github.com/AngelosZou/graphlint/issues) —— 这类需求通常会被快速响应。
+所有渠道均派生自随包发布的同一份规范 skill 文档（`graphlint/skill.md`），skill 文件、注入的提示词与 DeepSeek Harness 插件的 `graphlint` skill 内容不会漂移。详见 [Agent 集成](guide/agent-integration.md)。对于希望添加原生支持的 Agent，欢迎提交 [issue](https://github.com/AngelosZou/graphlint/issues) —— 这类需求通常会被快速响应。
 
 ### DeepSeek Harness 插件
 

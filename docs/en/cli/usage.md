@@ -84,29 +84,35 @@ Use `--fail-on` with a comma-separated list of warning types to fail the command
 graphlint query --json --fail-on dead_code,circular_ref || exit 1
 ```
 
-## install — Install Agent Prompt (Global)
+## install — Install for Agent Tools
 
-Install graphlint's usage prompt into AI coding tools at the **global level**, so every project automatically has graphlint's guidance.
-
-### Usage
-
-```bash
-graphlint install
-```
-
-Runs an interactive selector; pick one or more tools (opencode → `~/.config/opencode/AGENTS.md`, cursor → `~/.cursorrules`, codex → `~/.codex/rules/graphlint.md`, cc → `~/.claude/CLAUDE.md`). The installed text derives from the canonical skill document shipped in the package (`graphlint/skill.md`, frontmatter stripped). See [Agent Integration](../guide/agent-integration.md).
-
-## uninstall — Remove Agent Prompt
-
-Remove graphlint's usage prompt from AI coding tools.
+Installs graphlint support for AI coding agents. Without a subcommand, the **skill** is installed into the cross-agent skill directories.
 
 ### Usage
 
 ```bash
-graphlint uninstall
+graphlint install                        # skill (default)
+graphlint install skill --targets agents # ~/.agents/skills/graphlint/SKILL.md
+graphlint install skill --targets all    # agents + claude directories
+graphlint install dsh --profile web      # dsh plugin add dsh-graphlint
+graphlint install prompt                 # legacy prompt injection
 ```
 
-Scans global config paths for previously installed prompts and interactively removes them.
+`install skill` writes the canonical `graphlint/skill.md` (with a `version` frontmatter field) and reports `installed` / `updated` / `up to date` on re-runs. `install dsh` requires the `dsh` CLI on PATH; `--local [PATH]` links a local `integrations/dsh` checkout. See [Agent Integration](../guide/agent-integration.md).
+
+## uninstall — Remove Installed Skills/Prompts
+
+Removes previously installed graphlint skills or prompt blocks.
+
+### Usage
+
+```bash
+graphlint uninstall                        # skill (default)
+graphlint uninstall skill --targets all
+graphlint uninstall prompt                 # legacy prompt removal
+```
+
+`uninstall` removes only the `SKILL.md` files written by graphlint (foreign files at the same path are left untouched); `uninstall prompt` scans the legacy config paths for marker blocks and removes them interactively.
 
 ## prompt — Copy Prompt to Clipboard
 

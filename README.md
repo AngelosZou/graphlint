@@ -63,22 +63,27 @@ pip install graphlint[csharp]
 
 ### Agent Integration
 
-Graphlint provides a command to inject its usage prompt into your AI coding tools at the **global level**, so every project automatically has graphlint's guidance:
+Graphlint installs its usage guidance into your AI coding tools at the **global level**:
 
 ```bash
-# Install graphlint prompt into agent tools (opencode, cursor, codex, cc)
+# Install the graphlint skill (~/.agents/skills/graphlint/SKILL.md) — default
 graphlint install
+graphlint install --targets all      # also ~/.claude/skills/graphlint/SKILL.md
+
+# Install the DeepSeek Harness plugin (native tools + skill)
+graphlint install dsh --profile web
+
+# Legacy: inject the prompt into agent config files (opencode, cursor, codex, cc)
+graphlint install prompt
 
 # Copy the prompt to clipboard for manual paste into your agent
 graphlint prompt
 
-# Remove graphlint prompt from agent tools
+# Remove installed skills / prompts
 graphlint uninstall
 ```
 
-Run `graphlint install` and select the tools you use — the prompt (usage scenarios, essential commands, and parameters) will be added to their global configuration. The prompt text derives from the canonical skill document shipped in the package (`graphlint/skill.md`) — the same content the DeepSeek Harness plugin's `graphlint` skill embeds. For details, see [Agent Integration](docs/en/guide/agent-integration.md).
-
-If your agent tool is not listed in `install`, run `graphlint prompt` to copy the prompt to your clipboard and provide it to your agent manually. For tools you'd like native support for, feel free to submit an [issue](https://github.com/AngelosZou/graphlint/issues) — these requests are typically handled quickly.
+All channels derive from one canonical skill document shipped in the package (`graphlint/skill.md`), so the skill file, the injected prompt and the DeepSeek Harness plugin's `graphlint` skill can never drift apart. For details, see [Agent Integration](docs/en/guide/agent-integration.md). For tools you'd like native support for, feel free to submit an [issue](https://github.com/AngelosZou/graphlint/issues) — these requests are typically handled quickly.
 
 ### DeepSeek Harness Plugin
 
