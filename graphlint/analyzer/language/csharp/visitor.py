@@ -431,7 +431,7 @@ class CSharpVisitor:
             self._visit_typeof_expression(node)
 
         elif ntype in ("attribute_list", "attribute"):
-            pass
+            self._visit_attribute(node)
 
         elif ntype in ("identifier", "qualified_name", "generic_name"):
             self._visit_identifier_read(node)
@@ -495,6 +495,7 @@ class CSharpVisitor:
             qualified = qualified + "#partial:" + self.file_path
 
         dec_names = _extract_attributes(node)
+        self._record_attribute_usages(node)
         visibility = _extract_visibility(node)
         doc = self._extract_doc(node)
 
@@ -524,6 +525,26 @@ class CSharpVisitor:
                 edge_type="inherit",
                 line=_node_line(node),
             ))
+
+        # Record base types as name usages — ``class C : Timer`` uses the
+        # alias ``Timer``.  The base_list is not walked as a body, so these
+        # positions would otherwise be invisible to unused-import checks.
+        # No read references are emitted here: the inherit edge above is the
+        # authoritative one.
+        base_list = node.child_by_field_name("base_list")
+        if base_list is None:
+            for child in node.children:
+                if child.type == "base_list":
+                    base_list = child
+                    break
+        if base_list is not None:
+            for child in base_list.children:
+                if child.type in ("identifier", "qualified_name", "generic_name",
+                                  "array_type", "nullable_type", "tuple_type",
+                                  "predefined_type"):
+                    self._emit_type_read(
+                        child, qualified, _node_line(node), record_refs=False,
+                    )
 
         # Emit decorate edges for attributes
         for dname in dec_names:
@@ -567,6 +588,7 @@ class CSharpVisitor:
     # ------------------------------------------------------------------
 
     def _visit_member(self, node: Any, ntype: str) -> None:
+        self._record_attribute_usages(node)
         self._check_explicit_interface(node)
         if ntype == "field_declaration":
             # Delegate to children (variable_declaration) without
@@ -1444,7 +1466,15 @@ class CSharpVisitor:
                 self._walk(body)
             else:
                 for child in node.children:
-                    if child.type in ("parameter_list", "arrow", "parenthesized_lambda_expression"):
+                    if child.type == "parameter_list":
+                        # Explicitly-typed lambda parameters (``(Timer t) =>
+                        # ...``) reference their types — record them so an
+                        # alias used only there is not reported unused.
+                        self._emit_parameter_type_reads(
+                            child, self._current_qname(), _node_line(child),
+                        )
+                        continue
+                    if child.type in ("arrow", "parenthesized_lambda_expression"):
                         continue
                     self._walk(child)
         finally:
@@ -1664,6 +1694,7 @@ class CSharpVisitor:
     # ------------------------------------------------------------------
 
     def _visit_local_function(self, node: Any) -> None:
+        self._record_attribute_usages(node)
         name_node = node.child_by_field_name("name")
         if not name_node:
             for child in node.children:
@@ -1845,6 +1876,53 @@ class CSharpVisitor:
             # would mask genuinely unused aliases.
 
     # ------------------------------------------------------------------
+    # Attributes
+    # ------------------------------------------------------------------
+
+    def _visit_attribute(self, node: Any) -> None:
+        """Record attribute class names as name usages.
+
+        An attribute name (``[Fact]``, ``[Xunit.Fact]``) is a type
+        reference — an alias such as ``using Fact = Xunit.FactAttribute;``
+        used as an attribute must count as used.  Attribute arguments are
+        deliberately NOT walked: named arguments (``[Fact(Skip = "x")]``)
+        contain declaration-ish names, not uses of imported symbols.
+        """
+        if node.type == "attribute_list":
+            for child in node.children:
+                if child.type == "attribute":
+                    self._record_attribute_name(child)
+            return
+        self._record_attribute_name(node)
+
+    def _record_attribute_usages(self, node: Any) -> None:
+        """Record attribute names attached to a declaration node.
+
+        Declaration handlers skip their ``attribute_list`` children when
+        walking the body, so attribute usages must be recorded explicitly.
+        """
+        for child in node.children:
+            if child.type == "attribute_list":
+                self._visit_attribute(child)
+
+    def _record_attribute_name(self, node: Any) -> None:
+        name_node = node.child_by_field_name("name")
+        if name_node is None:
+            for child in node.children:
+                if child.type in ("identifier", "qualified_name"):
+                    name_node = child
+                    break
+        if name_node is None:
+            return
+        # Record the full text: ``[Fact]`` records ``Fact``, while
+        # ``[Xunit.Fact]`` records ``Xunit.Fact`` (matching the walker's
+        # identifier/qualified_name handling) so a ``Fact`` alias is not
+        # spuriously marked used by a fully-qualified attribute.
+        name = _node_text(name_node)
+        if name:
+            self.name_usages.add(name)
+
+    # ------------------------------------------------------------------
     # Write / Read ref helpers
     # ------------------------------------------------------------------
 
@@ -1887,12 +1965,18 @@ class CSharpVisitor:
             if expr is not None:
                 self._emit_write_ref(expr, sq, line)
 
-    def _emit_type_read(self, type_node: Any, sq: str, line: int) -> None:
+    def _emit_type_read(
+        self, type_node: Any, sq: str, line: int, record_refs: bool = True,
+    ) -> None:
         """Emit read edges for type references (recursive over composed types).
 
         Handles identifier / generic_name (including the type-argument list,
         so ``List<User>`` reads both ``List`` and ``User``), qualified_name,
         array_type, nullable_type and tuple_type.
+
+        When *record_refs* is False only ``name_usages`` is updated and no
+        ``ReferenceInfo`` edges are emitted — used for positions that already
+        carry a dedicated edge (e.g. ``inherit`` for base types).
         """
         t = type_node.type
         if t in ("identifier", "generic_name"):
@@ -1908,10 +1992,11 @@ class CSharpVisitor:
                                   "sbyte", "uint", "ulong", "ushort", "var", "dynamic",
                                   "nint", "nuint"})
                 if name not in skip:
-                    self.references.append(ReferenceInfo(
-                        source_qname=sq, target_name=name,
-                        edge_type="read", line=line,
-                    ))
+                    if record_refs:
+                        self.references.append(ReferenceInfo(
+                            source_qname=sq, target_name=name,
+                            edge_type="read", line=line,
+                        ))
                     self.name_usages.add(name)
             if t == "generic_name":
                 # Type arguments are type references themselves:
@@ -1929,29 +2014,38 @@ class CSharpVisitor:
                         if child.type in ("identifier", "generic_name", "qualified_name",
                                           "array_type", "nullable_type", "tuple_type",
                                           "predefined_type"):
-                            self._emit_type_read(child, sq, line)
+                            self._emit_type_read(child, sq, line, record_refs)
         elif t == "qualified_name":
             name = _scoped_name(type_node)
             if name:
-                self.references.append(ReferenceInfo(
-                    source_qname=sq, target_name=name,
-                    edge_type="read", line=line,
-                ))
+                if record_refs:
+                    self.references.append(ReferenceInfo(
+                        source_qname=sq, target_name=name,
+                        edge_type="read", line=line,
+                    ))
                 self.name_usages.add(name.split(".")[-1])
+            # Type arguments inside a qualified generic type
+            # (``System.Collections.Generic.List<Timer>``) are type
+            # references themselves: the generic_name child carries them.
+            # The read edge for the full qualified name is already emitted
+            # above, so the recursion records names without duplicating it.
+            for child in type_node.children:
+                if child.type == "generic_name":
+                    self._emit_type_read(child, sq, line, record_refs=False)
         elif t == "array_type":
             elem = type_node.child_by_field_name("type")
             if elem is not None:
-                self._emit_type_read(elem, sq, line)
+                self._emit_type_read(elem, sq, line, record_refs)
         elif t == "nullable_type":
             inner = type_node.child_by_field_name("type")
             if inner is not None:
-                self._emit_type_read(inner, sq, line)
+                self._emit_type_read(inner, sq, line, record_refs)
         elif t == "tuple_type":
             for child in type_node.children:
                 if child.type == "tuple_element":
                     etype = child.child_by_field_name("type")
                     if etype is not None:
-                        self._emit_type_read(etype, sq, line)
+                        self._emit_type_read(etype, sq, line, record_refs)
         # predefined_type (int/string/...) is not a user symbol — no edge.
 
     def _emit_parameter_type_reads(self, params: Any, sq: str, line: int) -> None:

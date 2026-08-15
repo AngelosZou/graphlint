@@ -29,6 +29,7 @@ class CSharpImportAnalyzer:
             - ``using System.Collections.Generic;`` → qualified namespace
             - ``using static System.Math;``        → static import
             - ``using Timer = System.Timers.Timer;`` → alias
+            - ``using A = B;``                    → alias to a same-namespace type
             - ``global using System;``              → global import (treated same)
 
         The alias form ``using Timer = System.Timers.Timer;`` parses in
@@ -45,13 +46,23 @@ class CSharpImportAnalyzer:
 
         # --- alias using: ``using Timer = System.Timers.Timer;`` ---
         if has_equals:
+            # Children are [identifier(alias), '=', target]; the target may
+            # be a qualified_name / generic_name (``using A = X.Y;``) or a
+            # plain identifier (``using A = B;`` — an alias of a type in the
+            # current namespace).
+            eq_idx = next(
+                (i for i, c in enumerate(children) if c.type == "="), -1,
+            )
             alias_name = ""
-            module_path = ""
-            for c in children:
-                if c.type in ("qualified_name", "generic_name"):
-                    module_path = _node_text(c)
-                elif c.type == "identifier":
+            for c in (children[:eq_idx] if eq_idx >= 0 else children):
+                if c.type == "identifier":
                     alias_name = _node_text(c)
+                    break
+            module_path = ""
+            for c in (children[eq_idx + 1:] if eq_idx >= 0 else []):
+                if c.type in ("qualified_name", "generic_name", "identifier"):
+                    module_path = _node_text(c)
+                    break
             if not module_path or not alias_name:
                 return None
             line = node.start_point[0] + 1 if hasattr(node, "start_point") and node.start_point else 0
@@ -98,6 +109,11 @@ class CSharpImportAnalyzer:
 
         Alias imports (``using Timer = System.Timers.Timer;``) are checked
         against *name_usages*.
+
+        .. note::
+            Incremental rebuilds only parse changed files, so these warnings
+            are produced for files parsed in the current build; unchanged
+            files loaded from the index carry no import data.
         """
         unused: list[tuple[UseInfo, str, int]] = []
         for idx, use_info in enumerate(uses):
@@ -105,7 +121,11 @@ class CSharpImportAnalyzer:
                 continue
             used = any(n in name_usages for n in use_info.imported_names)
             if not used:
-                msg = f"Unused using directive: '{use_info.module_path}'"
+                names = ", ".join(use_info.imported_names)
+                msg = (
+                    f"Unused using directive: '{names}' "
+                    f"(alias for '{use_info.module_path}')"
+                )
                 unused.append((use_info, msg, idx))
         return unused
 

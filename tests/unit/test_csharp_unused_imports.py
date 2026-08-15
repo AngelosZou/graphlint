@@ -24,9 +24,25 @@ tree_sitter_available = pytest.mark.skipif(
 
 def _parse_source(source: str):
     """Parse C# *source* and return the resulting ParseResult."""
+    from graphlint.analyzer.language.csharp.parser import CSharpSourceParser
+
+    with tempfile.TemporaryDirectory() as tmp:
+        path = os.path.join(tmp, "Probe.cs")
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(source)
+        src = CSharpSourceParser(root_dir=tmp, config={})
+        return src.parse_file(path)
+
+
+def _analyze_in_memory(source: str):
+    """Parse C# *source* in-memory and run unused-import detection.
+
+    Returns ``(visitor, unused_messages)`` — no file IO, so it also runs in
+    restricted environments.
+    """
     import tree_sitter
     from graphlint.analyzer.language.csharp.constants import _get_csharp_language
-    from graphlint.analyzer.language.csharp.parser import CSharpSourceParser
+    from graphlint.analyzer.language.csharp.visitor import CSharpVisitor
 
     parser = tree_sitter.Parser()
     lang = _get_csharp_language()
@@ -36,12 +52,13 @@ def _parse_source(source: str):
         parser.language = lang
     tree = parser.parse(bytes(source, "utf-8"))
 
-    with tempfile.TemporaryDirectory() as tmp:
-        path = os.path.join(tmp, "Probe.cs")
-        with open(path, "w", encoding="utf-8") as f:
-            f.write(source)
-        src = CSharpSourceParser(root_dir=tmp, config={})
-        return src.parse_file(path)
+    analyzer = CSharpImportAnalyzer()
+    visitor = CSharpVisitor("Probe", "Probe.cs", analyzer)
+    visitor.visit(tree)
+    unused = analyzer.detect_unused_imports(
+        visitor.uses, visitor.name_usages, "Probe.cs",
+    )
+    return visitor, [msg for _, msg, _ in unused]
 
 
 # =============================================================================
@@ -86,6 +103,25 @@ class TestAnalyzeUsing:
         assert info.module_path == "System.Timers.Timer"   # real module path
         assert info.imported_names == ["Timer"]            # the alias name
         assert info.alias_map == {"Timer": "System.Timers.Timer"}
+
+    def test_alias_using_plain_identifier_rhs(self):
+        # ``using A = B;`` — alias of a type in the current namespace.
+        info = self._analyze_line("using A = B;\n")
+        assert info.module_path == "B"
+        assert info.imported_names == ["A"]
+        assert info.alias_map == {"A": "B"}
+
+    def test_alias_using_generic_rhs(self):
+        info = self._analyze_line("using Alias = List<int>;\n")
+        assert info.module_path == "List<int>"
+        assert info.imported_names == ["Alias"]
+        assert info.alias_map == {"Alias": "List<int>"}
+
+    def test_global_alias_using(self):
+        info = self._analyze_line("global using Timer = System.Timers.Timer;\n")
+        assert info.module_path == "System.Timers.Timer"
+        assert info.imported_names == ["Timer"]
+        assert info.is_static is False
 
     def test_static_using_is_wildcard(self):
         info = self._analyze_line("using static System.Math;\n")
@@ -136,6 +172,99 @@ class TestDetectUnusedImports:
 
     def test_empty_imports(self):
         assert CSharpImportAnalyzer().detect_unused_imports([], set(), "/test.cs") == []
+
+
+# =============================================================================
+# Alias usage positions — aliases used in these positions must NOT be flagged
+# =============================================================================
+
+
+@tree_sitter_available
+class TestUnusedAliasPositions:
+    """Aliases used in positions the visitor records must not be flagged.
+
+    Regression tests for false positives fixed alongside the unused-import
+    feature: base types, attributes, type arguments inside qualified generic
+    types, and explicitly-typed lambda parameters.
+    """
+
+    def _unused(self, source: str) -> list[str]:
+        return _analyze_in_memory(source)[1]
+
+    def test_alias_used_as_base_class_not_flagged(self):
+        source = """\
+using Timer = System.Timers.Timer;
+
+class Clock : Timer { }
+"""
+        assert self._unused(source) == []
+
+    def test_alias_used_as_base_generic_arg_not_flagged(self):
+        source = """\
+using Timer = System.Timers.Timer;
+
+class Clock : Base<Timer> { }
+"""
+        assert self._unused(source) == []
+
+    def test_alias_used_as_attribute_not_flagged(self):
+        source = """\
+using Fact = Xunit.FactAttribute;
+
+[Fact]
+class Tests { }
+"""
+        assert self._unused(source) == []
+
+    def test_alias_in_qualified_generic_arg_not_flagged(self):
+        source = """\
+using Timer = System.Timers.Timer;
+
+class Clock
+{
+    System.Collections.Generic.List<Timer> Timers;
+}
+"""
+        assert self._unused(source) == []
+
+    def test_alias_in_lambda_parameter_type_not_flagged(self):
+        source = """\
+using Timer = System.Timers.Timer;
+
+class Clock
+{
+    void M() { System.Func<Timer, int> f = (Timer t) => 1; }
+}
+"""
+        assert self._unused(source) == []
+
+    def test_plain_identifier_rhs_alias_unused_flagged(self):
+        source = """\
+using A = B;
+
+class Clock { }
+"""
+        unused = self._unused(source)
+        assert len(unused) == 1
+        assert "Unused using directive: 'A' (alias for 'B')" in unused[0]
+
+    def test_plain_identifier_rhs_alias_used_not_flagged(self):
+        source = """\
+using A = B;
+
+class Clock { A Make() { return null; } }
+"""
+        assert self._unused(source) == []
+
+    def test_unused_alias_message_names_alias_and_target(self):
+        source = """\
+using Timer = System.Timers.Timer;
+
+class Clock { }
+"""
+        unused = self._unused(source)
+        assert len(unused) == 1
+        assert "Unused using directive: 'Timer' (alias for 'System.Timers.Timer')" == unused[0]
 
 
 # =============================================================================
@@ -203,3 +332,31 @@ class Clock
         assert len(unused_msgs) == 1
         assert "Regex" in unused_msgs[0]
         assert "Timer" not in unused_msgs[0]
+
+    def test_alias_used_as_attribute_no_warning(self):
+        source = """\
+using Fact = Xunit.FactAttribute;
+
+[Fact]
+class Tests { }
+"""
+        warns = self._warn_types(source)
+        assert "unused_import" not in warns
+
+    def test_alias_used_as_base_class_no_warning(self):
+        source = """\
+using Timer = System.Timers.Timer;
+
+class Clock : Timer { }
+"""
+        warns = self._warn_types(source)
+        assert "unused_import" not in warns
+
+    def test_unused_alias_message_names_alias(self):
+        source = """\
+using Timer = System.Timers.Timer;
+
+class Clock { }
+"""
+        msgs = [w.message for w in _parse_source(source).warnings if w.warn_type == "unused_import"]
+        assert msgs == ["Unused using directive: 'Timer' (alias for 'System.Timers.Timer')"]
