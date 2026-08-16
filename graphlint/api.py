@@ -46,6 +46,7 @@ _OPTIONAL_LANG_SUPPORT: dict[str, tuple[str, str]] = {
     ".cjs": ("JavaScript", "pip install graphlint[typescript]"),
     ".c": ("C", "pip install graphlint[c]"),
     ".h": ("C", "pip install graphlint[c]"),
+    ".cpp": ("C++", "pip install graphlint[cpp]"),
 }
 
 # Languages already hinted at in this process (dedupe).
