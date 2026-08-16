@@ -872,21 +872,20 @@ class TSTypeScriptVisitor:
             for name in info.exported_names:
                 self._exported_names.add(name)
 
-        # Walk children to capture exported declarations
+        # Walk children to capture exported declarations.
+        # The ``default`` branch walks the exported declaration itself,
+        # so guard the outer loop against walking the same child twice
+        walked: set[int] = set()
         for child in node.children:
-            if child.type in ("function_declaration", "generator_function_declaration",
-                              "class_declaration", "abstract_class_declaration",
-                              "interface_declaration", "enum_declaration",
-                              "type_alias_declaration", "lexical_declaration",
-                              "variable_declaration", "export_clause", "export_specifier"):
-                self._walk(child)
-            elif child.type == "default":
+            if child.type == "default":
                 for c in node.children:
                     if c.type in ("function_declaration", "class_declaration",
                                   "arrow_function", "identifier", "call_expression"):
                         self._walk(c)
-            elif child.type in ("source", "string", "semicolon", "type", ";",
-                                "import_statement"):
+                        walked.add(id(c))
+            elif id(child) in walked or child.type in (
+                "source", "string", "semicolon", "type", ";", "import_statement"
+            ):
                 continue
             else:
                 self._walk(child)
@@ -1024,6 +1023,12 @@ class TSTypeScriptVisitor:
                     line=_node_line(node),
                 ))
                 self.name_usages.add(component_name.split(".")[-1])
+                self.references.append(ReferenceInfo(
+                    source_qname=sq,
+                    target_name=component_name,
+                    edge_type="jsx_element",
+                    line=_node_line(node),
+                ))
 
         for child in node.children:
             self._walk(child)

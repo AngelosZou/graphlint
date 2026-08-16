@@ -238,7 +238,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         {
             "name": "typescript_index",
             "file_pattern": "**/*.*[tjs][sx]",
-            "ast_pattern": "file_match:*/index.ts | file_match:*/index.js | file_match:*/index.tsx | file_match:*/index.mts | file_match:*/index.mjs",
+            "ast_pattern": "file_match:*/index.ts | file_match:*/index.js | file_match:*/index.tsx | file_match:*/index.jsx | file_match:*/index.mts | file_match:*/index.cts | file_match:*/index.mjs | file_match:*/index.cjs",
             "enabled": True,
             "description": "TypeScript/JavaScript module index entry",
         },
@@ -251,11 +251,8 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         },
         {
             "name": "typescript_nextjs",
-            # Kept as **/pages/** (not **/*.*[tjs][sx]): Next.js `pages/` is
-            # always entry-relevant and contains no Python/source files to leak
-            # into.
-            "file_pattern": "**/pages/**",
-            "ast_pattern": "file_match:**/pages/**",
+            "file_pattern": "**pages/*.*[tjs][sx]",
+            "ast_pattern": "file_match:**pages/**",
             "enabled": True,
             "description": "Next.js pages router entry",
         },

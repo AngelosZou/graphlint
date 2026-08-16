@@ -107,8 +107,14 @@ class TestTypeScriptConstants:
                     f"{name} pattern {pattern!r} must not match .{bad}"
                 )
 
-        # nextjs stays pages-scoped (its own detector still excludes non-TS).
-        assert ts_rules["typescript_nextjs"]["file_pattern"] == "**/pages/**"
+        assert ts_rules["typescript_nextjs"]["file_pattern"] == "**pages/*.*[tjs][sx]"
+        nextjs = ts_rules["typescript_nextjs"]["file_pattern"]
+        for p in ("pages/index.ts", "src/pages/app.tsx", "pages/deep/nested/a.ts"):
+            assert fnmatch.fnmatch(p, nextjs), f"nextjs pattern must match {p}"
+        for p in ("app/pages/views.py", "pages/main.rs", "pages/Program.cs"):
+            assert not fnmatch.fnmatch(p, nextjs), (
+                f"nextjs pattern must not leak into {p}"
+            )
 
     def test_special_names(self):
         preserved = (
