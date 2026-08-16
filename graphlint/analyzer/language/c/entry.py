@@ -5,6 +5,11 @@ Pattern syntax:
 
     file_match:<glob>           Match file path against glob
     function_def:<pattern>      Match function definitions
+    test_file                   Match C test files by filename convention
+
+Entry detection currently uses AST/filename heuristics only;
+build-config-driven entry (CMakeLists ``add_executable`` / Makefile link
+rules) is a documented follow-up — do NOT implement here.
 """
 
 from __future__ import annotations
@@ -14,6 +19,7 @@ import os
 from typing import Any
 
 from graphlint.analyzer._types import EntryInfo, NodeInfo, ParseResult
+from graphlint.analyzer.language.c.constants import _is_test_file
 
 
 class CEntryPointDetector:
@@ -38,6 +44,17 @@ class CEntryPointDetector:
     ) -> list[EntryInfo]:
         entries: list[EntryInfo] = []
 
+        # Reverse map qualified_name -> node_id, built once before the rule
+        # loop to avoid the O(n) scan in _find_node_id. `typedef struct {...}
+        # X;` can yield two nodes (struct + typedef) with the same qualified
+        # name; when a qname maps to both, prefer the function node id.
+        qname_to_id: dict[str, int] = {}
+        for n in nodes:
+            if n.qualified_name not in qname_to_id:
+                qname_to_id[n.qualified_name] = n.id
+            elif n.node_type == "function":
+                qname_to_id[n.qualified_name] = n.id
+
         for file_path, pr in parse_results.items():
             if not (file_path.endswith(".c") or file_path.endswith(".h")):
                 continue
@@ -54,7 +71,7 @@ class CEntryPointDetector:
                     continue
 
                 entries.extend(
-                    self._detect_rule(rule, file_path, pr, nodes, node_id_map)
+                    self._detect_rule(rule, file_path, pr, nodes, qname_to_id)
                 )
 
         return entries
@@ -65,7 +82,7 @@ class CEntryPointDetector:
         file_path: str,
         pr: ParseResult,
         nodes: list[NodeInfo],
-        node_id_map: dict[int, NodeInfo],
+        qname_to_id: dict[str, int],
     ) -> list[EntryInfo]:
         pattern = rule.get("ast_pattern", "")
         if not pattern:
@@ -74,6 +91,10 @@ class CEntryPointDetector:
         rule_name = rule.get("name", "custom")
         no_propagate = rule.get("no_propagate", False)
         description = rule.get("description", pattern)
+
+        # Whole-pattern handlers (single-token patterns like "test_file")
+        if pattern.strip() == "test_file":
+            return self._check_test_file(rule, file_path, pr, nodes)
 
         or_parts = [p.strip() for p in pattern.split(" | ") if p.strip()]
         if not or_parts:
@@ -103,7 +124,7 @@ class CEntryPointDetector:
                     if node.node_type == "function":
                         if fnmatch.fnmatch(node.name, name_pattern):
                             # Find the real node_id from the global node list
-                            nid = self._find_node_id(node.qualified_name, nodes)
+                            nid = self._find_node_id(node.qualified_name, qname_to_id)
                             entries.append(
                                 EntryInfo(
                                     rule_name=rule_name,
@@ -118,11 +139,39 @@ class CEntryPointDetector:
 
         return entries
 
+    def _check_test_file(
+        self,
+        rule: dict[str, Any],
+        file_path: str,
+        pr: ParseResult,
+        nodes: list[NodeInfo],
+    ) -> list[EntryInfo]:
+        """Detect C test files by filename convention.
+
+        Uses the filename conventions defined in ``constants.py``
+        (``_C_TEST_FILE_SUFFIXES`` / ``_C_TEST_FILE_PREFIXES``) plus the
+        configured ``test_patterns`` via ``_is_test_file``.
+
+        NOTE: CMake ``enable_testing()`` / ``add_test(NAME ... COMMAND ...)``
+        would be the authoritative build-config-driven source for test
+        detection; integrating it is scoped as a follow-up, mirroring how C#
+        parses ``.csproj``. No behavior change here.
+        """
+        if not _is_test_file(file_path, self.config):
+            return []
+
+        return [
+            EntryInfo(
+                rule_name=rule.get("name", "c_test"),
+                file_path=file_path,
+                line=1,
+                description=rule.get("description", "C test file"),
+                no_propagate=rule.get("no_propagate", True),
+            )
+        ]
+
     def _find_node_id(
-        self, qualified_name: str, nodes: list[NodeInfo]
+        self, qualified_name: str, qname_to_id: dict[str, int]
     ) -> int:
-        """Find the global node id for a given qualified name."""
-        for n in nodes:
-            if n.qualified_name == qualified_name:
-                return n.id
-        return 0
+        """Look up the global node id for a qualified name (O(1))."""
+        return qname_to_id.get(qualified_name, 0)

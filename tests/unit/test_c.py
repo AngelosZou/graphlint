@@ -436,6 +436,42 @@ int internal_var;
         assert "external_var" in names
         assert "internal_var" in names
 
+    def test_forward_declaration_no_node(self):
+        source = "int foo(void);\n"
+        visitor = _parse_source(source)
+        names = {n.name for n in visitor.nodes}
+        assert "foo" not in names
+
+    def test_forward_declaration_pointer_return_no_node(self):
+        source = "int *foo(void);\n"
+        visitor = _parse_source(source)
+        names = {n.name for n in visitor.nodes}
+        assert "foo" not in names
+
+    def test_forward_declaration_initializer_no_node(self):
+        source = "int foo(void) = 0;\n"
+        visitor = _parse_source(source)
+        names = {n.name for n in visitor.nodes}
+        assert "foo" not in names
+
+    def test_pointer_field_no_self_read(self):
+        source = """\
+struct S {
+    char *name;
+    int count;
+};
+"""
+        visitor = _parse_source(source)
+        field_nodes = [n for n in visitor.nodes if n.node_type == "field"]
+        field_names = {n.name for n in field_nodes}
+        assert field_names == {"name", "count"}
+        self_refs = [
+            r for r in visitor.references
+            if r.target_name in ("name", "count")
+            and r.source_qname == "test_module.S"
+        ]
+        assert self_refs == []
+
 
 # =============================================================================
 # Entry detection tests (require tree-sitter-c)
@@ -529,6 +565,66 @@ int main(int argc, char *argv[]) {
         entries = self._detect_entries(source, rules)
         main_entries = [e for e in entries if e.rule_name == "multi_entry"]
         assert len(main_entries) >= 1
+
+    def test_winmain_detected(self):
+        source = """\
+int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
+                   LPSTR lpCmdLine, int nCmdShow) {
+    return 0;
+}
+"""
+        rules = [{
+            "name": "c_main",
+            "file_pattern": "**/*.c",
+            "ast_pattern": (
+                "function_def:main | function_def:WinMain | "
+                "function_def:wWinMain | function_def:DllMain | "
+                "function_def:_tmain"
+            ),
+            "enabled": True,
+        }]
+        entries = self._detect_entries(source, rules)
+        assert any(e.rule_name == "c_main" for e in entries)
+
+    def test_c_test_file_entry(self):
+        source = "int main(void) { return 0; }\n"
+        rules = [{
+            "name": "c_test",
+            "file_pattern": "**/*.c",
+            "ast_pattern": "test_file",
+            "enabled": True,
+            "no_propagate": True,
+        }]
+        entries = self._detect_entries(source, rules, file_name="test_foo.c")
+        test_entries = [e for e in entries if e.rule_name == "c_test"]
+        assert len(test_entries) == 1
+        assert test_entries[0].no_propagate is True
+
+    def test_c_test_file_suffix_entry(self):
+        source = "int main(void) { return 0; }\n"
+        rules = [{
+            "name": "c_test",
+            "file_pattern": "**/*.c",
+            "ast_pattern": "test_file",
+            "enabled": True,
+            "no_propagate": True,
+        }]
+        entries = self._detect_entries(source, rules, file_name="foo_test.c")
+        test_entries = [e for e in entries if e.rule_name == "c_test"]
+        assert len(test_entries) == 1
+
+    def test_c_test_non_test_file_no_entry(self):
+        source = "int main(void) { return 0; }\n"
+        rules = [{
+            "name": "c_test",
+            "file_pattern": "**/*.c",
+            "ast_pattern": "test_file",
+            "enabled": True,
+            "no_propagate": True,
+        }]
+        entries = self._detect_entries(source, rules, file_name="src/main.c")
+        test_entries = [e for e in entries if e.rule_name == "c_test"]
+        assert test_entries == []
 
 
 # =============================================================================

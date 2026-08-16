@@ -91,6 +91,40 @@ def _extract_type_name(type_def: Any) -> str:
     return ""
 
 
+def _declarator_is_function(decl: Any) -> bool:
+    """Return True when *decl* resolves to a real function declarator.
+
+    Distinguishes a function declaration from a function-pointer variable:
+
+    * ``int foo(void);``  -> ``function_declarator`` whose declarator field is
+      an ``identifier`` (real function).
+    * ``int (*fp)(void);`` -> ``function_declarator`` whose declarator field is
+      a ``parenthesized_declarator`` (a function-pointer *variable*).
+
+    ``pointer_declarator`` (``int *foo(void);``) and ``init_declarator``
+    (``int foo(void) = 0;``) are recursed into via their declarator field.
+    """
+    if decl is None or not hasattr(decl, "type"):
+        return False
+    t = decl.type
+
+    if t == "function_declarator":
+        declarator = decl.child_by_field_name("declarator")
+        if declarator is not None:
+            return declarator.type != "parenthesized_declarator"
+        for child in decl.children:
+            if child.type == "identifier":
+                return True
+            if child.type == "parenthesized_declarator":
+                return False
+        return False
+
+    if t in ("pointer_declarator", "init_declarator"):
+        return _declarator_is_function(decl.child_by_field_name("declarator"))
+
+    return False
+
+
 def _extract_macro_name(macro_node: Any) -> str:
     name_node = macro_node.child_by_field_name("name")
     if name_node is not None:
@@ -317,6 +351,12 @@ class CVisitor:
     # ------------------------------------------------------------------
 
     def _visit_function_definition(self, node: Any) -> None:
+        # NOTE: linkage model. Every function is treated as module-scoped and
+        # `static` (internal) linkage is NOT tracked. Same-named `static`
+        # helpers in different translation units currently cross-link by
+        # qualified name, which can over-report reachability. Tracking storage
+        # class specifiers (static vs extern) is a documented follow-up; keep
+        # behavior unchanged for now.
         name = _extract_function_name(node)
         if not name:
             return
@@ -380,15 +420,15 @@ class CVisitor:
             return
 
         has_body = node.child_by_field_name("body") is not None
-        has_function_declarator = False
+        is_function_forward_decl = False
         for child in node.children:
-            if child.type in ("function_declarator", "pointer_declarator"):
-                inner_name = _extract_declarator_name(child)
-                if inner_name:
-                    has_function_declarator = True
-                break
+            if child.type in ("function_declarator", "pointer_declarator",
+                              "init_declarator"):
+                if _declarator_is_function(child):
+                    is_function_forward_decl = True
+                    break
 
-        if has_function_declarator and not has_body:
+        if is_function_forward_decl and not has_body:
             return
 
         name = _extract_variable_name(node)
@@ -450,10 +490,14 @@ class CVisitor:
             if child.type in ("primitive_type", "sized_type_specifier",
                               "type_qualifier", ","):
                 continue
-            if child.type == "pointer_declarator":
-                for sub in child.children:
-                    if sub.type == "field_identifier" and had_name and _node_text(sub) == name:
-                        continue
+            if child.type in ("pointer_declarator", "array_declarator",
+                              "function_declarator", "parenthesized_declarator"):
+                # A pointer/array/function-pointer field's declarator names the
+                # field itself (`char *name;`, `int arr[4];`). Do not walk that
+                # subtree, otherwise the field_identifier leaf is visited as a
+                # read reference from the struct to its own field.
+                if had_name and _extract_declarator_name(child) == name:
+                    continue
             self._walk(child)
 
     # ------------------------------------------------------------------
