@@ -36,6 +36,14 @@ from graphlint.storage.schema import SCHEMA_VERSION, get_user_version, is_schema
 _OPTIONAL_LANG_SUPPORT: dict[str, tuple[str, str]] = {
     ".rs": ("Rust", "pip install graphlint[rust]"),
     ".cs": ("C#", "pip install graphlint[csharp]"),
+    ".ts": ("TypeScript", "pip install graphlint[typescript]"),
+    ".tsx": ("TypeScript/React", "pip install graphlint[typescript]"),
+    ".mts": ("TypeScript", "pip install graphlint[typescript]"),
+    ".cts": ("TypeScript", "pip install graphlint[typescript]"),
+    ".js": ("JavaScript", "pip install graphlint[typescript]"),
+    ".jsx": ("JavaScript/React", "pip install graphlint[typescript]"),
+    ".mjs": ("JavaScript", "pip install graphlint[typescript]"),
+    ".cjs": ("JavaScript", "pip install graphlint[typescript]"),
 }
 
 # Languages already hinted at in this process (dedupe).
@@ -50,6 +58,8 @@ def _build_registry() -> LanguageRegistry:
     _try_register_rust(registry)
     # C# adapter — skipped when tree-sitter-c-sharp is missing
     _try_register_csharp(registry)
+    # TypeScript adapter — silently skipped when tree-sitter-typescript is not installed
+    _try_register_typescript(registry)
     return registry
 
 
@@ -107,6 +117,22 @@ def _warn_missing_lang_support(root_dir: str, registry: LanguageRegistry) -> Non
             f"Install with: {install_cmd}",
             file=sys.stderr,
         )
+
+
+def _try_register_typescript(registry: LanguageRegistry) -> None:
+    """Register the TypeScript/JavaScript adapter if its tree-sitter
+    grammars are available."""
+    try:
+        from graphlint.analyzer.language.typescript import TypeScriptAdapter
+        from graphlint.analyzer.language.typescript.constants import (
+            _TREE_SITTER_TYPESCRIPT_AVAILABLE,
+            _TREE_SITTER_JAVASCRIPT_AVAILABLE,
+        )
+    except ImportError:
+        return
+    available = _TREE_SITTER_TYPESCRIPT_AVAILABLE or _TREE_SITTER_JAVASCRIPT_AVAILABLE
+    if available:
+        _try_register(registry, TypeScriptAdapter)
 
 
 # ---------------------------------------------------------------------------
