@@ -23,6 +23,7 @@ const GRAPHLINT_SKILL: SkillRegistration = {
   description: 'Dead-code detection for AI-generated codebases via the graphlint dependency-graph analyzer.',
   whenToUse:
     'After code modifications, or before analyzing a codebase, to find dead code, circular references, unused imports and other warnings.',
+  source: 'custom',
   invocation: { modelInvocable: true, userInvocable: true },
   content: DSH_INTRO + SKILL_BODY,
 }

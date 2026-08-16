@@ -76,6 +76,7 @@ export interface SkillRegistration {
   description: string
   whenToUse?: string
   content: string
+  source: string
   invocation?: {
     modelInvocable: boolean
     userInvocable: boolean
