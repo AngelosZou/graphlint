@@ -22,7 +22,7 @@ from graphlint.analyzer.language.typescript.parser import (
 )
 
 
-class TSTypeScriptAdapter(LanguageAdapter):
+class TypeScriptAdapter(LanguageAdapter):
     """Language adapter for TypeScript / JavaScript.
 
     Requires ``tree-sitter`` + ``tree-sitter-typescript`` +

@@ -224,27 +224,36 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         },
         {
             "name": "typescript_main",
-            "file_pattern": "**/*",
+            # `**/*.*[tjs][sx]` matches all TS/JS extensions (.ts .tsx .js .jsx
+            # .mts .cts .mjs .cjs — every one ends in "ts"/"js"/"sx") while NOT
+            # matching .py/.rs/.cs/.sh, so the shared entry-rule list can't leak
+            # TS rules into other languages' detectors. The only extra matches
+            # are .css/.scss, which no adapter parses (and the TS detector
+            # re-filters to the 8 real extensions), so they are harmless.
+            "file_pattern": "**/*.*[tjs][sx]",
             "ast_pattern": "function_def:main",
             "enabled": True,
             "description": "TypeScript/JavaScript main() function entry",
         },
         {
             "name": "typescript_index",
-            "file_pattern": "**/*",
+            "file_pattern": "**/*.*[tjs][sx]",
             "ast_pattern": "file_match:*/index.ts | file_match:*/index.js | file_match:*/index.tsx | file_match:*/index.mts | file_match:*/index.mjs",
             "enabled": True,
             "description": "TypeScript/JavaScript module index entry",
         },
         {
             "name": "typescript_cli",
-            "file_pattern": "**/*",
+            "file_pattern": "**/*.*[tjs][sx]",
             "ast_pattern": "function_call:app.listen | function_call:server.listen | function_call:express | class_instantiation:Express | class_instantiation:Koa",
             "enabled": True,
             "description": "TypeScript CLI/server listen entry",
         },
         {
             "name": "typescript_nextjs",
+            # Kept as **/pages/** (not **/*.*[tjs][sx]): Next.js `pages/` is
+            # always entry-relevant and contains no Python/source files to leak
+            # into.
             "file_pattern": "**/pages/**",
             "ast_pattern": "file_match:**/pages/**",
             "enabled": True,
@@ -252,21 +261,21 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         },
         {
             "name": "typescript_nestjs",
-            "file_pattern": "**/*",
+            "file_pattern": "**/*.*[tjs][sx]",
             "ast_pattern": "decorator:Module | decorator:Controller | decorator:Injectable",
             "enabled": True,
             "description": "NestJS entry (Module/Controller/Injectable)",
         },
         {
             "name": "typescript_react_component",
-            "file_pattern": "**/*",
+            "file_pattern": "**/*.*[tjs][sx]",
             "ast_pattern": "jsx_element:*",
             "enabled": True,
             "description": "React component JSX entry",
         },
         {
             "name": "typescript_test",
-            "file_pattern": "**/*",
+            "file_pattern": "**/*.*[tjs][sx]",
             "ast_pattern": "test_file",
             "enabled": True,
             "description": "TypeScript test files (Jest/Vitest/Mocha conventions)",

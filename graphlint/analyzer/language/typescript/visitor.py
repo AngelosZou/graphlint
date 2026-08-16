@@ -10,7 +10,6 @@ from graphlint.analyzer._types import NodeInfo, ReferenceInfo
 from graphlint.analyzer.language.typescript.constants import (
     _CST_TYPE_TO_NODE_TYPE,
     _TYPE_MEMBER_NODE_TYPES,
-    _REACT_LIFECYCLE_NAMES,
 )
 from graphlint.analyzer.language.typescript.imports import (
     TSTypeScriptImportAnalyzer,
@@ -215,22 +214,48 @@ def _has_modifier(node: Any, modifier: str) -> bool:
 
 
 def _extract_base_types(node: Any) -> list[str]:
-    """Extract base class and interface names from a class declaration."""
+    """Extract base class and interface names from a class/interface declaration.
+
+    tree-sitter-typescript nests heritage clauses under named (non-field)
+    children:
+    - ``class_declaration``: ``class_heritage`` -> ``extends_clause`` /
+      ``implements_clause``
+    - ``interface_declaration``: ``extends_type_clause``
+    """
+
     bases: list[str] = []
-    # extends clause
-    extends = node.child_by_field_name("extends") or node.child_by_field_name("class_heritage")
-    if extends is not None:
-        if extends.type == "extends_clause":
-            for child in extends.children:
-                if child.type in ("identifier", "member_expression", "generic_type"):
-                    bases.append(_scoped_name(child) or _generic_base_name(child))
-    # implements clause
-    implements = node.child_by_field_name("implements") or node.child_by_field_name("interface_heritage")
-    if implements is not None:
-        if implements.type == "implements_clause":
-            for child in implements.children:
-                if child.type in ("identifier", "member_expression", "generic_type"):
-                    bases.append(_scoped_name(child) or _generic_base_name(child))
+
+    def _collect_names(clause: Any) -> None:
+        for child in clause.children:
+            if child.type in (
+                "identifier",
+                "type_identifier",
+                "member_expression",
+                "generic_type",
+            ):
+                name = _scoped_name(child) or _generic_base_name(child)
+                if name:
+                    bases.append(name)
+
+    heritage = node.child_by_field_name("class_heritage") or node.child_by_field_name("extends")
+    if heritage is None:
+        heritage = next(
+            (c for c in node.children if c.type == "class_heritage"),
+            None,
+        )
+
+    if heritage is not None:
+        for clause in heritage.children:
+            if clause.type in ("extends_clause", "implements_clause"):
+                _collect_names(clause)
+
+    interface_extends = next(
+        (c for c in node.children if c.type == "extends_type_clause"),
+        None,
+    )
+    if interface_extends is not None:
+        _collect_names(interface_extends)
+
     return bases
 
 
@@ -268,6 +293,11 @@ class TSTypeScriptVisitor:
 
         # Track exports for module-level analysis
         self._exported_names: set[str] = set()
+
+    @property
+    def exported_names(self) -> set[str]:
+        """Names exported by this module (from export statements)."""
+        return self._exported_names
 
     def _current_qname(self) -> str:
         return ".".join(self._context) if self._context else ""
@@ -420,6 +450,7 @@ class TSTypeScriptVisitor:
                 edge_type="inherit",
                 line=_node_line(node),
             ))
+            self.name_usages.add(bt.split(".")[-1])
 
         # Emit decorate edges for decorators
         for dname in dec_names:
@@ -593,7 +624,7 @@ class TSTypeScriptVisitor:
                 if child.type in ("type_annotation", "type", "modifier",
                                   "visibility", "public", "private", "protected",
                                   "readonly", "static", "abstract", "override",
-                                  "async", "declare", "readonly", "optional"
+                                  "async", "declare", "readonly", "optional",
                                   "semicolon", "?", "!"):
                     continue
                 self._walk(child)
@@ -697,12 +728,6 @@ class TSTypeScriptVisitor:
         # Find variable declarators
         declarators = [c for c in node.children if c.type == "variable_declarator"]
 
-        # Get type annotation if present
-        type_ann = ""
-        type_node = node.child_by_field_name("type_annotation") or node.child_by_field_name("type")
-        if type_node:
-            type_ann = _node_text(type_node)
-
         for decl in declarators:
             name_node = decl.child_by_field_name("name")
             if not name_node:
@@ -720,6 +745,11 @@ class TSTypeScriptVisitor:
             name = _node_text(name_node)
             if not name:
                 continue
+
+            # Type annotation lives on the declarator itself (``const u: User``
+            # -> variable_declarator field ``type``), not on the declaration.
+            type_node = decl.child_by_field_name("type") or decl.child_by_field_name("type_annotation")
+            type_ann = _node_text(type_node) if type_node else ""
 
             qualified = sq + "." + name if sq else name
             info = NodeInfo(
@@ -743,7 +773,7 @@ class TSTypeScriptVisitor:
                 line=_node_line(decl),
             ))
 
-            if type_ann:
+            if type_node:
                 self._emit_type_read(type_node, qualified, _node_line(decl))
 
             # Visit initializer
@@ -1061,12 +1091,21 @@ class TSTypeScriptVisitor:
             "interface_declaration", "enum_declaration",
             "type_alias_declaration", "method_definition",
             "variable_declarator", "import_specifier",
-            "named_imports", "import_statement",
+            "named_imports", "import_clause", "import_statement",
+            "namespace_import",
             "namespace_declaration", "internal_module",
             "public_field_definition", "property_signature",
             "shorthand_property_identifier",
             "pair_pattern", "object_pattern",
         ):
+            # Import bindings are definitions, not references: the whole import
+            # subtree is excluded from usage tracking. Default imports have the
+            # binding identifier as a bare child of ``import_clause`` with no
+            # ``name``/``alias``/``namespace`` field, so field-based checks
+            # alone cannot detect them — skip unconditionally.
+            if ptype in ("import_specifier", "named_imports", "import_clause",
+                         "import_statement", "namespace_import"):
+                return
             # Check if this is the name field of the parent, not a reference
             if node == parent.child_by_field_name("name"):
                 return
@@ -1089,16 +1128,6 @@ class TSTypeScriptVisitor:
             # For namespace
             if ptype in ("namespace_declaration", "internal_module") and node == parent.child_by_field_name("name"):
                 return
-            # Import bindings are definitions, not references. The referenced
-            # local name lives in the `alias` field (``import { X as Y }`` -> Y)
-            # or the `namespace` field (``import * as Y``), so exclude the whole
-            # import clause subtree from usage tracking here.
-            if ptype in ("import_specifier", "named_imports", "import_clause",
-                         "import_statement", "namespace_import"):
-                if node == parent.child_by_field_name("name") or \
-                   node == parent.child_by_field_name("alias") or \
-                   node == parent.child_by_field_name("namespace"):
-                    return
 
         name = _node_text(node)
         if not name or name in ("import", "export", "default", "from", "as", "type", "typeof", "const", "let", "var", "function", "class", "interface", "enum", "namespace", "abstract", "async", "await", "new", "this", "super", "return", "if", "else", "for", "while", "do", "switch", "case", "break", "continue", "try", "catch", "finally", "throw", "debugger", "with", "yield", "extends", "implements", "static", "public", "private", "protected", "readonly", "declare", "module", "require"):
@@ -1135,6 +1164,7 @@ class TSTypeScriptVisitor:
                                     edge_type="read",
                                     line=line,
                                 ))
+                                self.name_usages.add(type_name.split(".")[-1])
         # Return type
         rt = node.child_by_field_name("return_type") or node.child_by_field_name("type_annotation")
         if rt:
@@ -1146,6 +1176,7 @@ class TSTypeScriptVisitor:
                     edge_type="read",
                     line=line,
                 ))
+                self.name_usages.add(type_name.split(".")[-1])
 
     def _emit_type_read(self, type_node: Any, qualified: str, line: int) -> None:
         """Emit a read edge for a type annotation."""
@@ -1159,6 +1190,7 @@ class TSTypeScriptVisitor:
                 edge_type="read",
                 line=line,
             ))
+            self.name_usages.add(type_name.split(".")[-1])
 
     def _extract_doc_string(self, node: Any) -> str:
         """Extract JSDoc comment from preceding nodes."""

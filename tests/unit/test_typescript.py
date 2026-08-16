@@ -3,15 +3,15 @@
 
 from __future__ import annotations
 
+import fnmatch
 import os
-import tempfile
 from typing import Any
 
 import pytest
 
-from graphlint.analyzer._types import GraphBuildResult, NodeInfo
-from graphlint.analyzer.warnings import WarningCollector
+from graphlint.config.defaults import DEFAULT_CONFIG
 from graphlint.analyzer.language.typescript.constants import (
+    _REACT_LIFECYCLE_NAMES,
     _TYPESCRIPT_DEFAULT_EXCLUDES,
     _TYPESCRIPT_PUBLIC_API_NAMES,
     _TYPESCRIPT_SPECIAL_NAMES,
@@ -23,7 +23,6 @@ from graphlint.analyzer.language.typescript.constants import (
     _is_tsx_file,
 )
 from graphlint.analyzer.language.typescript.imports import TSTypeScriptImportAnalyzer
-from graphlint.analyzer.language.typescript.visitor import TSTypeScriptVisitor
 
 
 tree_sitter_available = pytest.mark.skipif(
@@ -70,10 +69,63 @@ class TestTypeScriptConstants:
         assert _is_test_file("index.ts", {}) is False
         assert _is_test_file("src/app.ts", {}) is False
 
+    def test_is_test_file_any_depth(self):
+        # Jest/Vitest conventions must match at ANY depth, not just root.
+        assert _is_test_file("src/__tests__/foo.ts", {}) is True
+        assert _is_test_file("src/__tests__/foo.test.ts", {}) is True
+        assert _is_test_file("src/__test__/foo.ts", {}) is True
+        assert _is_test_file("components/Button.test.tsx", {}) is True
+        assert _is_test_file("deep/nested/spec/helper.spec.js", {}) is True
+        assert _is_test_file("src/app.ts", {}) is False
+
+    def test_entry_file_pattern_excludes_other_languages(self):
+        ts_rules = {
+            r["name"]: r
+            for r in DEFAULT_CONFIG["entry_rules"]
+            if r.get("name", "").startswith("typescript_")
+        }
+        assert set(ts_rules) == {
+            "typescript_main", "typescript_index", "typescript_cli",
+            "typescript_nextjs", "typescript_nestjs",
+            "typescript_react_component", "typescript_test",
+        }
+
+        globbed = [
+            name for name, r in ts_rules.items()
+            if r["file_pattern"] == "**/*.*[tjs][sx]"
+        ]
+        assert len(globbed) == 6
+
+        for name in globbed:
+            pattern = ts_rules[name]["file_pattern"]
+            for ext in (".ts", ".tsx", ".js", ".jsx", ".mts", ".cts", ".mjs", ".cjs"):
+                assert fnmatch.fnmatch(f"src/app{ext}", pattern), (
+                    f"{name} pattern {pattern!r} must match {ext}"
+                )
+            for bad in (".py", ".rs", ".cs", ".sh"):
+                assert not fnmatch.fnmatch(f"src/app{bad}", pattern), (
+                    f"{name} pattern {pattern!r} must not match .{bad}"
+                )
+
+        # nextjs stays pages-scoped (its own detector still excludes non-TS).
+        assert ts_rules["typescript_nextjs"]["file_pattern"] == "**/pages/**"
+
     def test_special_names(self):
-        for n in ("constructor", "toString", "valueOf", "then", "catch",
-                  "apply", "call", "bind", "get", "set", "next"):
+        preserved = (
+            "constructor", "toString", "valueOf", "toJSON",
+            "Symbol.iterator", "Symbol.asyncIterator",
+            "Symbol.toPrimitive", "Symbol.toStringTag",
+        )
+        for n in preserved:
             assert n in _TYPESCRIPT_SPECIAL_NAMES
+        # React lifecycle methods are runtime-invoked and must never be dead.
+        assert _REACT_LIFECYCLE_NAMES <= _TYPESCRIPT_SPECIAL_NAMES
+        removed = (
+            "get", "set", "apply", "call", "bind", "then", "catch",
+            "finally", "next", "return", "throw",
+        )
+        for n in removed:
+            assert n not in _TYPESCRIPT_SPECIAL_NAMES
 
     def test_public_api_names(self):
         assert "main" in _TYPESCRIPT_PUBLIC_API_NAMES
@@ -261,3 +313,50 @@ class TestTypeScriptParser:
         result = self._parse(src)
         warns = [w for w in result.warnings if w.warn_type == "unused_import"]
         assert warns == [], f"side-effect import should be skipped: {warns}"
+
+    def test_type_position_usage_not_unused(self):
+        # Type annotation, extends clause, and type-only imports must register
+        # usage (or be skipped) so they are never reported unused.
+        src = (
+            'import { User } from "./user";\n'
+            'import { Base } from "./base";\n'
+            'import type { Options } from "./types";\n'
+            "const u: User = null;\n"
+            "export class X extends Base {}\n"
+        )
+        result = self._parse(src)
+        warns = [w for w in result.warnings if w.warn_type == "unused_import"]
+        assert warns == [], f"type-position usage should not be unused: {warns}"
+
+    def test_default_and_namespace_imports_not_unused(self):
+        src = (
+            'import express from "express";\n'
+            'import * as Net from "net";\n'
+            "export function main() { express(); Net.connect(); }\n"
+        )
+        result = self._parse(src)
+        warns = [w for w in result.warnings if w.warn_type == "unused_import"]
+        assert warns == [], f"default/namespace import should not be unused: {warns}"
+
+    def test_genuinely_unused_default_import_still_flagged(self):
+        src = 'import express from "express";\n' "export const x = 1;\n"
+        result = self._parse(src)
+        warns = [w for w in result.warnings if w.warn_type == "unused_import"]
+        assert warns and "express" in warns[0].message
+
+    def test_public_as_entry_only_exported(self):
+        from graphlint.analyzer.language.typescript.entry import TSEntryPointDetector
+
+        src = (
+            "export function main() {}\n"
+            "function helper() {}\n"
+            "export const pub = 1;\n"
+        )
+        result = self._parse(src)
+        detector = TSEntryPointDetector({"_public_as_entry": True, "entry_rules": []})
+        entries = detector.detect({result.file_path: result}, result.nodes, {})
+        node_names = {n.id: n.name for n in result.nodes}
+        entry_names = {node_names[e.node_id] for e in entries}
+        assert "main" in entry_names
+        assert "pub" in entry_names
+        assert "helper" not in entry_names

@@ -91,6 +91,8 @@ class TSTypeScriptSourceParser:
             result.name_usages = visitor.name_usages
             result.references = visitor.references
             result.warnings.extend(visitor.warnings)
+            result.exports = list(visitor.exports)
+            result.exported_names = visitor.exported_names
 
             # Unused-import detection (mirrors python/rust backends).
             unused = import_analyzer.detect_unused_imports(

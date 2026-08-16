@@ -45,32 +45,8 @@ _TYPESCRIPT_PUBLIC_API_NAMES: frozenset[str] = frozenset(
 # Special names — methods invoked implicitly by the JS/TS runtime or compiler
 # ---------------------------------------------------------------------------
 
-_TYPESCRIPT_SPECIAL_NAMES: frozenset[str] = frozenset(
-    {
-        "constructor",
-        "toString",
-        "valueOf",
-        "toJSON",
-        "Symbol.iterator",
-        "Symbol.asyncIterator",
-        "Symbol.toPrimitive",
-        "Symbol.toStringTag",
-        "then",
-        "catch",
-        "finally",
-        "get",
-        "set",
-        "apply",
-        "call",
-        "bind",
-        "hasInstance",
-        "next",
-        "return",
-        "throw",
-    }
-)
-
-# React lifecycle methods
+# React lifecycle methods — invoked implicitly by the React runtime, so they
+# must never be treated as dead code even when not referenced elsewhere.
 _REACT_LIFECYCLE_NAMES: frozenset[str] = frozenset(
     {
         "render",
@@ -84,6 +60,23 @@ _REACT_LIFECYCLE_NAMES: frozenset[str] = frozenset(
         "getDerivedStateFromError",
     }
 )
+
+# Genuine language/runtime-special names only. Deliberately narrow: names like
+# ``get``/``set``/``apply``/``call``/``bind``/``then``/``catch``/``finally``/
+# ``next``/``return``/``throw`` are ordinary JS identifiers that would
+# over-suppress dead-code warnings for regular methods, so they are excluded.
+_TYPESCRIPT_SPECIAL_NAMES: frozenset[str] = frozenset(
+    {
+        "constructor",
+        "toString",
+        "valueOf",
+        "toJSON",
+        "Symbol.iterator",
+        "Symbol.asyncIterator",
+        "Symbol.toPrimitive",
+        "Symbol.toStringTag",
+    }
+) | _REACT_LIFECYCLE_NAMES
 
 # ---------------------------------------------------------------------------
 # Default exclude patterns
@@ -204,13 +197,18 @@ _TS_DEFAULT_FILE_PATTERNS: tuple[str, ...] = (
 )
 
 _TS_DEFAULT_DIR_PATTERNS: tuple[str, ...] = (
-    "__tests__/", "tests/", "test/", "spec/",
+    "__tests__/", "__test__/", "tests/", "test/", "spec/",
     "e2e/", "__mocks__/",
 )
 
 
 def _is_test_file(file_path: str, config: dict[str, Any]) -> bool:
-    """Check whether *file_path* is a TS/JS test file."""
+    """Check whether *file_path* is a TS/JS test file.
+
+    Test conventions match at ANY depth: ``src/__tests__/foo.ts`` and
+    ``components/Button.test.tsx`` are both test files, not just root-level
+    ``__tests__/`` or ``*.test.ts``.
+    """
     test_patterns = config.get("test_patterns", {})
     file_patterns = test_patterns.get("file_patterns", list(_TS_DEFAULT_FILE_PATTERNS))
     dir_patterns = test_patterns.get("dir_patterns", list(_TS_DEFAULT_DIR_PATTERNS))
@@ -222,17 +220,19 @@ def _is_test_file(file_path: str, config: dict[str, Any]) -> bool:
         if basename.endswith(suffix):
             return True
 
-    dirname = os.path.dirname(file_path).replace(os.sep, "/")
+    # Directory-based detection at any depth: split the path into segments and
+    # match any segment against the test directory conventions.
+    segments = [s for s in normalized.split("/") if s]
     for d in _TS_DEFAULT_DIR_PATTERNS:
-        if normalized == d.rstrip("/") or normalized.startswith(d):
+        d_clean = d.rstrip("/")
+        if d_clean and d_clean in segments:
             return True
 
-    dir_with_slash = dirname + "/"
-    if any(
-        fnmatch.fnmatch(dir_with_slash, d) or dir_with_slash.startswith(d)
-        for d in dir_patterns
-    ):
-        return True
+    # Config-provided dir patterns (also matched at any depth).
+    for d in dir_patterns:
+        d_clean = d.rstrip("/")
+        if d_clean and d_clean in segments:
+            return True
 
     if any(fnmatch.fnmatch(basename, p) for p in file_patterns):
         return True

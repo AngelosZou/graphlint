@@ -60,6 +60,13 @@ class TSEntryPointDetector:
 
         global_public_as_entry = self.config.get("_public_as_entry", False)
 
+        # Decision (owner review point D): package.json/tsconfig-driven library
+        # detection (like the C# csproj path) is intentionally NOT implemented
+        # here. The ``--public-as-entry`` flag remains the explicit signal for
+        # "every export is an entry". Adding project-metadata detection is
+        # documented as a follow-up to keep this adapter minimal and avoid
+        # surprising implicit reachability changes.
+
         for file_path, pr in parse_results.items():
             if not any(
                 file_path.endswith(ext)
@@ -276,8 +283,11 @@ class TSEntryPointDetector:
     ) -> list[EntryInfo]:
         name_pattern = part.split(":", 1)[1]
         qname_to_global = {n.qualified_name: n.id for n in nodes}
+        exported = getattr(pr, "exported_names", set())
         entries: list[EntryInfo] = []
         for node in pr.nodes:
+            if node.name not in exported and node.qualified_name not in exported:
+                continue
             if not fnmatch.fnmatch(node.name, name_pattern):
                 continue
             nid = qname_to_global.get(node.qualified_name, 0)
@@ -370,11 +380,19 @@ class TSEntryPointDetector:
     def _detect_public_exports(
         self, file_path: str, pr: ParseResult, nodes: list[NodeInfo]
     ) -> list[EntryInfo]:
-        """Treat all exported symbols as entry points (library API mode)."""
+        """Treat exported symbols as entry points (library API mode).
+
+        Only symbols actually exported by the file (recorded in
+        ``ParseResult.exported_names`` by the visitor) become entries — an
+        un-exported declaration is private and must not seed reachability.
+        """
         entries: list[EntryInfo] = []
         qname_to_global = {n.qualified_name: n.id for n in nodes}
+        exported = getattr(pr, "exported_names", set())
 
         for node in pr.nodes:
+            if node.name not in exported and node.qualified_name not in exported:
+                continue
             nid = qname_to_global.get(node.qualified_name, 0)
             entries.append(
                 EntryInfo(

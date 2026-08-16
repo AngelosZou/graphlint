@@ -36,6 +36,14 @@ from graphlint.storage.schema import SCHEMA_VERSION, get_user_version, is_schema
 _OPTIONAL_LANG_SUPPORT: dict[str, tuple[str, str]] = {
     ".rs": ("Rust", "pip install graphlint[rust]"),
     ".cs": ("C#", "pip install graphlint[csharp]"),
+    ".ts": ("TypeScript", "pip install graphlint[typescript]"),
+    ".tsx": ("TypeScript/React", "pip install graphlint[typescript]"),
+    ".mts": ("TypeScript", "pip install graphlint[typescript]"),
+    ".cts": ("TypeScript", "pip install graphlint[typescript]"),
+    ".js": ("JavaScript", "pip install graphlint[typescript]"),
+    ".jsx": ("JavaScript/React", "pip install graphlint[typescript]"),
+    ".mjs": ("JavaScript", "pip install graphlint[typescript]"),
+    ".cjs": ("JavaScript", "pip install graphlint[typescript]"),
 }
 
 # Languages already hinted at in this process (dedupe).
@@ -112,21 +120,19 @@ def _warn_missing_lang_support(root_dir: str, registry: LanguageRegistry) -> Non
 
 
 def _try_register_typescript(registry: LanguageRegistry) -> None:
-    """Register the TypeScript adapter if tree-sitter-typescript is available."""
+    """Register the TypeScript/JavaScript adapter if its tree-sitter
+    grammars are available."""
     try:
-        from graphlint.analyzer.language.typescript import TSTypeScriptAdapter
+        from graphlint.analyzer.language.typescript import TypeScriptAdapter
         from graphlint.analyzer.language.typescript.constants import (
             _TREE_SITTER_TYPESCRIPT_AVAILABLE,
             _TREE_SITTER_JAVASCRIPT_AVAILABLE,
         )
     except ImportError:
-        print("TypeScript support requires tree-sitter-typescript. "
-              "Please install it with: pip install graphlint[typescript]")
         return
     available = _TREE_SITTER_TYPESCRIPT_AVAILABLE or _TREE_SITTER_JAVASCRIPT_AVAILABLE
-    _try_register(registry, TSTypeScriptAdapter, available,
-                  "TypeScript support requires tree-sitter-typescript + tree-sitter-javascript. "
-                  "Please install it with: pip install graphlint[typescript]")
+    if available:
+        _try_register(registry, TypeScriptAdapter)
 
 
 # ---------------------------------------------------------------------------

@@ -148,10 +148,13 @@ class TSTypeScriptImportAnalyzer:
         """Analyze a tree-sitter ``export_statement`` node.
 
         Handles:
-            - ``export { X, Y }``
-            - ``export default X``
-            - ``export * from 'module'``
-            - ``export { X } from 'module'``
+            - ``export { X, Y as Z }``  (and ``export { X } from 'module'``)
+            - ``export * from 'module'`` / ``export * as ns from 'module'``
+            - ``export default <expr>``
+            - ``export default function foo() {}`` / ``export default class A {}``
+            - declaration exports: ``export const foo = 1`` / ``export function f`` /
+              ``export class C`` / ``export enum E`` / ``export interface I`` /
+              ``export type T = ...``
             - ``export type { X }``
         """
         exported_names: list[str] = []
@@ -163,45 +166,75 @@ class TSTypeScriptImportAnalyzer:
         for child in node.children:
             if child.type == "type":
                 is_type_export = True
-            elif child.type == "default":
+                break
+
+        # Re-export: export { X } from 'module' / export * from 'module'
+        source_node = node.child_by_field_name("source")
+        if source_node and source_node.type == "string":
+            module_path = _unquote(_node_text(source_node))
+
+        has_default = any(c.type == "default" for c in node.children)
+
+        for child in node.children:
+            if child.type == "default":
                 default_export = "default"
-                exported_names.append("default")
-            elif child.type == "export_clause":
+                continue
+            if child.type == "export_clause":
                 for sub in child.children:
                     if sub.type == "named_exports":
                         for spec in sub.children:
                             if spec.type == "export_specifier":
                                 name_node = spec.child_by_field_name("name")
+                                alias_node = spec.child_by_field_name("alias")
+                                # The name importers use is the alias when present
+                                # (``export { X as Y }`` -> Y), else the raw name.
+                                # The local symbol (raw name) is also exported, so
+                                # record both for entry detection.
                                 if name_node:
                                     exported_names.append(_node_text(name_node))
+                                if alias_node:
+                                    exported_names.append(_node_text(alias_node))
                     elif sub.type == "namespace_export":
-                        ns_name = _node_text(sub).replace("* as ", "").strip()
-                        if ns_name:
-                            namespace_export = ns_name
-                            exported_names.append(ns_name)
-            elif child.type == "identifier" and child.text:
+                        ns_node = sub.child_by_field_name("name")
+                        if ns_node:
+                            namespace_export = _node_text(ns_node)
+                        else:
+                            for c in sub.children:
+                                if c.type == "identifier":
+                                    namespace_export = _node_text(c)
+                                    break
+                        if namespace_export:
+                            exported_names.append(namespace_export)
+                continue
+            if child.type == "identifier":
+                # ``export default app`` — the exported name is the identifier.
                 exported_names.append(_node_text(child))
+                continue
+            # Declaration exports: export const/let/var/function/class/...
+            if child.type in ("lexical_declaration", "variable_declaration"):
+                for decl in child.children:
+                    if decl.type == "variable_declarator":
+                        name_node = decl.child_by_field_name("name")
+                        if name_node and name_node.type == "identifier":
+                            exported_names.append(_node_text(name_node))
+                continue
+            if child.type in (
+                "function_declaration",
+                "generator_function_declaration",
+                "class_declaration",
+                "abstract_class_declaration",
+                "interface_declaration",
+                "enum_declaration",
+                "type_alias_declaration",
+            ):
+                name_node = child.child_by_field_name("name")
+                if name_node:
+                    exported_names.append(_node_text(name_node))
+                continue
 
-        # Check for re-export: export { X } from 'module'
-        source_node = node.child_by_field_name("source")
-        if source_node and source_node.type == "string":
-            module_path = _unquote(_node_text(source_node))
-
-        # Fallback: check children for any identifier that might be the export name
-        if not exported_names and not default_export:
-            for child in node.children:
-                if child.type in ("identifier", "variable_declaration", "lexical_declaration"):
-                    break  # Declaration exports are handled by the visitor
-            # Detect ``export default function`` or ``export default class``
-            for child in node.children:
-                if child.type in ("function_declaration", "class_declaration",
-                                  "generator_function_declaration", "arrow_function"):
-                    name_node = child.child_by_field_name("name")
-                    if name_node:
-                        exported_names.append(_node_text(name_node))
-                    else:
-                        exported_names.append("default")
-                    break
+        # A default export exposes the name ``default`` to importers.
+        if has_default and "default" not in exported_names:
+            exported_names.append("default")
 
         line = _node_line(node)
 
@@ -228,6 +261,9 @@ class TSTypeScriptImportAnalyzer:
 
         - Side-effect imports (``import "x"`` -> ``["*"]``) are skipped — the
           module may register global behaviour we cannot see in one file.
+        - Type-only imports (``import type { X }``) are skipped — types are
+          erased at compile time and usage lives in type positions that cannot
+          all be captured reliably.
         - Each named/default/namespace import is checked against *name_usages*.
         - For ``import { X as Y }`` the *alias* ``Y`` is what code references,
           so the alias (or the raw name when there is no alias) is checked.
@@ -235,6 +271,8 @@ class TSTypeScriptImportAnalyzer:
         unused: list[tuple[ImportInfo, str, int]] = []
         for imp in uses:
             if imp.imported_names == ["*"]:
+                continue
+            if imp.is_type_import:
                 continue
 
             # Report EACH unused binding (an `import { A, B }` may partially
