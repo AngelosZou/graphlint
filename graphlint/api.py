@@ -44,6 +44,7 @@ _OPTIONAL_LANG_SUPPORT: dict[str, tuple[str, str]] = {
     ".jsx": ("JavaScript/React", "pip install graphlint[typescript]"),
     ".mjs": ("JavaScript", "pip install graphlint[typescript]"),
     ".cjs": ("JavaScript", "pip install graphlint[typescript]"),
+    ".c": ("C", "pip install graphlint[c]"),
 }
 
 # Languages already hinted at in this process (dedupe).
@@ -80,12 +81,8 @@ def _try_register_c(registry: LanguageRegistry) -> None:
         from graphlint.analyzer.language.c import CAdapter
         from graphlint.analyzer.language.c.constants import _TREE_SITTER_C_AVAILABLE
     except ImportError:
-        print("C support requires tree-sitter-c. "
-              "Please install it with: pip install graphlint[c]")
         return
-    _try_register(registry, CAdapter, _TREE_SITTER_C_AVAILABLE,
-                  "C support requires tree-sitter-c. "
-                  "Please install it with: pip install graphlint[c]")
+    _try_register(registry, CAdapter)
 
 
 def _try_register_rust(registry: LanguageRegistry) -> None:
