@@ -33,6 +33,17 @@ class TypeScriptAdapter(LanguageAdapter):
     language_name = "typescript"
     file_extensions = frozenset({".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".mts", ".cts"})
 
+    def __init__(self, extensions: frozenset[str] | None = None) -> None:
+        """Optionally restrict the handled extensions.
+
+        The TypeScript and JavaScript grammars are independent packages;
+        the registry passes a restricted set when only one of them is
+        installed so files of the missing grammar are skipped (and get the
+        standard missing-language hint) instead of failing per file.
+        """
+        if extensions is not None:
+            self.file_extensions = frozenset(extensions)
+
     @property
     def worker_function(self) -> Callable[..., ParseResult]:
         return _parse_file_worker

@@ -366,3 +366,128 @@ class TestTypeScriptParser:
         assert "main" in entry_names
         assert "pub" in entry_names
         assert "helper" not in entry_names
+
+
+# =============================================================================
+# Regressions — cross-language rule leaks, double-walks, JSX/test rules,
+# phantom usages
+# =============================================================================
+
+
+@tree_sitter_available
+class TestTypeScriptRegressions:
+    """Regression tests for reported TS backend bugs."""
+
+    def _parse(self, src: str, rel_path: str = "index.ts"):
+        import tempfile
+
+        from graphlint.analyzer.language.typescript.parser import TSTypeScriptSourceParser
+
+        with tempfile.TemporaryDirectory() as d:
+            full = os.path.join(d, rel_path)
+            os.makedirs(os.path.dirname(full) or d, exist_ok=True)
+            with open(full, "w", encoding="utf-8") as fh:
+                fh.write(src)
+            parser = TSTypeScriptSourceParser(d, {})
+            return parser.parse_file(full)
+
+    def _detector(self, rule_names: list[str]):
+        from graphlint.config.defaults import DEFAULT_CONFIG
+        from graphlint.analyzer.language.typescript.entry import TSEntryPointDetector
+
+        det = TSEntryPointDetector(DEFAULT_CONFIG)
+        det._rules = [
+            r for r in DEFAULT_CONFIG["entry_rules"] if r["name"] in rule_names
+        ]
+        return det
+
+    def test_export_default_declaration_walked_once(self):
+        src = (
+            "export default class Page {\n"
+            "  render() { return 1; }\n"
+            "  other() { return 2; }\n"
+            "}\n"
+        )
+        result = self._parse(src, "page.ts")
+        assert len([n for n in result.nodes if n.name == "Page"]) == 1
+        names = {n.name for n in result.nodes}
+        assert {"render", "other"} <= names
+
+    def test_export_default_function_walked_once(self):
+        result = self._parse("export default function App() { return 1; }\n", "app.ts")
+        assert len([n for n in result.nodes if n.name == "App"]) == 1
+
+    def test_jsx_emits_jsx_element_edge_and_react_rule_fires(self):
+        src = (
+            "export default function App() {\n"
+            "  return <Button label='ok' />;\n"
+            "}\n"
+        )
+        result = self._parse(src, "App.tsx")
+        jsx = [r for r in result.references if r.edge_type == "jsx_element"]
+        assert any(r.target_name == "Button" for r in jsx)
+        entries = self._detector(["typescript_react_component"]).detect(
+            {result.file_path: result}, result.nodes, {}
+        )
+        assert entries, "typescript_react_component must fire on JSX"
+
+    def test_nextjs_rule_matches_root_level_pages(self):
+        result = self._parse("export default function P() {}\n", "pages/index.ts")
+        entries = self._detector(["typescript_nextjs"]).detect(
+            {result.file_path: result}, result.nodes, {}
+        )
+        assert entries, "root-level pages/index.ts must be a Next.js entry"
+
+    def test_index_rule_matches_jsx_cts_cjs_and_root(self):
+        for rel in ("src/index.jsx", "src/index.cts", "src/index.cjs", "index.ts"):
+            result = self._parse("export const a = 1;\n", rel)
+            entries = self._detector(["typescript_index"]).detect(
+                {result.file_path: result}, result.nodes, {}
+            )
+            assert entries, f"{rel} must match typescript_index"
+
+    def test_jest_describe_it_calls_are_test_entries(self):
+        src = (
+            "describe('sum', () => {\n"
+            "  it('adds', () => {});\n"
+            "});\n"
+        )
+        result = self._parse(src, "sum.test.ts")
+        entries = self._detector(["typescript_test"]).detect(
+            {result.file_path: result}, result.nodes, {}
+        )
+        assert entries, "Jest describe/it calls must satisfy _check_test_file"
+
+    def test_export_alias_and_namespace_no_phantom_usages(self):
+        src = (
+            "const a = 1;\n"
+            "export { a as b };\n"
+            "export * as ns from './x';\n"
+        )
+        result = self._parse(src, "exp.ts")
+        reads = [r.target_name for r in result.references if r.edge_type == "read"]
+        # The re-export source name is a genuine use; the alias and the
+        # namespace name are new export names — phantom usages.
+        assert "a" in reads
+        assert "b" not in reads
+        assert "ns" not in reads
+        assert "b" not in result.name_usages
+        assert "ns" not in result.name_usages
+
+    def test_destructuring_declares_real_bindings_only(self):
+        src = (
+            "const obj = { a: 2 };\n"
+            "const { a: b } = obj;\n"
+            "const { c, d = 1 } = obj;\n"
+            "const [x, y] = obj;\n"
+        )
+        result = self._parse(src, "destr.ts")
+        names = {n.name for n in result.nodes}
+        assert {"b", "c", "d", "x", "y"} <= names
+        # No raw pattern text nodes, no phantom usage of declared bindings.
+        assert "{ a: b }" not in names
+        assert "{ c, d = 1 }" not in names
+        assert "[x, y]" not in names
+        assert "b" not in result.name_usages
+        assert "c" not in result.name_usages
+        assert "x" not in result.name_usages

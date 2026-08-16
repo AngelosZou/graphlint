@@ -7,7 +7,7 @@ description: Dead-code detection for AI-generated codebases via the graphlint de
 
 Static analysis of a project's dependency graph: finds components unreachable from any entry point (dead code), plus circular references, unused imports and other warnings.
 
-**Languages:** Python (built in) · Rust (`pip install graphlint[rust]`) · C# (`pip install graphlint[csharp]`)
+**Languages:** Python (built in) · Rust (`pip install graphlint[rust]`) · C# (`pip install graphlint[csharp]`) · TypeScript/JavaScript (`pip install graphlint[typescript]`)
 
 ## When to use
 - After code modifications: check whether your edits left dead or redundant code.

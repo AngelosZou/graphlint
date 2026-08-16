@@ -730,6 +730,10 @@ class TSTypeScriptVisitor:
 
         for decl in declarators:
             name_node = decl.child_by_field_name("name")
+            if name_node and name_node.type in ("object_pattern", "array_pattern"):
+                # Destructuring: ``const { a, b: c } = expr`` / ``const [x] = a``.
+                self._visit_destructuring(name_node, sq, node_type_val, parent_id, decl)
+                continue
             if not name_node:
                 # Object destructuring: const { a, b } = ...
                 pattern = decl.child_by_field_name("pattern")
@@ -796,59 +800,112 @@ class TSTypeScriptVisitor:
         parent_id: int,
         decl: Any,
     ) -> None:
-        """Handle destructuring: ``const { a, b } = expr``"""
-        for child in pattern.children:
-            if child.type == "shorthand_property_identifier":
-                name = _node_text(child)
-                if name:
-                    qualified = sq + "." + name if sq else name
-                    info = NodeInfo(
-                        file_id=0,
-                        name=name,
-                        qualified_name=qualified,
-                        node_type=node_type_val,
-                        line_start=_node_line(child),
-                        line_end=_node_end_line(child),
-                        col_offset=_node_col(child),
-                        parent_node_id=parent_id,
-                    )
-                    self._add_node(info)
-                    self.references.append(ReferenceInfo(
-                        source_qname=sq,
-                        target_name=name,
-                        edge_type="write",
-                        line=_node_line(child),
-                    ))
-                    self.name_usages.add(name)
-            elif child.type == "pair_pattern":
-                for c in child.children:
-                    if c.type == "identifier" and _node_text(c) != ":":
-                        name = _node_text(c)
-                        if name:
-                            qualified = sq + "." + name if sq else name
-                            info = NodeInfo(
-                                file_id=0,
-                                name=name,
-                                qualified_name=qualified,
-                                node_type=node_type_val,
-                                line_start=_node_line(c),
-                                line_end=_node_end_line(c),
-                                col_offset=_node_col(c),
-                                parent_node_id=parent_id,
-                            )
-                            self._add_node(info)
-                            self.references.append(ReferenceInfo(
-                                source_qname=sq,
-                                target_name=name,
-                                edge_type="write",
-                                line=_node_line(c),
-                            ))
-                            self.name_usages.add(name)
+        """Handle destructuring: ``const { a, b: c } = expr``.
+        """
+        self._declare_pattern(pattern, sq, node_type_val, parent_id)
 
         # Walk initializer
         init = decl.child_by_field_name("value") or decl.child_by_field_name("initializer")
         if init:
             self._walk(init)
+
+    def _declare_pattern(
+        self,
+        pattern: Any,
+        sq: str,
+        node_type_val: str,
+        parent_id: int,
+    ) -> None:
+        """Declare every local binding inside a destructuring pattern."""
+        for child in pattern.children:
+            t = child.type
+            if t in (
+                "identifier",
+                "shorthand_property_identifier",
+                "shorthand_property_identifier_pattern",
+            ):
+                self._declare_binding(child, sq, node_type_val, parent_id)
+            elif t == "pair_pattern":
+                value = child.child_by_field_name("value")
+                if value is None:
+                    for c in child.children:
+                        if c.type in (
+                            "identifier",
+                            "shorthand_property_identifier",
+                            "shorthand_property_identifier_pattern",
+                        ):
+                            self._declare_binding(c, sq, node_type_val, parent_id)
+                    continue
+                self._declare_pattern_value(value, sq, node_type_val, parent_id)
+            elif t in ("assignment_pattern", "object_assignment_pattern"):
+                left = child.child_by_field_name("left")
+                right = child.child_by_field_name("right")
+                if left is not None:
+                    self._declare_pattern_value(left, sq, node_type_val, parent_id)
+                if right is not None:
+                    # Default-value expression
+                    self._walk(right)
+            elif t == "rest_pattern":
+                value = child.child_by_field_name("value")
+                if value is not None:
+                    self._declare_pattern_value(value, sq, node_type_val, parent_id)
+
+    def _declare_pattern_value(
+        self,
+        value: Any,
+        sq: str,
+        node_type_val: str,
+        parent_id: int,
+    ) -> None:
+        """Declare the binding produced by a pattern value (possibly nested)."""
+        if value.type in ("object_pattern", "array_pattern"):
+            self._declare_pattern(value, sq, node_type_val, parent_id)
+        elif value.type in (
+            "identifier",
+            "shorthand_property_identifier",
+            "shorthand_property_identifier_pattern",
+        ):
+            self._declare_binding(value, sq, node_type_val, parent_id)
+        elif value.type in ("assignment_pattern", "object_assignment_pattern"):
+            left = value.child_by_field_name("left")
+            right = value.child_by_field_name("right")
+            if left is not None:
+                self._declare_pattern_value(left, sq, node_type_val, parent_id)
+            if right is not None:
+                self._walk(right)
+        else:
+            # Unknown nested value
+            self._walk(value)
+
+    def _declare_binding(
+        self,
+        node: Any,
+        sq: str,
+        node_type_val: str,
+        parent_id: int,
+    ) -> None:
+        """Declare a single destructured binding as a node + write edge."""
+        name = _node_text(node)
+        if not name:
+            return
+        qualified = sq + "." + name if sq else name
+        info = NodeInfo(
+            file_id=0,
+            name=name,
+            qualified_name=qualified,
+            node_type=node_type_val,
+            line_start=_node_line(node),
+            line_end=_node_end_line(node),
+            col_offset=_node_col(node),
+            parent_node_id=parent_id,
+        )
+        self._add_node(info)
+        self.references.append(ReferenceInfo(
+            source_qname=sq,
+            target_name=name,
+            edge_type="write",
+            line=_node_line(node),
+        ))
 
     # ------------------------------------------------------------------
     # Import statements
@@ -1089,6 +1146,13 @@ class TSTypeScriptVisitor:
 
         ptype = parent.type
 
+        # Export specifiers are declarations
+        if ptype == "export_specifier":
+            if node == parent.child_by_field_name("alias"):
+                return
+        elif ptype in ("namespace_export", "export_clause", "named_exports"):
+            return
+
         # Skip: this is a declaration or import, not a reference
         if ptype in (
             "function_declaration", "generator_function_declaration",
@@ -1103,11 +1167,7 @@ class TSTypeScriptVisitor:
             "shorthand_property_identifier",
             "pair_pattern", "object_pattern",
         ):
-            # Import bindings are definitions, not references: the whole import
-            # subtree is excluded from usage tracking. Default imports have the
-            # binding identifier as a bare child of ``import_clause`` with no
-            # ``name``/``alias``/``namespace`` field, so field-based checks
-            # alone cannot detect them — skip unconditionally.
+            # Import bindings are definitions, not references
             if ptype in ("import_specifier", "named_imports", "import_clause",
                          "import_statement", "namespace_import"):
                 return

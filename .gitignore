@@ -31,3 +31,4 @@ integrations/dsh/lib/
 /ts-probe/
 /.ts-probe/
 /.csharp-probe/
+/.sandbox_tmp/

@@ -7,11 +7,12 @@ import os
 from typing import Any
 
 from graphlint.analyzer._types import ParseResult
+from graphlint.analyzer.language.typescript import constants as ts_constants
 from graphlint.analyzer.language.typescript.constants import (
-    _TREE_SITTER_TYPESCRIPT_AVAILABLE,
-    _TREE_SITTER_JAVASCRIPT_AVAILABLE,
     _file_to_module,
     _get_parser_language_for_file,
+    _is_ts_file,
+    _is_tsx_file,
 )
 from graphlint.analyzer.language.typescript.imports import TSTypeScriptImportAnalyzer
 from graphlint.analyzer.language.typescript.visitor import TSTypeScriptVisitor
@@ -50,11 +51,37 @@ class TSTypeScriptSourceParser:
             )
             return result
 
-        if not _TREE_SITTER_TYPESCRIPT_AVAILABLE and not _TREE_SITTER_JAVASCRIPT_AVAILABLE:
+        # Read the availability flags dynamically (module attributes) so
+        # tests/tools that adjust them after import still take effect.
+        ts_available = ts_constants._TREE_SITTER_TYPESCRIPT_AVAILABLE
+        js_available = ts_constants._TREE_SITTER_JAVASCRIPT_AVAILABLE
+        if not ts_available and not js_available:
             result.warnings.append(
                 _make_warning(
                     "syntax_error", "error",
                     "tree-sitter-typescript not installed; install with: "
+                    "pip install graphlint[typescript]",
+                    file_path,
+                )
+            )
+            return result
+
+        needs_ts_grammar = _is_tsx_file(file_path) or _is_ts_file(file_path)
+        if needs_ts_grammar and not ts_available:
+            result.warnings.append(
+                _make_warning(
+                    "parse_error", "error",
+                    "tree-sitter-typescript is not installed; install with: "
+                    "pip install graphlint[typescript]",
+                    file_path,
+                )
+            )
+            return result
+        if not needs_ts_grammar and not js_available:
+            result.warnings.append(
+                _make_warning(
+                    "parse_error", "error",
+                    "tree-sitter-javascript is not installed; install with: "
                     "pip install graphlint[typescript]",
                     file_path,
                 )

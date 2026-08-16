@@ -385,3 +385,20 @@ class TestEntryPointDetector:
         result = _make_result("app.py", [node], source=source)
         entries = detector.detect({"app.py": result}, [node], {1: node})
         assert len(entries) == 0
+
+    def test_typescript_rules_do_not_leak_into_python(self):
+        """The shared rule list must not turn Python files into TS entries.
+
+        Regression: ``typescript_nextjs`` used ``**/pages/**``, so any
+        ``app/pages/views.py`` became a Next.js entry in Python projects.
+        """
+        from graphlint.config.defaults import DEFAULT_CONFIG
+
+        node = _make_node(1, "view", node_type="function")
+        result = _make_result(
+            "app/pages/views.py", [node], source="def view():\n    return 1\n"
+        )
+        detector = EntryPointDetector(DEFAULT_CONFIG)
+        entries = detector.detect({"app/pages/views.py": result}, [node], {1: node})
+        leaked = [e for e in entries if e.rule_name.startswith("typescript")]
+        assert leaked == [], f"TS rules leaked into Python: {leaked}"

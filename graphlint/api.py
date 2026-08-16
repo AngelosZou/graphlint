@@ -120,8 +120,9 @@ def _warn_missing_lang_support(root_dir: str, registry: LanguageRegistry) -> Non
 
 
 def _try_register_typescript(registry: LanguageRegistry) -> None:
-    """Register the TypeScript/JavaScript adapter if its tree-sitter
-    grammars are available."""
+    """Register the TypeScript/JavaScript adapter for the extensions whose
+    grammar is actually installed.
+    """
     try:
         from graphlint.analyzer.language.typescript import TypeScriptAdapter
         from graphlint.analyzer.language.typescript.constants import (
@@ -130,9 +131,14 @@ def _try_register_typescript(registry: LanguageRegistry) -> None:
         )
     except ImportError:
         return
-    available = _TREE_SITTER_TYPESCRIPT_AVAILABLE or _TREE_SITTER_JAVASCRIPT_AVAILABLE
-    if available:
-        _try_register(registry, TypeScriptAdapter)
+    exts: set[str] = set()
+    # .jsx files parse through the TSX grammar of tree-sitter-typescript.
+    if _TREE_SITTER_TYPESCRIPT_AVAILABLE:
+        exts.update({".ts", ".tsx", ".mts", ".cts", ".jsx"})
+    if _TREE_SITTER_JAVASCRIPT_AVAILABLE:
+        exts.update({".js", ".jsx", ".mjs", ".cjs"})
+    if exts:
+        registry.register(TypeScriptAdapter(extensions=frozenset(exts)))
 
 
 # ---------------------------------------------------------------------------

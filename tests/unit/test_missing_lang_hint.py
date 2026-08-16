@@ -160,3 +160,74 @@ class TestMissingLangHint:
         assert "graphlint[rust]" in err
         assert "2 .rs file(s)" in err
         assert "graphlint[csharp]" in err
+
+
+@pytest.mark.timeout(30)
+class TestSingleGrammarRegistration:
+    """The TS and JS grammars are independent packages: when only one is
+    installed, the adapter must be registered only for the extensions that
+    grammar can parse — files of the missing grammar are skipped (with the
+    standard hint) instead of failing per file."""
+
+    def test_registry_restricted_to_available_grammars(self, monkeypatch):
+        from graphlint import api
+        from graphlint.analyzer.language.registry import LanguageRegistry
+        from graphlint.analyzer.language.typescript import constants as tc
+
+        monkeypatch.setattr(tc, "_TREE_SITTER_TYPESCRIPT_AVAILABLE", True)
+        monkeypatch.setattr(tc, "_TREE_SITTER_JAVASCRIPT_AVAILABLE", False)
+        registry = LanguageRegistry()
+        api._try_register_typescript(registry)
+        # .jsx parses through the TSX grammar of tree-sitter-typescript.
+        for ext in (".ts", ".tsx", ".mts", ".cts", ".jsx"):
+            assert registry.adapter_for_file("x" + ext) is not None
+        for ext in (".js", ".mjs", ".cjs"):
+            assert registry.adapter_for_file("x" + ext) is None
+
+        monkeypatch.setattr(tc, "_TREE_SITTER_JAVASCRIPT_AVAILABLE", True)
+        full = LanguageRegistry()
+        api._try_register_typescript(full)
+        for ext in (".ts", ".tsx", ".js", ".jsx", ".mts", ".cts", ".mjs", ".cjs"):
+            assert full.adapter_for_file("x" + ext) is not None
+
+        monkeypatch.setattr(tc, "_TREE_SITTER_TYPESCRIPT_AVAILABLE", False)
+        monkeypatch.setattr(tc, "_TREE_SITTER_JAVASCRIPT_AVAILABLE", False)
+        empty = LanguageRegistry()
+        api._try_register_typescript(empty)
+        assert empty.all_adapters() == []
+
+    def test_parser_missing_grammar_emits_hint_not_syntax_error(
+        self, monkeypatch, proj_dir: str
+    ):
+        from graphlint.analyzer.language.typescript import constants as tc
+        from graphlint.analyzer.language.typescript.parser import TSTypeScriptSourceParser
+
+        monkeypatch.setattr(tc, "_TREE_SITTER_TYPESCRIPT_AVAILABLE", True)
+        monkeypatch.setattr(tc, "_TREE_SITTER_JAVASCRIPT_AVAILABLE", False)
+        js_file = Path(proj_dir, "onlyjs.js")
+        js_file.write_text("export function f() {}\n", encoding="utf-8")
+        result = TSTypeScriptSourceParser(proj_dir, {}).parse_file(str(js_file))
+        assert result.warnings, "expected a missing-grammar hint"
+        assert all(w.warn_type != "syntax_error" for w in result.warnings)
+        assert any(
+            "tree-sitter-javascript" in w.message
+            and "graphlint[typescript]" in w.message
+            for w in result.warnings
+        )
+
+    def test_parser_missing_ts_grammar_emits_hint(self, monkeypatch, proj_dir: str):
+        from graphlint.analyzer.language.typescript import constants as tc
+        from graphlint.analyzer.language.typescript.parser import TSTypeScriptSourceParser
+
+        monkeypatch.setattr(tc, "_TREE_SITTER_TYPESCRIPT_AVAILABLE", False)
+        monkeypatch.setattr(tc, "_TREE_SITTER_JAVASCRIPT_AVAILABLE", True)
+        ts_file = Path(proj_dir, "onlyts.ts")
+        ts_file.write_text("export function f() {}\n", encoding="utf-8")
+        result = TSTypeScriptSourceParser(proj_dir, {}).parse_file(str(ts_file))
+        assert result.warnings
+        assert all(w.warn_type != "syntax_error" for w in result.warnings)
+        assert any(
+            "tree-sitter-typescript" in w.message
+            and "graphlint[typescript]" in w.message
+            for w in result.warnings
+        )

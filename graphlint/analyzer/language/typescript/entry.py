@@ -350,15 +350,23 @@ class TSEntryPointDetector:
             return []
 
         test_patterns = self.config.get("test_patterns", {})
-        func_patterns = test_patterns.get(
-            "function_patterns", list(self._TS_TEST_FUNC_PATTERNS)
-        )
+        # Always apply the TS/JS-native conventions (describe/it/*test*)
+        func_patterns = list(
+            test_patterns.get("function_patterns", [])
+        ) + list(self._TS_TEST_FUNC_PATTERNS)
 
         has_test = any(
             n.node_type in ("method", "function")
             and any(fnmatch.fnmatch(n.name, p) for p in func_patterns)
             for n in pr.nodes
         )
+
+        if not has_test:
+            has_test = any(
+                ref.edge_type == "call"
+                and any(fnmatch.fnmatch(ref.target_name, p) for p in func_patterns)
+                for ref in pr.references
+            )
 
         if not has_test:
             return []

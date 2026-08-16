@@ -17,23 +17,25 @@ AI Agent 在快速生成代码的同时，也会留下大量冗余和死代码�
 | **Python** (`.py`) | 内置 | `ast`（标准库） | 装饰器、类型注解、动态导入、框架感知入口检测 |
 | **Rust** (`.rs`) | 内置（可选依赖） | `tree-sitter` | 属性宏、Trait、`pub` 可见性、`macro_rules!` |
 | **C#** (`.cs`) | 内置（可选依赖） | `tree-sitter` | 分部类、属性/索引器/事件、特性（Attribute）、`.csproj` 感知、测试框架入口 |
+| **TypeScript / JavaScript**（`.ts` `.tsx` `.js` `.jsx` `.mts` `.cts` `.mjs` `.cjs`） | 内置（可选依赖） | `tree-sitter` | JSX/React 组件、Next.js 页面、NestJS 装饰器、Jest/Vitest 测试、import/export 分析 |
 
 安装可选语言支持：
 
 ```bash
-pip install graphlint[rust]    # 引入 tree-sitter 和 tree-sitter-rust
-pip install graphlint[csharp]  # 引入 tree-sitter 和 tree-sitter-c-sharp
+pip install graphlint[rust]        # 引入 tree-sitter 和 tree-sitter-rust
+pip install graphlint[csharp]      # 引入 tree-sitter 和 tree-sitter-c-sharp
+pip install graphlint[typescript]  # 引入 tree-sitter + tree-sitter-typescript + tree-sitter-javascript
 ```
 
 ## 特性
 
 - **死代码检测** — 通过图遍历找出所有入口点不可达的组件
-- **多语言支持** — Python、Rust 和 C# 后端，通过语言适配器抽象层实现；Python 使用标准库 `ast`，Rust 和 C# 使用 `tree-sitter`
-- **语言专有特性感知** — Python 装饰器、Rust 属性宏（`#[tokio::main]`、`#[test]`）、C# 特性（`[Fact]`、`[HttpGet]`）、Trait 实现、`pub`/`public` 可见性、分部类等
-- **AST/CST 解析** — 提取函数、方法、结构体、枚举、Trait、实现块、宏、类、属性、索引器、事件、变量、字段；感知类型声明、泛型，自动处理循环解包等变量绑定
+- **多语言支持** — Python、Rust、C#、TypeScript 和 JavaScript 后端，通过语言适配器抽象层实现；Python 使用标准库 `ast`，其余语言使用 `tree-sitter`
+- **语言专有特性感知** — Python 装饰器、Rust 属性宏（`#[tokio::main]`、`#[test]`）、C# 特性（`[Fact]`、`[HttpGet]`）、TS/JS 的 JSX 元素与 ES 模块 import/export、Trait 实现、`pub`/`public` 可见性、分部类等
+- **AST/CST 解析** — 提取函数、方法、结构体、枚举、Trait、实现块、宏、类、属性、索引器、事件、变量、字段；感知类型声明、泛型，自动处理循环解包与解构等变量绑定
 - **依赖图构建** — 有向边：`read`、`write`、`call`、`inherit`、`decorate`
-- **入口点检测** — 28 种内置规则，覆盖 Python 框架（FastAPI、Flask、Django、Click、Typer、Celery、pytest）、Rust 惯例（main、异步运行时、WASM、proc 宏、FFI、测试、pub API）和 .NET 惯例（控制台、xUnit、NUnit、MSTest、Web API、Minimal API、Generic Host、WinForms、WPF）及自定义规则
-- **可配置入口模板** — 通过 `ast_pattern` 前缀添加自定义入口规则，包括 `function_call:`、`function_def:`、`decorator:`、`class_definition:`（C#）、`file_match:`、`file_is_program`（C#）、`visibility:pub`（Rust）、`visibility:public`（C#）、`trait_impl:`（Rust）、`macro_def:`（Rust）等
+- **入口点检测** — 35 种内置规则，覆盖 Python 框架（FastAPI、Flask、Django、Click、Typer、Celery、pytest）、Rust 惯例（main、异步运行时、WASM、proc 宏、FFI、测试、pub API）、.NET 惯例（控制台、xUnit、NUnit、MSTest、Web API、Minimal API、Generic Host、WinForms、WPF）和 TS/JS 惯例（main、模块 index、CLI/服务器 listen、Next.js 页面、NestJS 装饰器、React JSX、Jest/Vitest 测试）及自定义规则
+- **可配置入口模板** — 通过 `ast_pattern` 前缀添加自定义入口规则，包括 `function_call:`、`function_def:`、`decorator:`、`class_definition:`（C#）、`file_match:`、`file_is_program`（C#）、`visibility:pub`（Rust）、`visibility:public`（C#）、`trait_impl:`（Rust）、`macro_def:`（Rust）、`jsx_element:`（TypeScript）、`export:`（TypeScript）等
 - **`--public-as-entry` 标志** — 将所有公开项（Rust `pub`、C# `public`）视为入口点，用于库代码分析
 - **警告检测** — 11 种警告类型：循环引用、未使用 import、只写变量、死代码等
 - **增量更新** — 首次全量扫描后，仅对变更文件进行增量重建；增量感知可达性分析避免了对全图的重复计算；不兼容的索引 schema 版本会被自动检测并重建
@@ -57,6 +59,12 @@ pip install graphlint[rust]
 
 ```bash
 pip install graphlint[csharp]
+```
+
+如需支持 TypeScript/JavaScript（`.ts` `.tsx` `.js` `.jsx` `.mts` `.cts` `.mjs` `.cjs` 文件），安装可选的 `tree-sitter` 依赖：
+
+```bash
+pip install graphlint[typescript]
 ```
 
 ## 快速开始

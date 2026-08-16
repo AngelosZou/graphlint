@@ -238,7 +238,16 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         {
             "name": "typescript_index",
             "file_pattern": "**/*.*[tjs][sx]",
-            "ast_pattern": "file_match:*/index.ts | file_match:*/index.js | file_match:*/index.tsx | file_match:*/index.jsx | file_match:*/index.mts | file_match:*/index.cts | file_match:*/index.mjs | file_match:*/index.cjs",
+            "ast_pattern": (
+                "file_match:index.ts | file_match:*/index.ts | "
+                "file_match:index.js | file_match:*/index.js | "
+                "file_match:index.tsx | file_match:*/index.tsx | "
+                "file_match:index.jsx | file_match:*/index.jsx | "
+                "file_match:index.mts | file_match:*/index.mts | "
+                "file_match:index.cts | file_match:*/index.cts | "
+                "file_match:index.mjs | file_match:*/index.mjs | "
+                "file_match:index.cjs | file_match:*/index.cjs"
+            ),
             "enabled": True,
             "description": "TypeScript/JavaScript module index entry",
         },

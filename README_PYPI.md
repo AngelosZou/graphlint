@@ -17,23 +17,25 @@ AI agents generate code rapidly, leaving behind dead and redundant code that pol
 | **Python** (`.py`) | Built-in | `ast` (stdlib) | Decorators, type annotations, dynamic imports, framework-aware entry detection |
 | **Rust** (`.rs`) | Built-in (opt-in deps) | `tree-sitter` | Attribute macros, traits, `pub` visibility, `macro_rules!` |
 | **C#** (`.cs`) | Built-in (opt-in deps) | `tree-sitter` | Partial classes, properties/indexers/events, attributes, `.csproj` awareness, test framework entries |
+| **TypeScript / JavaScript** (`.ts` `.tsx` `.js` `.jsx` `.mts` `.cts` `.mjs` `.cjs`) | Built-in (opt-in deps) | `tree-sitter` | JSX/React components, Next.js pages, NestJS decorators, Jest/Vitest tests, import/export analysis |
 
 Install optional language support:
 
 ```bash
-pip install graphlint[rust]    # adds tree-sitter and tree-sitter-rust
-pip install graphlint[csharp]  # adds tree-sitter and tree-sitter-c-sharp
+pip install graphlint[rust]        # adds tree-sitter and tree-sitter-rust
+pip install graphlint[csharp]      # adds tree-sitter and tree-sitter-c-sharp
+pip install graphlint[typescript]  # adds tree-sitter + tree-sitter-typescript + tree-sitter-javascript
 ```
 
 ## Features
 
 - **Dead code detection** — finds components unreachable from any entry point via graph traversal
-- **Multi-language support** — Python, Rust, and C# backends via a language adapter abstraction; Python uses stdlib `ast`, Rust and C# use `tree-sitter`
-- **Language-specific awareness** — Python decorators, Rust attribute macros (`#[tokio::main]`, `#[test]`), C# attributes (`[Fact]`, `[HttpGet]`), trait implementations, `pub`/`public` visibility, partial classes, and more
-- **AST/CST parsing** — extracts functions, methods, structs, enums, traits, impls, macros, classes, properties, indexers, events, variables, and fields; aware of type annotations, unpacked variables, and generics
+- **Multi-language support** — Python, Rust, C#, TypeScript, and JavaScript backends via a language adapter abstraction; Python uses stdlib `ast`, the others use `tree-sitter`
+- **Language-specific awareness** — Python decorators, Rust attribute macros (`#[tokio::main]`, `#[test]`), C# attributes (`[Fact]`, `[HttpGet]`), TS/JS JSX elements and ES module imports/exports, trait implementations, `pub`/`public` visibility, partial classes, and more
+- **AST/CST parsing** — extracts functions, methods, structs, enums, traits, impls, macros, classes, properties, indexers, events, variables, and fields; aware of type annotations, destructured variables, and generics
 - **Dependency graph** — builds directed edges: `read`, `write`, `call`, `inherit`, `decorate`
-- **Entry point detection** — 28 built-in rules covering Python frameworks (FastAPI, Flask, Django, Click, Typer, Celery, pytest), Rust conventions (main, async runtimes, WASM, proc macros, FFI, tests, pub API), and .NET conventions (console, xUnit, NUnit, MSTest, Web API, Minimal API, Generic Host, WinForms, WPF) plus custom rules
-- **Configurable entry templates** — add custom entry rules via `ast_pattern` prefixes including `function_call:`, `function_def:`, `decorator:`, `class_definition:` (C#), `file_match:`, `file_is_program` (C#), `visibility:pub` (Rust), `visibility:public` (C#), `trait_impl:` (Rust), `macro_def:` (Rust), and more
+- **Entry point detection** — 35 built-in rules covering Python frameworks (FastAPI, Flask, Django, Click, Typer, Celery, pytest), Rust conventions (main, async runtimes, WASM, proc macros, FFI, tests, pub API), .NET conventions (console, xUnit, NUnit, MSTest, Web API, Minimal API, Generic Host, WinForms, WPF), and TS/JS conventions (main, module index, CLI/server listen, Next.js pages, NestJS decorators, React JSX, Jest/Vitest tests) plus custom rules
+- **Configurable entry templates** — add custom entry rules via `ast_pattern` prefixes including `function_call:`, `function_def:`, `decorator:`, `class_definition:` (C#), `file_match:`, `file_is_program` (C#), `visibility:pub` (Rust), `visibility:public` (C#), `trait_impl:` (Rust), `macro_def:` (Rust), `jsx_element:` (TypeScript), `export:` (TypeScript), and more
 - **`--public-as-entry` flag** — treat all public items (Rust `pub`, C# `public`) as entry points for library analysis
 - **Warning detection** — 11 warning types including circular references, unused imports, write-only variables, and more
 - **Incremental updates** — after initial full scan, only changed files are re-indexed; delta-aware reachability analysis avoids full-graph recomputation; incompatible index schema versions are auto-detected and rebuilt
@@ -57,6 +59,12 @@ For C# support (`.cs` files), install the optional `tree-sitter` dependencies:
 
 ```bash
 pip install graphlint[csharp]
+```
+
+For TypeScript/JavaScript support (`.ts` `.tsx` `.js` `.jsx` `.mts` `.cts` `.mjs` `.cjs` files), install the optional `tree-sitter` dependencies:
+
+```bash
+pip install graphlint[typescript]
 ```
 
 ## Quick Start
