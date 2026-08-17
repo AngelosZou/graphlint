@@ -164,7 +164,7 @@ class CEntryPointDetector:
             EntryInfo(
                 rule_name=rule.get("name", "c_test"),
                 file_path=file_path,
-                line=1,
+                line=0,
                 description=rule.get("description", "C test file"),
                 no_propagate=rule.get("no_propagate", True),
             )

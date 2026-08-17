@@ -106,7 +106,8 @@ def _file_to_module(path: str) -> str:
 # Test file detection
 # ---------------------------------------------------------------------------
 
-_C_TEST_FILE_SUFFIXES: tuple[str, ...] = ("_test.c", "test.c", "_test.h", "test.h")
+_C_TEST_FILE_SUFFIXES: tuple[str, ...] = ("_test.c", "_test.h")
+_C_TEST_FILE_EXACT_NAMES: frozenset[str] = frozenset({"test.c", "test.h"})
 _C_TEST_FILE_PREFIXES: tuple[str, ...] = ("test_",)
 
 
@@ -118,6 +119,9 @@ def _is_test_file(file_path: str, config: dict[str, Any]) -> bool:
     for prefix in _C_TEST_FILE_PREFIXES:
         if basename.startswith(prefix):
             return True
+
+    if basename in _C_TEST_FILE_EXACT_NAMES:
+        return True
 
     for suffix in _C_TEST_FILE_SUFFIXES:
         if basename.endswith(suffix):

@@ -77,6 +77,38 @@ def _extract_function_name(func_def: Any) -> str:
     return ""
 
 
+def _extract_declared_name(declarator: Any) -> str:
+    """Extract the declared name from any declarator node, including
+    ``type_identifier`` leaves produced in typedef contexts.
+
+    ``typedef void (*callback_t)(void);`` names ``callback_t`` under a
+    ``pointer_declarator`` (a ``type_identifier`` leaf); ``int (*fp)(void);``
+    names ``fp`` under a ``pointer_declarator`` (an ``identifier`` leaf).
+    """
+    if declarator is None or not hasattr(declarator, "type"):
+        return ""
+    dtype = declarator.type
+    if dtype in ("identifier", "field_identifier", "type_identifier"):
+        return _node_text(declarator)
+    if dtype in (
+        "pointer_declarator",
+        "function_declarator",
+        "array_declarator",
+        "parenthesized_declarator",
+        "init_declarator",
+    ):
+        decl = declarator.child_by_field_name("declarator")
+        if decl is not None:
+            name = _extract_declared_name(decl)
+            if name:
+                return name
+        for child in declarator.children:
+            name = _extract_declared_name(child)
+            if name:
+                return name
+    return ""
+
+
 def _extract_type_name(type_def: Any) -> str:
     name_node = type_def.child_by_field_name("name")
     if name_node is not None:
@@ -86,6 +118,21 @@ def _extract_type_name(type_def: Any) -> str:
     for child in type_def.children:
         if child.type == "type_identifier":
             txt = _node_text(child)
+            if txt:
+                return txt
+    declarator = type_def.child_by_field_name("declarator")
+    if declarator is not None:
+        txt = _extract_declared_name(declarator)
+        if txt:
+            return txt
+    for child in type_def.children:
+        if child.type in (
+            "function_declarator",
+            "pointer_declarator",
+            "init_declarator",
+            "parenthesized_declarator",
+        ):
+            txt = _extract_declared_name(child)
             if txt:
                 return txt
     return ""
@@ -140,11 +187,21 @@ def _extract_variable_name(declaration: Any) -> str:
         if child.type == "init_declarator":
             decl = child.child_by_field_name("declarator")
             if decl is not None:
-                return _extract_declarator_name(decl)
+                return _extract_declared_name(decl)
             for sub in child.children:
-                name = _extract_declarator_name(sub)
+                name = _extract_declared_name(sub)
                 if name:
                     return name
+    for child in declaration.children:
+        if child.type in (
+            "function_declarator",
+            "pointer_declarator",
+            "array_declarator",
+            "parenthesized_declarator",
+        ):
+            name = _extract_declared_name(child)
+            if name:
+                return name
     for child in declaration.children:
         if child.type == "identifier":
             return _node_text(child)
@@ -329,11 +386,6 @@ class CVisitor:
             self._visit_field_expression(node)
 
         elif ntype in (
-            "preproc_if",
-            "preproc_ifdef",
-            "preproc_ifndef",
-            "preproc_else",
-            "preproc_elif",
             "preproc_endif",
             "preproc_params",
             "preproc_arg",

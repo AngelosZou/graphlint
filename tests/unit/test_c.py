@@ -51,6 +51,17 @@ class TestCConstants:
         assert _is_test_file("tests/test_foo.h", config) is True
         assert _is_test_file("src/main.h", config) is False
 
+    def test_is_test_file_exact_test_basename(self):
+        config = {}
+        assert _is_test_file("src/latest.c", config) is False
+        assert _is_test_file("src/contest.c", config) is False
+        assert _is_test_file("src/attest.c", config) is False
+        assert _is_test_file("src/util.c", config) is False
+        assert _is_test_file("src/test.c", config) is True
+        assert _is_test_file("src/test.h", config) is True
+        assert _is_test_file("src/util_test.c", config) is True
+        assert _is_test_file("src/foo_test.h", config) is True
+
 
 # =============================================================================
 # Adapter registration tests (always runnable)
@@ -209,6 +220,18 @@ typedef enum {
         type_nodes = [n for n in visitor.nodes if n.node_type == "type"]
         assert len(type_nodes) == 1
         assert type_nodes[0].name == "Status"
+
+    def test_typedef_function_pointer_node(self):
+        source = "typedef void (*callback_t)(void);\n"
+        visitor = _parse_source(source)
+        names = {n.name for n in visitor.nodes}
+        assert "callback_t" in names
+
+    def test_function_pointer_variable_node(self):
+        source = "int (*fp)(void);\n"
+        visitor = _parse_source(source)
+        names = {n.name for n in visitor.nodes}
+        assert "fp" in names
 
     def test_union_definition(self):
         source = """\
@@ -379,6 +402,43 @@ int foo(void) { return 42; }
         func_nodes = [n for n in visitor.nodes if n.node_type == "function"]
         assert len(func_nodes) == 1
         assert func_nodes[0].name == "foo"
+
+    def test_include_guard_header_walks_body(self):
+        source = """\
+#ifndef GUARD_H
+#define GUARD_H
+int helper(void) { return 42; }
+#endif
+"""
+        visitor = _parse_source(source, file_name="guard.h")
+        func_nodes = [n for n in visitor.nodes if n.node_type == "function"]
+        assert len(func_nodes) == 1
+        assert func_nodes[0].name == "helper"
+
+    def test_include_guard_c_walks_body(self):
+        source = """\
+#ifndef GUARD_H
+#define GUARD_H
+int helper(void) { return 42; }
+#endif
+"""
+        visitor = _parse_source(source, file_name="guard.c")
+        func_nodes = [n for n in visitor.nodes if n.node_type == "function"]
+        assert len(func_nodes) == 1
+        assert func_nodes[0].name == "helper"
+
+    def test_conditional_compilation_walks_all_branches(self):
+        source = """\
+#ifdef FEATURE
+int feature_fn(void) { return 1; }
+#else
+int fallback_fn(void) { return 0; }
+#endif
+"""
+        visitor = _parse_source(source)
+        func_nodes = [n for n in visitor.nodes if n.node_type == "function"]
+        names = {n.name for n in func_nodes}
+        assert names == {"feature_fn", "fallback_fn"}
 
     def test_nested_struct(self):
         source = """\
@@ -625,6 +685,24 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
         entries = self._detect_entries(source, rules, file_name="src/main.c")
         test_entries = [e for e in entries if e.rule_name == "c_test"]
         assert test_entries == []
+
+    def test_c_test_file_entry_line_zero(self):
+        source = (
+            "int first_fn(void) { return 0; }\n"
+            "int second_fn(void) { return 0; }\n"
+        )
+        rules = [{
+            "name": "c_test",
+            "file_pattern": "**/*.c",
+            "ast_pattern": "test_file",
+            "enabled": True,
+            "no_propagate": True,
+        }]
+        entries = self._detect_entries(source, rules, file_name="test_foo.c")
+        test_entries = [e for e in entries if e.rule_name == "c_test"]
+        assert len(test_entries) == 1
+        assert test_entries[0].line == 0
+        assert test_entries[0].no_propagate is True
 
 
 # =============================================================================
