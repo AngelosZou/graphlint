@@ -7,6 +7,15 @@ import tempfile
 
 import pytest
 
+from graphlint.analyzer._types import (
+    EdgeInfo,
+    GraphBuildResult,
+    NodeInfo,
+    ParseResult,
+)
+from graphlint.analyzer.language.c.imports import CIncludeInfo
+from graphlint.incremental._db_ops import update_db
+from graphlint.incremental.indexer import IncrementalIndexer
 from graphlint.storage.db import Database, IndexLock
 
 
@@ -242,3 +251,114 @@ class TestDatabase:
 
         rows = self.db.fetchall("SELECT * FROM files")
         assert len(rows) == 0
+
+
+class TestCIncludePersistence:
+    """C ``#include`` records survive the DB round trip (incremental builds)."""
+
+    @staticmethod
+    def _br_with_includes(files: dict[str, list[CIncludeInfo]]) -> GraphBuildResult:
+        prs = {
+            fp: ParseResult(file_path=fp, imports=imps)
+            for fp, imps in files.items()
+        }
+        return GraphBuildResult(files=list(files), files_data=prs)
+
+    def test_update_db_persists_c_includes(self, tmp_path):
+        db = Database(str(tmp_path))
+        br = self._br_with_includes({
+            "src/main.c": [
+                CIncludeInfo(include_path="helper.h", line=2),
+                CIncludeInfo(include_path="math/vec.h", line=3),
+            ],
+        })
+        update_db(db, br, [], ["src/main.c"], str(tmp_path), {})
+        rows = db.fetchall(
+            "SELECT file_id, import_line, module_path, import_type, is_used "
+            "FROM imports ORDER BY import_line"
+        )
+        assert len(rows) == 2
+        assert rows[0]["module_path"] == "helper.h"
+        assert rows[0]["import_line"] == 2
+        assert rows[0]["import_type"] == "c_include"
+        assert rows[1]["module_path"] == "math/vec.h"
+
+    def test_load_unchanged_restores_c_includes(self, tmp_path):
+        db = Database(str(tmp_path))
+        br = self._br_with_includes({
+            "src/main.c": [CIncludeInfo(include_path="helper.h", line=2)],
+        })
+        update_db(db, br, [], ["src/main.c"], str(tmp_path), {})
+        indexer = IncrementalIndexer(str(tmp_path), db)
+        restored = indexer._load_unchanged({"src/main.c"})
+        assert "src/main.c" in restored
+        imps = restored["src/main.c"].imports
+        assert len(imps) == 1
+        assert imps[0].include_path == "helper.h"
+        assert imps[0].line == 2
+
+    def test_system_and_unresolvable_includes_not_persisted(self, tmp_path):
+        db = Database(str(tmp_path))
+        # System includes never reach ParseResult.imports; nothing with an
+        # empty include_path should be stored either.
+        br = self._br_with_includes({
+            "src/main.c": [CIncludeInfo(include_path="", line=0)],
+        })
+        update_db(db, br, [], ["src/main.c"], str(tmp_path), {})
+        rows = db.fetchall("SELECT * FROM imports")
+        assert rows == []
+
+    def test_module_level_use_refs_round_trip(self, tmp_path):
+        """Genuine 0→target uses survive the DB round trip as module_ref rows."""
+        db = Database(str(tmp_path))
+        node = NodeInfo(
+            id=7, file_id=1, name="HELPER_H",
+            qualified_name="src.helper.HELPER_H", node_type="macro",
+        )
+        edge = EdgeInfo(
+            source_id=0, target_id=7, edge_type="read", file_id=1, line=2,
+        )
+        br = GraphBuildResult(
+            files=["src/helper.h"],
+            files_data={"src/helper.h": ParseResult(file_path="src/helper.h")},
+            nodes=[node],
+            edges=[edge],
+            node_id_map={7: node},
+        )
+        update_db(db, br, [], ["src/helper.h"], str(tmp_path), {})
+        rows = db.fetchall(
+            "SELECT import_line, module_path, import_type FROM imports"
+        )
+        assert len(rows) == 1
+        assert rows[0]["module_path"] == "src.helper.HELPER_H"
+        assert rows[0]["import_type"] == "module_ref:read"
+        assert rows[0]["import_line"] == 2
+
+        indexer = IncrementalIndexer(str(tmp_path), db)
+        restored = indexer._load_unchanged({"src/helper.h"})
+        refs = restored["src/helper.h"].references
+        assert len(refs) == 1
+        assert refs[0].target_name == "src.helper.HELPER_H"
+        assert refs[0].edge_type == "read"
+        assert refs[0].line == 2
+
+    def test_synthetic_module_edges_not_persisted(self, tmp_path):
+        """Synthetic module edges (line = 0) are rebuilt each build, not stored."""
+        db = Database(str(tmp_path))
+        node = NodeInfo(
+            id=7, file_id=1, name="gv",
+            qualified_name="src.main.gv", node_type="variable",
+        )
+        edge = EdgeInfo(
+            source_id=0, target_id=7, edge_type="read", file_id=1, line=0,
+        )
+        br = GraphBuildResult(
+            files=["src/main.c"],
+            files_data={"src/main.c": ParseResult(file_path="src/main.c")},
+            nodes=[node],
+            edges=[edge],
+            node_id_map={7: node},
+        )
+        update_db(db, br, [], ["src/main.c"], str(tmp_path), {})
+        rows = db.fetchall("SELECT * FROM imports")
+        assert rows == []

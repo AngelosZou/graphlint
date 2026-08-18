@@ -182,32 +182,6 @@ def _extract_macro_name(macro_node: Any) -> str:
     return ""
 
 
-def _extract_variable_name(declaration: Any) -> str:
-    for child in declaration.children:
-        if child.type == "init_declarator":
-            decl = child.child_by_field_name("declarator")
-            if decl is not None:
-                return _extract_declared_name(decl)
-            for sub in child.children:
-                name = _extract_declared_name(sub)
-                if name:
-                    return name
-    for child in declaration.children:
-        if child.type in (
-            "function_declarator",
-            "pointer_declarator",
-            "array_declarator",
-            "parenthesized_declarator",
-        ):
-            name = _extract_declared_name(child)
-            if name:
-                return name
-    for child in declaration.children:
-        if child.type == "identifier":
-            return _node_text(child)
-    return ""
-
-
 def _extract_field_name(field_decl: Any) -> str:
     for child in field_decl.children:
         if child.type == "field_identifier":
@@ -366,6 +340,9 @@ class CVisitor:
         elif ntype in ("struct_specifier", "union_specifier", "enum_specifier"):
             self._visit_type_specifier(node)
 
+        elif ntype == "enumerator":
+            self._visit_enumerator(node)
+
         elif ntype == "type_definition":
             self._visit_typedef(node)
 
@@ -460,8 +437,22 @@ class CVisitor:
             self._pop_scope()
 
     # ------------------------------------------------------------------
-    # Top-level declarations (global variables)
+    # Top-level declarations (global and local variables)
     # ------------------------------------------------------------------
+
+    # Declarator-shaped children of a `declaration` node. tree-sitter-c only
+    # wraps declarators in `init_declarator` when there is an initializer;
+    # comma-separated lists (`int foo(void), bar;`, `char *p, q;`) keep the
+    # declarators bare.
+    _DECLARATOR_TYPES = (
+        "init_declarator",
+        "pointer_declarator",
+        "array_declarator",
+        "function_declarator",
+        "parenthesized_declarator",
+        "identifier",
+        "field_identifier",
+    )
 
     def _visit_top_level_declaration(self, node: Any) -> None:
         parent = node.parent
@@ -476,49 +467,63 @@ class CVisitor:
                     self._walk(child)
             return
 
-        has_body = node.child_by_field_name("body") is not None
-        is_function_forward_decl = False
-        for child in node.children:
-            if child.type in ("function_declarator", "pointer_declarator",
-                              "init_declarator"):
-                if _declarator_is_function(child):
-                    is_function_forward_decl = True
-                    break
-
-        # TODO(#4 mixed declarator lists): `int foo(void), bar;` — because one
-        # init_declarator is a function declaration, we return for the whole
-        # declaration and `bar` becomes invisible. Future work: process each
-        # declarator individually and only suppress the function-declaration
-        # part.
-        if is_function_forward_decl and not has_body:
-            return
-
-        name = _extract_variable_name(node)
-        if not name:
+        declarator_children = [
+            child for child in node.children
+            if child.type in self._DECLARATOR_TYPES
+        ]
+        if not declarator_children:
+            # No declarators at all (e.g. `enum Color { RED, GREEN };` —
+            # the enum_specifier child is walked and handles the definition).
             for child in node.children:
                 self._walk(child)
             return
 
-        qualified = self._current_qname() + "." + name
+        # Process each declarator on its own. A mixed declarator list
+        # (`int foo(void), bar;`) must only suppress the function-declaration
+        # part — `bar` is a real variable and needs its own node.
+        for child in declarator_children:
+            if _declarator_is_function(child):
+                # Function declaration / prototype — no body, no node
+                # (pure-AST dead-code semantics).
+                continue
+            name = _extract_declared_name(child)
+            if not name:
+                continue
 
-        info = NodeInfo(
-            file_id=0,
-            name=name,
-            qualified_name=qualified,
-            node_type="variable",
-            line_start=_node_line(node),
-            line_end=_node_end_line(node),
-            col_offset=_node_col(node),
-            parent_node_id=self._current_type_id,
-        )
-        self._add_node(info)
+            qualified = self._current_qname() + "." + name
+            info = NodeInfo(
+                file_id=0,
+                name=name,
+                qualified_name=qualified,
+                node_type="variable",
+                line_start=_node_line(node),
+                line_end=_node_end_line(node),
+                col_offset=_node_col(node),
+                parent_node_id=self._current_type_id,
+            )
+            self._add_node(info)
 
+            if child.type == "init_declarator":
+                # Walk the initializer value (`int x = foo();` — the call is
+                # a use) but not the declarator subtree: reading one's own
+                # declaration is not a use.
+                declarator = child.child_by_field_name("declarator")
+                for sub in child.children:
+                    # ``==`` not ``is``: tree-sitter wrappers are fresh per
+                    # ``.children`` access.
+                    if sub == declarator or sub.type == "=":
+                        continue
+                    self._walk(sub)
+
+        # Walk the remaining non-declarator children (nested
+        # struct/union/enum definitions, typedef-name uses, attributes).
         for child in node.children:
-            if child.type in ("identifier",) and _node_text(child) == name:
+            if child.type in self._DECLARATOR_TYPES:
                 continue
             if child.type in (
                 "storage_class_specifier", "type_qualifier",
-                "type", "semicolon", "=",
+                "type", "primitive_type", "sized_type_specifier",
+                "semicolon", ",",
             ):
                 continue
             self._walk(child)
@@ -583,13 +588,11 @@ class CVisitor:
 
         is_definition = has_body or has_field_list
 
-        # TODO(#3 enum constants): `enum Color { RED, GREEN };` does not create
-        # nodes for the enumerators (RED/GREEN); a use of `RED` resolves to no
-        # node, the enum is reported dead, and the def site emits phantom
-        # `read Color -> RED/GREEN` edges that can cross-link unrelated
-        # same-named symbols. Future work: create enumerator nodes under the
-        # enum (as the C# backend models enum members), or emit an edge from a
-        # constant use to its enclosing enum.
+        # Enum/struct/union definitions create their own node (below);
+        # enumerators get enum_member nodes via _visit_enumerator, so a use of
+        # `RED` resolves to `mod.Color.RED` and keeps the enum alive. A bare
+        # reference (`struct Point *p;`, `enum Color c;`) only emits a read
+        # edge — it does not create a new node.
         if not is_definition:
             # Type reference — emit a read edge, don't create a new node
             if name:
@@ -618,7 +621,7 @@ class CVisitor:
             else:
                 name_node = node.child_by_field_name("name")
                 for child in node.children:
-                    if child is name_node:
+                    if child == name_node:
                         continue
                     if child.type in ("field_declaration_list", "enumerator_list"):
                         self._walk(child)
@@ -651,7 +654,7 @@ class CVisitor:
         else:
             name_node = node.child_by_field_name("name")
             for child in node.children:
-                if child is name_node:
+                if child == name_node:
                     continue
                 if child.type in ("field_declaration_list", "enumerator_list"):
                     self._walk(child)
@@ -662,6 +665,56 @@ class CVisitor:
 
         self._pop_scope()
         self._current_type_id = prev_type_id
+
+    # ------------------------------------------------------------------
+    # Enumerators (enum constants)
+    # ------------------------------------------------------------------
+
+    def _visit_enumerator(self, node: Any) -> None:
+        """Create an ``enum_member`` node for each enumerator.
+
+        ``enum Color { RED, GREEN };`` yields ``mod.Color.RED`` /
+        ``mod.Color.GREEN`` with the enum node as parent, so a use of ``RED``
+        resolves to the member, promotes it (``enum_member`` is a read-promoted
+        type) and, through parent promotion, keeps the enclosing enum alive.
+        Mirrors the C# backend's enum-member model. The enumerator's value
+        expression is walked (``RED = BASE`` uses ``BASE``); the name
+        identifier itself is not — reading one's own declaration is not a use.
+        """
+        name_node = node.child_by_field_name("name")
+        if name_node is None:
+            for child in node.children:
+                if child.type in ("identifier", "field_identifier"):
+                    name_node = child
+                    break
+        if name_node is None:
+            for child in node.children:
+                self._walk(child)
+            return
+        name = _node_text(name_node)
+        if not name:
+            return
+
+        qualified = self._current_qname() + "." + name
+        info = NodeInfo(
+            file_id=0,
+            name=name,
+            qualified_name=qualified,
+            node_type="enum_member",
+            line_start=_node_line(node),
+            line_end=_node_end_line(node),
+            col_offset=_node_col(node),
+            parent_node_id=self._current_type_id,
+        )
+        self._add_node(info)
+
+        for child in node.children:
+            # NOTE: tree-sitter materializes fresh Node wrappers per
+            # ``.children`` access, so compare with ``==`` (Node equality is
+            # structural) rather than ``is``.
+            if child == name_node:
+                continue
+            self._walk(child)
 
     # ------------------------------------------------------------------
     # Typedef
@@ -803,12 +856,11 @@ class CVisitor:
         if not name:
             return
 
-        # TODO(#5 include-guard macros): a name referenced by a preproc
-        # conditional (`#ifndef GUARD_H` / `#ifdef FEATURE`) reaches this point
-        # and emits a `read <module> -> NAME` edge. The module pseudo-node is
-        # not an entry, so every guarded header reports its guard macro as dead
-        # code. Future work: skip preproc-conditional name references, or
-        # exempt guard macros from dead-code reporting.
+        # A name referenced by a preproc conditional (`#ifndef GUARD_H` /
+        # `#ifdef FEATURE`) reaches this point and emits a genuine module-level
+        # `read <module> -> NAME` edge (line > 0). find_connected_components
+        # promotes macros with such a genuine module-level use when their file
+        # is live, so include-guard and feature macros are not reported dead.
         sq = self._current_qname()
 
         if _is_on_left_of_assignment(node):
@@ -868,8 +920,12 @@ class CVisitor:
         if self._is_declaration_parent(parent):
             return
 
-        if parent.type in ("init_declarator", "field_declaration", # TODO: type_identifier skipped with parent field_declaration and cause false positive, should delete field_declaration here
-                           "parameter_declaration"):
+        # NOTE: type_identifier leaves whose parent is a declarator name the
+        # type being declared (`typedef`/`init_declarator`), not a use.
+        # field_declaration / parameter_declaration parents are real type
+        # uses (`Item item;` as a struct field or parameter) and emit read
+        # edges so the typedef is kept alive when the container/function is.
+        if parent.type in ("init_declarator",):
             return
 
         name = _node_text(node)

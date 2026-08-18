@@ -106,6 +106,7 @@ def update_db(
         _do_insert_edges(db, build_result, fid_map, changed_files=changed_set)
         _insert_warnings(db, build_result, fid_map, changed_files=changed_set)
         _insert_entries(db, build_result, fid_map, changed_files=changed_set)
+        _insert_imports(db, build_result, fid_map, changed_files=changed_set)
         if incremental:
             update_snapshots(db, build_result)
 
@@ -408,6 +409,64 @@ def _insert_entries(
         db.executemany(
             "INSERT INTO entries (file_id, node_id, rule_name, "
             "line, description, no_propagate) VALUES (?,?,?,?,?,?)",
+            batch,
+        )
+
+
+def _insert_imports(
+    db: Database,
+    build_result: GraphBuildResult,
+    fid_map: dict[str, int],
+    changed_files: Optional[set[str]] = None,
+) -> None:
+    """Persist file-level include records and module-level use references.
+
+    - C ``#include`` records (``include_path``) feed the module-liveness
+      include graph on incremental builds, where unchanged files are restored
+      from the DB instead of being re-parsed.
+    - Genuine module-level uses (edges with source 0 and line > 0, e.g. an
+      include-guard macro referenced by ``#ifndef``) are stored as
+      ``module_ref:*`` rows because the edges table cannot hold them (its
+      ``source_id`` column references nodes and no node with id 0 exists).
+
+    Python-style imports (``module_path``) are recomputed by their language
+    parsers and are not persisted here.
+    """
+    batch: list[tuple[Any, ...]] = []
+    mem_fid_to_path: dict[int, str] = dict(enumerate(build_result.files, 1))
+    for fp, pr in build_result.files_data.items():
+        if changed_files is not None and fp not in changed_files:
+            continue
+        fid = fid_map.get(fp, 0)
+        if not fid:
+            continue
+        for imp in pr.imports or []:
+            inc = getattr(imp, "include_path", "") or ""
+            if not inc:
+                continue
+            batch.append(
+                (fid, getattr(imp, "line", 0) or 0, inc, "c_include")
+            )
+    for edge in build_result.edges:
+        if edge.source_id != 0 or not edge.line:
+            continue
+        fp = mem_fid_to_path.get(edge.file_id, "")
+        if changed_files is not None and fp not in changed_files:
+            continue
+        fid = fid_map.get(fp, 0)
+        if not fid:
+            continue
+        target = build_result.node_id_map.get(edge.target_id)
+        if target is None or not target.qualified_name:
+            continue
+        batch.append(
+            (fid, edge.line, target.qualified_name,
+             f"module_ref:{edge.edge_type}")
+        )
+    if batch:
+        db.executemany(
+            "INSERT INTO imports (file_id, import_line, module_path, "
+            "import_type, is_used) VALUES (?,?,?,?,0)",
             batch,
         )
 

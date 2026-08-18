@@ -11,7 +11,12 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import dataclass
 from typing import Any, Optional
 
-from graphlint.analyzer._types import NodeInfo, ParseResult
+from graphlint.analyzer._types import (
+    GraphBuildResult,
+    NodeInfo,
+    ParseResult,
+    ReferenceInfo,
+)
 from graphlint.analyzer.graph import GraphBuilder
 from graphlint.analyzer.language.registry import LanguageRegistry
 from graphlint.analyzer.warnings import WarningCollector, WarningInfo
@@ -27,6 +32,19 @@ from graphlint.incremental._db_ops import (
 )
 from graphlint.storage.db import Database, IndexLock
 from graphlint.storage.hashing import compute_file_hash
+
+
+@dataclass
+class _LoadedInclude:
+    """Minimal ``#include`` record restored from the DB for unchanged files.
+
+    Carries only the fields the module-liveness include graph consumes
+    (``include_path``); unchanged files are not re-parsed.
+    """
+
+    include_path: str = ""
+    line: int = 0
+    is_system: bool = False
 
 
 @dataclass
@@ -374,11 +392,36 @@ class IncrementalIndexer:
         nodes_by_fid: dict[int, list[Any]] = {}
         for row in nrows:
             nodes_by_fid.setdefault(row["file_id"], []).append(_row_to_node(row))
+        irows = self.db.fetchall(
+            f"SELECT file_id, import_line, module_path, import_type "
+            f"FROM imports WHERE file_id IN ({fph})",
+            tuple(fids),
+        )
+        imports_by_fid: dict[int, list[_LoadedInclude]] = {}
+        refs_by_fid: dict[int, list[ReferenceInfo]] = {}
+        for row in irows:
+            itype = row["import_type"] or ""
+            if itype == "c_include":
+                imports_by_fid.setdefault(row["file_id"], []).append(
+                    _LoadedInclude(
+                        include_path=row["module_path"],
+                        line=row["import_line"] or 0,
+                    )
+                )
+            elif itype.startswith("module_ref:"):
+                refs_by_fid.setdefault(row["file_id"], []).append(
+                    ReferenceInfo(
+                        target_name=row["module_path"],
+                        edge_type=itype.split(":", 1)[1],
+                        line=row["import_line"] or 0,
+                    )
+                )
         for fid, fp in fid_map.items():
             results[fp] = ParseResult(
                 file_path=fp,
                 nodes=nodes_by_fid.get(fid, []),
-                imports=[],
+                imports=imports_by_fid.get(fid, []),
+                references=refs_by_fid.get(fid, []),
                 name_usages=set(),
                 warnings=[],
                 hash="",

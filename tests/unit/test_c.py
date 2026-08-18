@@ -246,6 +246,101 @@ union Data {
         assert len(union_nodes) == 1
         assert union_nodes[0].name == "Data"
 
+    def test_enum_constants_create_member_nodes(self):
+        source = """\
+enum Color {
+    RED,
+    GREEN,
+    BLUE
+};
+"""
+        visitor = _parse_source(source)
+        enum_nodes = [n for n in visitor.nodes if n.node_type == "enum"]
+        member_nodes = [n for n in visitor.nodes if n.node_type == "enum_member"]
+        assert len(enum_nodes) == 1
+        assert len(member_nodes) == 3
+        assert {n.name for n in member_nodes} == {"RED", "GREEN", "BLUE"}
+        assert {n.qualified_name for n in member_nodes} == {
+            "test_module.Color.RED",
+            "test_module.Color.GREEN",
+            "test_module.Color.BLUE",
+        }
+        assert all(n.parent_node_id == enum_nodes[0].id for n in member_nodes)
+        # The def site must not emit phantom reads from the enum to its own
+        # constants.
+        phantom = [
+            r for r in visitor.references
+            if r.source_qname == "test_module.Color"
+            and r.target_name in ("RED", "GREEN", "BLUE")
+        ]
+        assert phantom == []
+
+    def test_enum_constant_use_resolves_to_member(self):
+        source = """\
+enum Color { RED, GREEN };
+int main(void) { return RED; }
+"""
+        visitor = _parse_source(source)
+        uses = [
+            r for r in visitor.references
+            if r.edge_type == "read" and r.target_name == "RED"
+        ]
+        assert len(uses) == 1
+        assert uses[0].source_qname == "test_module.main"
+
+    def test_typedef_enum_members_under_typedef(self):
+        source = """\
+typedef enum {
+    STATUS_OK,
+    STATUS_ERROR
+} Status;
+"""
+        visitor = _parse_source(source)
+        type_nodes = [n for n in visitor.nodes if n.node_type == "type"]
+        member_nodes = [n for n in visitor.nodes if n.node_type == "enum_member"]
+        assert len(type_nodes) == 1
+        assert len(member_nodes) == 2
+        assert {n.qualified_name for n in member_nodes} == {
+            "test_module.Status.STATUS_OK",
+            "test_module.Status.STATUS_ERROR",
+        }
+        assert all(n.parent_node_id == type_nodes[0].id for n in member_nodes)
+
+    def test_mixed_declarator_list_keeps_variable(self):
+        source = "int foo(void), bar;\n"
+        visitor = _parse_source(source)
+        names = {n.name for n in visitor.nodes}
+        assert "bar" in names
+        assert "foo" not in names
+        var_nodes = [n for n in visitor.nodes if n.node_type == "variable"]
+        assert len(var_nodes) == 1
+        assert var_nodes[0].qualified_name == "test_module.bar"
+
+    def test_multi_name_declaration_two_nodes(self):
+        source = "int a, b;\n"
+        visitor = _parse_source(source)
+        var_nodes = [n for n in visitor.nodes if n.node_type == "variable"]
+        assert {n.name for n in var_nodes} == {"a", "b"}
+
+    def test_mixed_pointer_declaration_two_nodes(self):
+        source = "char *p, q;\n"
+        visitor = _parse_source(source)
+        var_nodes = [n for n in visitor.nodes if n.node_type == "variable"]
+        assert {n.name for n in var_nodes} == {"p", "q"}
+
+    def test_typedef_field_type_use_emits_read(self):
+        source = """\
+typedef struct { int x; } Item;
+struct Holder { Item item; };
+"""
+        visitor = _parse_source(source)
+        refs = [
+            r for r in visitor.references
+            if r.target_name == "Item" and r.edge_type == "read"
+        ]
+        assert refs, "typedef used as a field type must emit a read edge"
+        assert all(r.source_qname == "test_module.Holder" for r in refs)
+
     def test_global_variable(self):
         source = """\
 int global_counter = 0;
@@ -967,3 +1062,121 @@ class TestCEndToEnd:
         assert any(e.source_id == f_func.id for e in helper_in_edges), (
             "helper's in-edge must be sourced from function f, not the typedef"
         )
+
+    # --- regression tests for TODO #3/#4/#5 and the FP fixes -------------
+
+    def test_enum_used_only_via_constant_is_live(self):
+        br, wb = self._build({
+            "src/main.c": (
+                'enum Color { RED, GREEN };\n'
+                'int main(void) { return RED; }\n'
+            ),
+        })
+        live = _live_nodes(br)
+        dead = _dead_nodes(br)
+        assert "src.main.Color" in live, live
+        assert "src.main.Color.RED" in live, live
+        # Unused enum constants are genuinely dead.
+        assert "src.main.Color.GREEN" in dead, dead
+
+    def test_mixed_declarator_variable_is_live(self):
+        br, wb = self._build({
+            "src/main.c": (
+                'int foo(void), bar;\n'
+                'int main(void) { bar = 1; return bar; }\n'
+            ),
+        })
+        live = _live_nodes(br)
+        assert "src.main.bar" in live, live
+
+    def test_include_guard_macro_live_when_header_used(self):
+        br, wb = self._build({
+            "src/helper.h": (
+                '#ifndef HELPER_H\n'
+                '#define HELPER_H\n'
+                'int helper(void);\n'
+                '#endif\n'
+            ),
+            "src/helper.c": (
+                '#include "helper.h"\n'
+                'int helper(void) { return 42; }\n'
+            ),
+            "src/main.c": (
+                '#include "helper.h"\n'
+                'int main(void) { return helper(); }\n'
+            ),
+        })
+        live = _live_nodes(br)
+        assert "src.helper.HELPER_H" in live, live
+
+    def test_unused_macro_still_dead(self):
+        br, wb = self._build({
+            "src/main.c": (
+                '#define UNUSED 1\n'
+                'int main(void) { return 0; }\n'
+            ),
+        })
+        dead = _dead_nodes(br)
+        assert "src.main.UNUSED" in dead, dead
+
+    def test_macro_used_in_live_function_is_live(self):
+        br, wb = self._build({
+            "src/main.c": (
+                '#define LIMIT 100\n'
+                'int main(void) { return LIMIT; }\n'
+            ),
+        })
+        live = _live_nodes(br)
+        assert "src.main.LIMIT" in live, live
+
+    def test_typedef_used_in_live_code_is_live(self):
+        br, wb = self._build({
+            "src/main.c": (
+                'typedef struct { int x; } Item;\n'
+                'int main(void) { Item it = {1}; return it.x; }\n'
+            ),
+        })
+        live = _live_nodes(br)
+        assert "src.main.Item" in live, live
+
+    def test_union_used_in_live_code_is_live(self):
+        br, wb = self._build({
+            "src/main.c": (
+                'union Data { int i; float f; };\n'
+                'int main(void) { union Data d; d.i = 1; return d.i; }\n'
+            ),
+        })
+        live = _live_nodes(br)
+        assert "src.main.Data" in live, live
+
+    def test_typedef_used_only_as_field_type_is_live(self):
+        br, wb = self._build({
+            "src/main.c": (
+                'typedef struct { int x; } Item;\n'
+                'struct Holder { Item item; };\n'
+                'int main(void) { struct Holder h; return h.item.x; }\n'
+            ),
+        })
+        live = _live_nodes(br)
+        assert "src.main.Item" in live, live
+
+    def test_dead_file_typedef_not_promoted_via_live_component(self):
+        # Regression: a dead file's typedef must stay dead even when the
+        # component it sits in (via cross-file read edges) has live seeds.
+        br, wb = self._build({
+            "src/main.c": (
+                'int gv;\n'
+                'int main(void) { gv = 1; return gv; }\n'
+            ),
+            "src/b.c": (
+                'typedef struct { int y; } BItem;\n'
+                'BItem bg;\n'
+                'void useb(void) { BItem x; x.y = gv; }\n'
+            ),
+        })
+        dead = _dead_nodes(br)
+        live = _live_nodes(br)
+        assert "src.b.BItem" in dead, dead
+        assert "src.b.useb" in dead, dead
+        assert "src.b.bg" in dead, dead
+        assert "src.main.gv" in live, live

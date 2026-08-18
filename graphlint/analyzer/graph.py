@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import os
 from collections import defaultdict
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from typing import Any, Callable, Optional
@@ -443,6 +444,49 @@ class GraphBuilder:
         expanded: set[int] = set()
         reachable: set[int] = set()
 
+        # Rebuild genuine module-level use edges for unchanged files from
+        # restored references (incremental mode). These 0→target edges (e.g.
+        # an include-guard macro referenced by #ifndef) cannot live in the
+        # edges table — its source_id column references nodes and node 0 does
+        # not exist — so they round-trip through the imports table.
+        if changed_files is not None and changed_files != set(parse_results):
+            for _fp, _pr in parse_results.items():
+                if _fp in changed_files:
+                    continue
+                _fid = fid_map.get(_fp, 0)
+                if not _fid:
+                    continue
+                for _ref in _pr.references:
+                    if not _ref.target_name:
+                        continue
+                    for _tid in _resolve_symbol(
+                        _ref.target_name,
+                        "",
+                        self._symbol_index,
+                        self._suffix_index,
+                        self._node_id_map,
+                    ):
+                        self._edges.append(
+                            EdgeInfo(0, _tid, _ref.edge_type, _fid, _ref.line)
+                        )
+
+        # File-level include edges (C #include): a header included by a live
+        # file counts as live, so genuinely-used header symbols (include-guard
+        # macros, module-level typedef uses) are not reported dead.
+        include_fids: dict[int, list[int]] = {}
+        _pr_keys = set(parse_results)
+        for _fp, _pr in parse_results.items():
+            _fid = fid_map.get(_fp, 0)
+            if not _fid:
+                continue
+            for _imp in _pr.imports or []:
+                _inc = getattr(_imp, "include_path", "") or ""
+                if not _inc:
+                    continue
+                _tgt = self._resolve_include(_inc, _fp, _pr_keys)
+                if _tgt and _tgt in fid_map and fid_map[_tgt] != _fid:
+                    include_fids.setdefault(_fid, []).append(fid_map[_tgt])
+
         _sn = self._get_special_names()
         _pn = self._get_public_api_names()
         special_check = self._make_special_name_check(fid_map, _sn)
@@ -481,6 +525,7 @@ class GraphBuilder:
             cached_class_special_map=_cached_csm,
             is_special_name=special_check,
             is_public_api_name=public_check,
+            include_fids=include_fids,
         )
         file_id_to_path = {v: k for k, v in fid_map.items()}
         self._add_warnings(comps, file_id_to_path, cached_digraph=_cached_dg,
@@ -560,6 +605,30 @@ class GraphBuilder:
             if adapter:
                 return adapter.file_to_module_with_csproj(file_path, self.config)
         return file_path
+
+    @staticmethod
+    def _resolve_include(
+        include_path: str,
+        from_file: str,
+        parse_keys: set[str],
+    ) -> str:
+        """Resolve an ``#include`` path to a parsed file key.
+
+        Tries the raw path, the including file's directory, then a unique
+        basename match. Returns ``""`` when unresolvable.
+        """
+        if include_path in parse_keys:
+            return include_path
+        cand = os.path.normpath(
+            os.path.join(os.path.dirname(from_file), include_path)
+        ).replace(os.sep, "/")
+        if cand in parse_keys:
+            return cand
+        base = os.path.basename(include_path)
+        matches = [k for k in parse_keys if os.path.basename(k) == base]
+        if len(matches) == 1:
+            return matches[0]
+        return ""
 
     # ------------------------------------------------------------------
     # Partial class merging (C#)

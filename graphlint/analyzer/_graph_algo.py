@@ -13,6 +13,8 @@ from graphlint.analyzer.warnings import WarningInfo
 _EMPTY_FROZENSET: frozenset[str] = frozenset()
 
 # Node types promoted from READ edges into the call graph (a read = a use).
+# ``macro``/``type``/``union`` are C-only node types (typedefs, unions, and
+# macros used from live code are alive).
 _READ_PROMOTED_TYPES: frozenset[str] = frozenset(
     {
         "function",
@@ -26,6 +28,9 @@ _READ_PROMOTED_TYPES: frozenset[str] = frozenset(
         "struct",
         "record",
         "delegate",
+        "macro",
+        "type",
+        "union",
     }
 )
 
@@ -521,6 +526,7 @@ def find_connected_components(
     cached_class_special_map: Optional[dict[int, list[int]]] = None,
     is_special_name: Optional[Callable[[NodeInfo], bool]] = None,
     is_public_api_name: Optional[Callable[[NodeInfo], bool]] = None,
+    include_fids: Optional[dict[int, list[int]]] = None,
 ) -> tuple[dict[int, int], list[ComponentInfo]]:
     """Find all connected components."""
     if cached_adj is not None:
@@ -628,13 +634,43 @@ def find_connected_components(
             if _ninfo:
                 global_reachable_fids.add(_ninfo.file_id)
 
-    # Pre-compute node-0 connected node IDs (O(E) once)
+    # Files transitively included by live files also count as live. Used to
+    # promote genuinely-used module-level symbols (C include-guard macros,
+    # module-level typedef uses) in headers whose own nodes are all dead.
+    #
+    # Known over-promotion trade-off (file-granularity heuristic): a typedef
+    # whose only use is the declaration of a dead global in an included
+    # header (``Item g_item;`` where ``g_item`` is never referenced) is
+    # reported live while ``g_item`` stays dead. The asymmetry is deliberate:
+    # module-level type/macro *references* count as uses of the target symbol
+    # even when the referencing declaration itself is dead, mirroring how
+    # variables in live files are blanket-treated as live. Upgrading to
+    # symbol-level propagation would eliminate it; keep the coarse rule until
+    # then.
+    module_live_fids: set[int] = set(global_reachable_fids)
+    if include_fids:
+        _inc_q: deque[int] = deque(global_reachable_fids)
+        while _inc_q:
+            _cur_fid = _inc_q.popleft()
+            for _inc_fid in include_fids.get(_cur_fid, ()):
+                if _inc_fid not in module_live_fids:
+                    module_live_fids.add(_inc_fid)
+                    _inc_q.append(_inc_fid)
+
+    # Pre-compute node-0 connected node IDs (O(E) once). _zero_used_targets
+    # holds targets of genuine module-level references (line > 0) — the
+    # synthetic module edges (line = 0) are excluded, so e.g. an include-guard
+    # macro (`#ifndef GUARD_H`) counts as used while an untouched #define in a
+    # live file does not.
     _zero_targets: set[int] = set()
     _zero_sources: set[int] = set()
+    _zero_used_targets: set[int] = set()
     for _e in edges:
         if _e.edge_type in ("read", "call"):
             if _e.source_id == 0 and _e.target_id:
                 _zero_targets.add(_e.target_id)
+                if _e.line:
+                    _zero_used_targets.add(_e.target_id)
             elif _e.target_id == 0 and _e.source_id:
                 _zero_sources.add(_e.source_id)
 
@@ -734,7 +770,20 @@ def find_connected_components(
                     continue
                 if _non_noprop:
                     _ni2 = node_id_map.get(_nid) if node_id_map else None
-                    if _ni2 is None or _ni2.node_type in ("variable", "field"):
+                    if (
+                        _ni2 is None
+                        or _ni2.node_type in ("variable", "field")
+                        or (
+                            _nid in _zero_used_targets
+                            and _ni2.node_type
+                            in ("macro", "type", "struct", "enum", "union")
+                            # Gate on the node's own file being live: a
+                            # component can span files, and a dead file's
+                            # type may sit in the same component as live
+                            # nodes via cross-file read edges.
+                            and _ni2.file_id in module_live_fids
+                        )
+                    ):
                         comp_reachable.add(_nid)
                         comp_unreachable.discard(_nid)
                 elif node_id_map:
@@ -743,6 +792,18 @@ def find_connected_components(
                         if _ni.node_type in ("variable", "field"):
                             comp_reachable.add(_nid)
                             comp_unreachable.discard(_nid)
+                    if (
+                        _ni
+                        and _nid in _zero_used_targets
+                        and _ni.file_id in module_live_fids
+                        and _ni.node_type
+                        in ("macro", "type", "struct", "enum", "union")
+                    ):
+                        # Genuine module-level use (e.g. an include-guard
+                        # macro referenced by #ifndef, a typedef used in a
+                        # global declaration) in a live (or included) file.
+                        comp_reachable.add(_nid)
+                        comp_unreachable.discard(_nid)
 
         # Merge public API dunders into reachable components from the same file.
         if comp_reachable and comp_unreachable and node_id_map:
