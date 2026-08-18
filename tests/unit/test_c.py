@@ -532,6 +532,97 @@ struct S {
         ]
         assert self_refs == []
 
+    # --- #2 nested-declarator fields ---------------------------------------
+
+    def test_nested_pointer_field_node(self):
+        source = """\
+struct S {
+    char *name;
+    int count;
+    char **pp;
+};
+"""
+        visitor = _parse_source(source)
+        field_nodes = [n for n in visitor.nodes if n.node_type == "field"]
+        field_names = {n.name for n in field_nodes}
+        assert "pp" in field_names
+        self_refs = [
+            r for r in visitor.references
+            if r.target_name == "pp" and r.source_qname == "test_module.S"
+        ]
+        assert self_refs == []
+
+    def test_function_pointer_field_node(self):
+        source = """\
+struct S {
+    void (*cb)(int);
+};
+"""
+        visitor = _parse_source(source)
+        field_nodes = [n for n in visitor.nodes if n.node_type == "field"]
+        field_names = {n.name for n in field_nodes}
+        assert "cb" in field_names
+        self_refs = [
+            r for r in visitor.references
+            if r.target_name == "cb" and r.source_qname == "test_module.S"
+        ]
+        assert self_refs == []
+
+    def test_nested_array_field_node(self):
+        source = """\
+struct M {
+    int m[4][5];
+    int n[3];
+};
+"""
+        visitor = _parse_source(source)
+        field_nodes = [n for n in visitor.nodes if n.node_type == "field"]
+        field_names = {n.name for n in field_nodes}
+        assert "m" in field_names
+        assert "n" in field_names
+        self_refs = [
+            r for r in visitor.references
+            if r.target_name in ("m", "n") and r.source_qname == "test_module.M"
+        ]
+        assert self_refs == []
+
+    # --- #1 anonymous struct/union/enum definitions ------------------------
+
+    def test_typedef_anonymous_struct_no_phantom_node(self):
+        source = """\
+typedef struct {
+    int x;
+} Item;
+"""
+        visitor = _parse_source(source)
+        item_nodes = [
+            n for n in visitor.nodes if n.qualified_name == "test_module.Item"
+        ]
+        assert len(item_nodes) == 1
+        assert item_nodes[0].node_type == "type"
+        assert item_nodes[0].name == "Item"
+        # No phantom anonymous node with an empty name.
+        assert all(n.name != "" for n in visitor.nodes)
+
+    def test_anonymous_struct_in_function_not_clobbered(self):
+        source = """\
+void f(void) {
+    struct { int a; } s;
+}
+"""
+        visitor = _parse_source(source)
+        func_nodes = [n for n in visitor.nodes if n.node_type == "function"]
+        assert len(func_nodes) == 1
+        assert func_nodes[0].name == "f"
+        assert func_nodes[0].qualified_name == "test_module.f"
+        # No phantom anonymous struct node.
+        assert all(n.name != "" for n in visitor.nodes)
+        field_nodes = [n for n in visitor.nodes if n.node_type == "field"]
+        assert len(field_nodes) == 1
+        assert field_nodes[0].name == "a"
+        assert field_nodes[0].qualified_name == "test_module.f.a"
+
+
 
 # =============================================================================
 # Entry detection tests (require tree-sitter-c)
@@ -840,3 +931,39 @@ class TestCEndToEnd:
         live = _live_nodes(br)
         assert "src.util.useful" in live, live
         assert "src.util.useless" not in live
+
+    def test_anonymous_struct_in_function_keeps_callee_live(self):
+        br, wb = self._build({
+            "src/main.c": (
+                'int helper(void) { return 42; }\n'
+                'void f(void) { struct { int a; } s; helper(); }\n'
+                'int main(void) { f(); return 0; }\n'
+            ),
+        })
+        live = _live_nodes(br)
+        assert "src.main.helper" in live, live
+        assert "src.main.f" in live, live
+
+    def test_fnodes_map_prefers_function_on_qname_collision(self):
+        br, wb = self._build({
+            "src/main.c": (
+                'int helper(void) { return 42; }\n'
+                'int f(void) { return helper(); }\n'
+                'typedef struct { int x; } f;\n'
+                'int main(void) { return f(); }\n'
+            ),
+        })
+        nid_map = br.node_id_map
+        f_func = next(
+            n for n in nid_map.values()
+            if n.qualified_name == "src.main.f" and n.node_type == "function"
+        )
+        helper = next(
+            n for n in nid_map.values()
+            if n.qualified_name == "src.main.helper" and n.node_type == "function"
+        )
+        helper_in_edges = [e for e in br.edges if e.target_id == helper.id]
+        assert helper_in_edges, "helper should have an incoming edge"
+        assert any(e.source_id == f_func.id for e in helper_in_edges), (
+            "helper's in-edge must be sourced from function f, not the typedef"
+        )

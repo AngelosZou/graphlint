@@ -213,10 +213,15 @@ def _extract_field_name(field_decl: Any) -> str:
         if child.type == "field_identifier":
             return _node_text(child)
     for child in field_decl.children:
-        if child.type in ("pointer_declarator", "array_declarator"):
-            for sub in child.children:
-                if sub.type == "field_identifier":
-                    return _node_text(sub)
+        if child.type in (
+            "pointer_declarator",
+            "function_declarator",
+            "array_declarator",
+            "parenthesized_declarator",
+        ):
+            name = _extract_declared_name(child)
+            if name:
+                return name
     return ""
 
 
@@ -480,6 +485,11 @@ class CVisitor:
                     is_function_forward_decl = True
                     break
 
+        # TODO(#4 mixed declarator lists): `int foo(void), bar;` — because one
+        # init_declarator is a function declaration, we return for the whole
+        # declaration and `bar` becomes invisible. Future work: process each
+        # declarator individually and only suppress the function-declaration
+        # part.
         if is_function_forward_decl and not has_body:
             return
 
@@ -573,6 +583,13 @@ class CVisitor:
 
         is_definition = has_body or has_field_list
 
+        # TODO(#3 enum constants): `enum Color { RED, GREEN };` does not create
+        # nodes for the enumerators (RED/GREEN); a use of `RED` resolves to no
+        # node, the enum is reported dead, and the def site emits phantom
+        # `read Color -> RED/GREEN` edges that can cross-link unrelated
+        # same-named symbols. Future work: create enumerator nodes under the
+        # enum (as the C# backend models enum members), or emit an edge from a
+        # constant use to its enclosing enum.
         if not is_definition:
             # Type reference — emit a read edge, don't create a new node
             if name:
@@ -587,9 +604,31 @@ class CVisitor:
             return
 
         if not name:
-            qualified = self._current_qname()
-        else:
-            qualified = self._current_qname() + "." + name
+            # Anonymous struct/union/enum definition (e.g.
+            # `typedef struct { int x; } Item;` or
+            # `void f(void) { struct { int a; } s; }`). It is not a named
+            # symbol, so do NOT create a node: a phantom node here would share
+            # the enclosing scope's qualified name and, in graph.py's
+            # fnodes_map (last-writer-wins), silently clobber the enclosing
+            # function/typedef node id and report live code as dead. Still
+            # recurse into the body so fields stay attached to the enclosing
+            # type via the current type/scope context.
+            if body:
+                self._walk(body)
+            else:
+                name_node = node.child_by_field_name("name")
+                for child in node.children:
+                    if child is name_node:
+                        continue
+                    if child.type in ("field_declaration_list", "enumerator_list"):
+                        self._walk(child)
+                    elif child.type in ("attribute_declaration", "attribute_specifier"):
+                        continue
+                    else:
+                        self._walk(child)
+            return
+
+        qualified = self._current_qname() + "." + name
 
         info = NodeInfo(
             file_id=0,
@@ -605,8 +644,7 @@ class CVisitor:
 
         prev_type_id = self._current_type_id
         self._current_type_id = nid
-        if name:
-            self._push_scope(name)
+        self._push_scope(name)
 
         if body:
             self._walk(body)
@@ -622,8 +660,7 @@ class CVisitor:
                 else:
                     self._walk(child)
 
-        if name:
-            self._pop_scope()
+        self._pop_scope()
         self._current_type_id = prev_type_id
 
     # ------------------------------------------------------------------
@@ -766,6 +803,12 @@ class CVisitor:
         if not name:
             return
 
+        # TODO(#5 include-guard macros): a name referenced by a preproc
+        # conditional (`#ifndef GUARD_H` / `#ifdef FEATURE`) reaches this point
+        # and emits a `read <module> -> NAME` edge. The module pseudo-node is
+        # not an entry, so every guarded header reports its guard macro as dead
+        # code. Future work: skip preproc-conditional name references, or
+        # exempt guard macros from dead-code reporting.
         sq = self._current_qname()
 
         if _is_on_left_of_assignment(node):
