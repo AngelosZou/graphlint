@@ -28,7 +28,14 @@ uv.lock
 integrations/dsh/node_modules/
 integrations/dsh/lib/
 # Local dev / agent scaffolding (git-ignored)
+AGENTS.md
+.task-*.md
+/task-brief-pr5-repair.md
 /ts-probe/
 /.ts-probe/
 /.csharp-probe/
+/.c-probe/
+/c-probe/
+/c-dispatch.sh
+/cpp-dispatch.sh
 /.sandbox_tmp/

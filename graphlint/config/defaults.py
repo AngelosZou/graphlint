@@ -285,6 +285,26 @@ DEFAULT_CONFIG: Dict[str, Any] = {
             "ast_pattern": "test_file",
             "enabled": True,
             "description": "TypeScript test files (Jest/Vitest/Mocha conventions)",
+        },
+        {
+            "name": "c_main",
+            "file_pattern": "**/*.c",
+            "ast_pattern": (
+                "function_def:main | "
+                "function_def:WinMain | "
+                "function_def:wWinMain | "
+                "function_def:DllMain | "
+                "function_def:_tmain"
+            ),
+            "enabled": True,
+            "description": "C program entry point (main/WinMain/wWinMain/DllMain/_tmain)",
+        },
+        {
+            "name": "c_test",
+            "file_pattern": "**/*.c",
+            "ast_pattern": "test_file",
+            "enabled": True,
+            "description": "C test files",
             "no_propagate": True,
         },
     ],

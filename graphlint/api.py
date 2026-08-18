@@ -44,6 +44,8 @@ _OPTIONAL_LANG_SUPPORT: dict[str, tuple[str, str]] = {
     ".jsx": ("JavaScript/React", "pip install graphlint[typescript]"),
     ".mjs": ("JavaScript", "pip install graphlint[typescript]"),
     ".cjs": ("JavaScript", "pip install graphlint[typescript]"),
+    ".c": ("C", "pip install graphlint[c]"),
+    ".h": ("C", "pip install graphlint[c]"),
 }
 
 # Languages already hinted at in this process (dedupe).
@@ -60,6 +62,8 @@ def _build_registry() -> LanguageRegistry:
     _try_register_csharp(registry)
     # TypeScript adapter — silently skipped when tree-sitter-typescript is not installed
     _try_register_typescript(registry)
+    # C adapter — silently skipped when tree-sitter-c is not installed
+    _try_register_c(registry)
     return registry
 
 
@@ -70,6 +74,17 @@ def _try_register(registry: LanguageRegistry, adapter_cls: type) -> None:
     :func:`_warn_missing_lang_support`.
     """
     registry.register(adapter_cls())
+
+
+def _try_register_c(registry: LanguageRegistry) -> None:
+    """Register the C adapter if tree-sitter-c is available."""
+    try:
+        from graphlint.analyzer.language.c import CAdapter
+        from graphlint.analyzer.language.c.constants import _TREE_SITTER_C_AVAILABLE
+    except ImportError:
+        return
+    if _TREE_SITTER_C_AVAILABLE:
+        _try_register(registry, CAdapter)
 
 
 def _try_register_rust(registry: LanguageRegistry) -> None:

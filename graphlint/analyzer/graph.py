@@ -352,7 +352,18 @@ class GraphBuilder:
         for fp in changed_list:
             fid = fid_map.get(fp, 0)
             if fid and fid in file_nodes_by_fid:
-                fnodes_map[fp] = {n.qualified_name: n.id for n in file_nodes_by_fid[fid]}
+                # Collision-safe: first-writer-wins, then overwrite only when the
+                # new node is a function (mirrors C entry.py's qname_to_id rule).
+                # Otherwise a later non-function node (e.g. an anonymous
+                # struct/union/enum sharing the enclosing symbol's qname) would
+                # silently steal a function's node id and report live code as dead.
+                fnodes_for_fp: dict[str, int] = {}
+                for n in file_nodes_by_fid[fid]:
+                    if n.qualified_name not in fnodes_for_fp:
+                        fnodes_for_fp[n.qualified_name] = n.id
+                    elif n.node_type == "function":
+                        fnodes_for_fp[n.qualified_name] = n.id
+                fnodes_map[fp] = fnodes_for_fp
 
         # Detect entries via language adapters; in incremental mode only
         # changed files are scanned and prebuilt DB entries merged in.
