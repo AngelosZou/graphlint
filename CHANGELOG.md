@@ -2,6 +2,42 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.6.0] - 2026-08-18
+
+### Added
+- **C language backend** (`.c` / `.h`, install via `pip install graphlint[c]`):
+  tree-sitter-c based parsing of functions, global/local variables,
+  structs/unions/enums, typedefs and macros;
+  read/write/call edge extraction including struct field access
+  (`v.x` / `p->x`); local `#include` tracking.
+- **C translation-unit scope**: `static` symbols have internal linkage and
+  never cross-link unrelated TUs; a `static` in a header is per-TU and stays
+  reachable from every file that (transitively) includes it — the standard
+  `static inline` header-helper pattern is reported correctly.
+- **C library entry mode** (`c_library_mode: auto|on|off`, default `auto`):
+  when no program entry (`main` family) is detected — or when
+  `--public-as-entry` is set — external-linkage top-level functions and
+  variables of `.c` files become `c_public_api` entries; `static` internals
+  follow calls while unused ones stay dead. Test-only projects and pure
+  libraries no longer report everything as dead.
+- **TypeScript/JavaScript language backend** (PR #5,
+  `pip install graphlint[typescript]`): tree-sitter parsing for
+  `.ts/.tsx/.js/.jsx/.mjs/.cjs/.mts/.cts`; JSX/React components, Next.js
+  pages, NestJS decorators, Jest/Vitest test entries; import/export and
+  unused-import analysis; entry rules scoped to TS/JS extensions.
+
+### Changed
+- **Entry detection performance**: each adapter's entry detection only scans
+  its own file extensions (the Python detector no longer re-parses `.c`
+  files); C glob patterns are compiled once and memoized; synthetic module
+  edges are built from a per-file index instead of an O(files × nodes)
+  double loop. C resolution uses O(1) per-file indexes — same-named
+  `static` helpers no longer make edge building quadratic.
+- **C#**: unused `using` directives are detected (PR #4); alias
+  using-directives with `=` are parsed correctly.
+- **DSH plugin** (`dsh-graphlint`) 0.3.0: skill language list now includes
+  C and TypeScript/JavaScript.
+
 ## [0.5.0] - 2026-08-15
 
 ### Added

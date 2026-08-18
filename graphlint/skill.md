@@ -7,7 +7,7 @@ description: Dead-code detection for AI-generated codebases via the graphlint de
 
 Static analysis of a project's dependency graph: finds components unreachable from any entry point (dead code), plus circular references, unused imports and other warnings.
 
-**Languages:** Python (built in) · Rust (`pip install graphlint[rust]`) · C# (`pip install graphlint[csharp]`) · TypeScript/JavaScript (`pip install graphlint[typescript]`)
+**Languages:** Python (built in) · Rust (`pip install graphlint[rust]`) · C# (`pip install graphlint[csharp]`) · C (`pip install graphlint[c]`) · TypeScript/JavaScript (`pip install graphlint[typescript]`)
 
 ## When to use
 - After code modifications: check whether your edits left dead or redundant code.
@@ -29,7 +29,7 @@ Run `query` normally — it keeps the index up to date by itself (automatic incr
 - `-w, --warn-types <list>` — filter, e.g. `dead_code,circular_ref,unused_import`
 - `-C, --exclude-clean` — only graphs with issues
 - `-R, --reachability` — only graphs reachable from entry points
-- `--public-as-entry` — treat public items (Rust `pub`, C# `public`) as entry points (library analysis)
+- `--public-as-entry` — treat public items (Rust `pub`, C# `public`, C external-linkage symbols) as entry points (library analysis)
 - `-t, --include-tests` — include test files
 - `--dead-code-tests` — find tests that reference suspected dead code
 - `--sort-by <warnings|nodes|edges|name>` · `--min-nodes N` · `--max-nodes N` · `-n, --max-results N`
@@ -58,4 +58,5 @@ graphlint query --fail-on dead_code,circular_ref # CI gate
 
 ## Limitations
 - **Static analysis only** — dynamic references (`getattr`, `importlib`, reflection, DI containers) can yield false positives. Verify before deleting and add custom entry rules (above) for your conventions.
+- **C-specific** — the preprocessor is treated as pure AST (`#if` is never evaluated, macros are not expanded); function-pointer call targets are not traced; `.h` files are parsed as C (C++/ObjC headers may mis-parse); header-only libraries need custom entry rules (`file_match:**/*.h`). With no `main`, C projects enter library mode automatically (`c_library_mode`, default `auto`) — external-linkage symbols become entries.
 - **Build cost** — a full rebuild of a large codebase (~700 files) takes ~200 s; small projects (~60 files) take ~1 s. Regular `query` runs are incremental and cheap — avoid `build --force` mid-refactoring.
