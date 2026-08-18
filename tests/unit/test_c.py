@@ -769,7 +769,8 @@ class TestCEntryDetection:
     """Entry detection for C programs."""
 
     def _detect_entries(self, source: str, rules: list[dict] | None = None,
-                        file_name: str = "src/main.c") -> list[Any]:
+                        file_name: str = "src/main.c",
+                        extra: dict[str, Any] | None = None) -> list[Any]:
         import tempfile
         from graphlint.analyzer.language.c.entry import CEntryPointDetector
         from graphlint.analyzer.language.c.parser import CSourceParser
@@ -787,6 +788,8 @@ class TestCEntryDetection:
         with open(full, "w", encoding="utf-8") as fh:
             fh.write(source)
         config = {"_root_dir": tmp, "entry_rules": rules}
+        if extra:
+            config.update(extra)
         pr = CSourceParser(tmp, config).parse_file(full)
         rel = os.path.relpath(full, tmp).replace(os.sep, "/")
         detector = CEntryPointDetector(config)
@@ -929,6 +932,73 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
         assert len(test_entries) == 1
         assert test_entries[0].line == 0
         assert test_entries[0].no_propagate is True
+
+    # --- library entry mode ----------------------------------------------
+
+    LIB_SOURCE = (
+        "int public_api(void) { return internal(); }\n"
+        "static int internal(void) { return 1; }\n"
+        "static int unused_static(void) { return 0; }\n"
+        "int global_counter;\n"
+        "static int private_counter;\n"
+        "extern int foreign_var;\n"
+    )
+
+    def test_public_as_entry_flag(self):
+        entries = self._detect_entries(
+            self.LIB_SOURCE, extra={"_public_as_entry": True}
+        )
+        public = [e for e in entries if e.rule_name == "c_public_api"]
+        # external-linkage definitions become entries; static/extern don't
+        assert {e.file_path for e in public} == {"src/main.c"}
+        assert len(public) == 2  # public_api + global_counter
+        assert {e.node_id for e in public}  # node ids resolved
+
+    def test_library_mode_auto_without_main(self):
+        entries = self._detect_entries(self.LIB_SOURCE)
+        public = [e for e in entries if e.rule_name == "c_public_api"]
+        assert len(public) == 2
+        assert all(e.no_propagate is False for e in public)
+
+    def test_library_mode_auto_with_main(self):
+        source = (
+            "int api(void) { return 1; }\n"
+            "int main(void) { return api(); }\n"
+        )
+        entries = self._detect_entries(source)
+        assert not any(e.rule_name == "c_public_api" for e in entries)
+
+    def test_library_mode_off(self):
+        entries = self._detect_entries(
+            self.LIB_SOURCE, extra={"c_library_mode": "off"}
+        )
+        assert not any(e.rule_name == "c_public_api" for e in entries)
+
+    def test_library_mode_on_forces_public_entries(self):
+        source = (
+            "int api(void) { return 1; }\n"
+            "int main(void) { return api(); }\n"
+        )
+        entries = self._detect_entries(source, extra={"c_library_mode": "on"})
+        assert any(e.rule_name == "c_public_api" for e in entries)
+
+    def test_library_mode_auto_respects_incremental_program_hint(self):
+        # Incremental build of an executable project: prebuilt entries say a
+        # program entry exists, so changed files must not get public entries.
+        entries = self._detect_entries(
+            self.LIB_SOURCE, extra={"_c_has_program_entries": True}
+        )
+        assert not any(e.rule_name == "c_public_api" for e in entries)
+        # And the library side: no program entries anywhere.
+        entries = self._detect_entries(
+            self.LIB_SOURCE, extra={"_c_has_program_entries": False}
+        )
+        assert len([e for e in entries if e.rule_name == "c_public_api"]) == 2
+
+    def test_library_mode_auto_header_only_project_stays_quiet(self):
+        source = "int helper(void);\n"
+        entries = self._detect_entries(source, file_name="include/helper.h")
+        assert not any(e.rule_name == "c_public_api" for e in entries)
 
 
 # =============================================================================
@@ -1312,6 +1382,22 @@ class TestCEndToEnd:
         })
         dead = _dead_nodes(br)
         assert "src.util.not_included_helper" in dead, dead
+
+    def test_library_without_main_external_symbols_live(self):
+        # Library entry mode (auto): no main detected, so external-linkage
+        # top-level symbols become entries; internal statics follow calls.
+        br, wb = self._build({
+            "src/lib.c": (
+                'int api(void) { return internal(); }\n'
+                'static int internal(void) { return 1; }\n'
+                'static int unused_static(void) { return 0; }\n'
+            ),
+        })
+        live = _live_nodes(br)
+        dead = _dead_nodes(br)
+        assert "src.lib.api" in live, live
+        assert "src.lib.internal" in live, live
+        assert "src.lib.unused_static" in dead, dead
 
     def test_enum_constant_preferred_over_same_named_macro(self):
         br, wb = self._build({

@@ -273,6 +273,14 @@ def _has_static_storage(node: Any) -> bool:
     return False
 
 
+def _has_extern_storage(node: Any) -> bool:
+    """Return True when *node* carries an ``extern`` storage-class specifier."""
+    for child in node.children:
+        if child.type == "storage_class_specifier":
+            return _node_text(child).strip() == "extern"
+    return False
+
+
 class CVisitor:
     """Walks a tree-sitter CST of C and extracts nodes, references,
     and imports."""
@@ -492,7 +500,12 @@ class CVisitor:
         # Process each declarator on its own. A mixed declarator list
         # (`int foo(void), bar;`) must only suppress the function-declaration
         # part — `bar` is a real variable and needs its own node.
+        # visibility: "static" (internal linkage), "extern" (declaration of a
+        # symbol defined elsewhere — not this library's surface), "" for
+        # plain external-linkage definitions.
         is_static = _has_static_storage(node)
+        is_extern = _has_extern_storage(node)
+        visibility = "static" if is_static else ("extern" if is_extern else "")
         for child in declarator_children:
             if _declarator_is_function(child):
                 # Function declaration / prototype — no body, no node
@@ -512,7 +525,7 @@ class CVisitor:
                 line_end=_node_end_line(node),
                 col_offset=_node_col(node),
                 parent_node_id=self._current_type_id,
-                visibility="static" if is_static else "",
+                visibility=visibility,
             )
             self._add_node(info)
 

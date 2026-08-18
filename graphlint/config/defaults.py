@@ -352,6 +352,13 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "hash_algorithm": "sha256",
         "max_file_size_mb": 10,
     },
+    # -------- C language behavior --------
+    # Library entry mode for C:
+    #   "auto" — treat external-linkage top-level symbols as entries when no
+    #            program entry (main family) was detected;
+    #   "on"   — always treat external-linkage top-level symbols as entries;
+    #   "off"  — never.
+    "c_library_mode": "auto",
     # -------- Output --------
     "output": {
         "default_detail": "auto",

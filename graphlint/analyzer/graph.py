@@ -482,11 +482,22 @@ class GraphBuilder:
                 fp: pr for fp, pr in parse_results.items() if fp in changed_files
             }
             if self.registry:
+                # Tell the C detector whether prebuilt entries already
+                # include program entry points, so its auto library-mode
+                # heuristic doesn't misfire on incremental builds of
+                # executable projects (via a config copy — the shared
+                # config object is never mutated here).
+                detect_config = {
+                    **self.config,
+                    "_c_has_program_entries": any(
+                        e.no_propagate is False for e in prebuilt_entries
+                    ),
+                }
                 for adapter in self.registry.all_adapters():
                     entries.extend(
                         adapter.detect_entries(
                             self._adapter_parse_results(adapter, changed_pr),
-                            self._nodes, self._node_id_map, self.config,
+                            self._nodes, self._node_id_map, detect_config,
                         )
                     )
             entries.extend(prebuilt_entries)

@@ -7,8 +7,12 @@ Pattern syntax:
     function_def:<pattern>      Match function definitions
     test_file                   Match C test files by filename convention
 
-Entry detection currently uses AST/filename heuristics only;
-build-config-driven entry (CMakeLists ``add_executable`` / Makefile link
+Entry detection uses AST/filename heuristics plus a library mode: when no
+program entry (``main`` family) is detected — or when ``--public-as-entry``
+/ ``c_library_mode`` asks for it — external-linkage top-level functions and
+variables of ``.c`` files become ``c_public_api`` entries.
+
+Build-config-driven entry (CMakeLists ``add_executable`` / Makefile link
 rules) is a documented follow-up — do NOT implement here.
 """
 
@@ -69,6 +73,86 @@ class CEntryPointDetector:
                     self._detect_rule(rule, file_path, pr, nodes, qname_to_id)
                 )
 
+        # Library mode: external-linkage top-level symbols are the public
+        # surface of a C library. Controlled by c_library_mode ("auto" by
+        # default: enabled when C files exist but no program entry matched —
+        # test-file entries are no_propagate and don't count) and the global
+        # --public-as-entry flag (_public_as_entry).
+        if self._library_mode_enabled(entries, parse_results):
+            entries.extend(
+                self._detect_public_api_entries(parse_results, nodes, qname_to_id)
+            )
+
+        return entries
+
+    def _library_mode_enabled(
+        self,
+        entries: list[EntryInfo],
+        parse_results: dict[str, ParseResult],
+    ) -> bool:
+        """Decide whether C library entry mode applies for this build."""
+        # The explicit CLI flag wins over the config key.
+        if self.config.get("_public_as_entry"):
+            return True
+        mode = self.config.get("c_library_mode", "auto")
+        if mode == "on":
+            return True
+        if mode == "off":
+            return False
+        # "auto": no program entry was detected. C files must exist (a
+        # header-only project needs explicit entry rules).
+        has_c_files = any(fp.endswith(".c") for fp in parse_results)
+        if not has_c_files:
+            return False
+        local_program = any(e.no_propagate is False for e in entries)
+        if local_program:
+            return False
+        # Incremental builds pass a hint computed from prebuilt entries:
+        # an unchanged program entry elsewhere in the project still counts.
+        has_program = self.config.get("_c_has_program_entries")
+        if has_program is not None:
+            return not has_program
+        return True
+
+    def _detect_public_api_entries(
+        self,
+        parse_results: dict[str, ParseResult],
+        nodes: list[NodeInfo],
+        qname_to_id: dict[str, int],
+    ) -> list[EntryInfo]:
+        """Emit entries for external-linkage top-level functions/variables.
+
+        ``static`` symbols have internal linkage; ``extern`` declarations
+        reference symbols defined elsewhere. Only plain definitions form the
+        library surface. Headers are excluded: their symbols become live
+        through the TUs that include them.
+        """
+        entries: list[EntryInfo] = []
+        for file_path, pr in parse_results.items():
+            if not file_path.endswith(".c"):
+                continue
+            for node in pr.nodes:
+                if node.node_type not in ("function", "variable"):
+                    continue
+                if node.visibility:
+                    # "static" (internal) or "extern" (foreign definition).
+                    continue
+                nid = self._find_node_id(node.qualified_name, qname_to_id)
+                if not nid:
+                    continue
+                entries.append(
+                    EntryInfo(
+                        rule_name="c_public_api",
+                        file_path=file_path,
+                        line=node.line_start,
+                        node_id=nid,
+                        description=(
+                            "C library public symbol (external linkage; "
+                            "no program entry detected)"
+                        ),
+                        no_propagate=False,
+                    )
+                )
         return entries
 
     def _detect_rule(
