@@ -1254,6 +1254,65 @@ class TestCEndToEnd:
         assert "src.b.init" in dead, dead
         assert "src.b.b_run" in dead, dead
 
+    def test_static_inline_in_header_live_from_includer(self):
+        # A `static` in a header is per-TU: each including translation unit
+        # gets its own copy, so the includer's reference is legal.
+        br, wb = self._build({
+            "src/util.h": (
+                '#ifndef UTIL_H\n'
+                '#define UTIL_H\n'
+                'static int helper2(void) { return 42; }\n'
+                'static inline int double_it(int x) { return helper2() + x; }\n'
+                '#endif\n'
+            ),
+            "src/main.c": (
+                '#include "util.h"\n'
+                'int main(void) { return double_it(1); }\n'
+            ),
+        })
+        live = _live_nodes(br)
+        assert "src.util.double_it" in live, live
+        assert "src.util.helper2" in live, live
+
+    def test_same_named_header_statics_do_not_cross_link(self):
+        # Each TU resolves to the static in the header IT includes only.
+        br, wb = self._build({
+            "src/a.h": (
+                '#ifndef A_H\n#define A_H\n'
+                'static int helper3(void) { return 1; }\n'
+                'static int a_api(void) { return helper3(); }\n'
+                '#endif\n'
+            ),
+            "src/b.h": (
+                '#ifndef B_H\n#define B_H\n'
+                'static int helper3(void) { return 2; }\n'
+                'static int b_api(void) { return helper3(); }\n'
+                '#endif\n'
+            ),
+            "src/main.c": (
+                '#include "a.h"\n'
+                'int main(void) { return a_api(); }\n'
+            ),
+        })
+        live = _live_nodes(br)
+        dead = _dead_nodes(br)
+        assert "src.a.a_api" in live, live
+        assert "src.a.helper3" in live, live
+        assert "src.b.b_api" in dead, dead
+        assert "src.b.helper3" in dead, dead
+
+    def test_header_static_dead_when_header_not_included(self):
+        br, wb = self._build({
+            "src/util.h": (
+                'static int not_included_helper(void) { return 1; }\n'
+            ),
+            "src/main.c": (
+                'int main(void) { return 0; }\n'
+            ),
+        })
+        dead = _dead_nodes(br)
+        assert "src.util.not_included_helper" in dead, dead
+
     def test_enum_constant_preferred_over_same_named_macro(self):
         br, wb = self._build({
             "src/color.h": "#define RED 5\n#define GREEN 6\n",

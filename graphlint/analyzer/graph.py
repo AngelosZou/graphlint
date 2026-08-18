@@ -47,7 +47,6 @@ def _resolve_symbol(
     scope_suffix_index: Optional[dict[tuple[str, str], list[int]]] = None,
     class_scope: str = "",
     fid: int = 0,
-    file_qname_index: Optional[dict[tuple[int, str], list[int]]] = None,
     file_suffix_index: Optional[dict[tuple[int, str], list[int]]] = None,
 ) -> list[int]:
     """Resolve a symbol by exact qualified-name match, then suffix fallback.
@@ -61,10 +60,12 @@ def _resolve_symbol(
         resolve_cache: Optional cache keyed by ``(qname, scope)``.
         scope_suffix_index: Optional ``(scope, simple_name)`` lookup table.
         class_scope: Fallback scope for class-level field resolution.
-        fid: Optional source file ID. When given together with the per-file
-            indexes, C translation-unit scope applies: same-file symbols win
-            over cross-file matches and ``static`` symbols in other files are
-            dropped.
+        fid: Optional source file ID. When given together with
+            ``file_suffix_index``, C translation-unit scope applies:
+            same-file symbols win over cross-file matches. Cross-file
+            ``static`` filtering is applied by the caller (it needs the
+            include closure — a ``static`` in an included header is per-TU
+            and stays reachable).
 
     Returns:
         List of node IDs matching the symbol. Empty list when no match is found.
@@ -96,14 +97,16 @@ def _resolve_symbol(
                 resolve_cache[cache_key] = list(r)
             return list(r)
 
-    # C translation-unit scope: prefer same-file symbols via O(1) per-file
-    # indexes. Without this, common `static` names (init, cleanup, ...)
-    # materialize the whole cross-file suffix list per reference — quadratic
-    # on large C codebases and cross-linking unrelated TUs.
+    # C translation-unit scope: prefer same-file symbols via an O(1)
+    # per-file simple-name index. Without this, common `static` names
+    # (init, cleanup, ...) materialize the whole cross-file suffix list per
+    # reference — quadratic on large C codebases and cross-linking unrelated
+    # TUs. Full-qualified-name references never reach this branch (they hit
+    # the exact-match lookup above), so no per-file qname index is needed.
+    # Cross-file `static` targets of the fallback are dropped by the caller
+    # via _drop_cross_file_static, which knows the include closure.
     if fid and file_suffix_index is not None:
         r = file_suffix_index.get((fid, _q))
-        if not r:
-            r = file_qname_index.get((fid, qname))
         if r:
             result = list(r)
             if resolve_cache is not None:
@@ -113,8 +116,6 @@ def _resolve_symbol(
     r = suffix_index.get(_q)
     if r:
         result = list(r)
-        if fid:
-            result = _drop_cross_file_static(result, fid, node_id_map)
         if scope and len(result) > 1:
             scoped = [
                 i
@@ -146,19 +147,27 @@ def _drop_cross_file_static(
     target_ids: list[int],
     source_fid: int,
     node_id_map: dict[int, NodeInfo],
+    included_fids: Optional[set[int]] = None,
 ) -> list[int]:
-    """Drop C internal-linkage (``static``) targets that live in other files.
+    """Drop C internal-linkage (``static``) targets outside the source TU.
 
     ``static`` symbols can only be referenced from their own translation
-    unit. Non-static (external-linkage) targets — including forward-declared
-    functions defined elsewhere — are kept.
+    unit. A ``static`` in a header is per-TU, though: every including
+    translation unit gets its own copy, so targets whose file is
+    (transitively) included by the source file stay reachable —
+    ``static inline`` helpers in headers are the standard C pattern and must
+    not be reported dead from their includers. Non-static
+    (external-linkage) targets — including forward-declared functions
+    defined elsewhere — are always kept.
     """
+    included = included_fids or set()
     return [
         t for t in target_ids
         if not (
             node_id_map.get(t)
             and node_id_map[t].visibility == "static"
             and node_id_map[t].file_id != source_fid
+            and node_id_map[t].file_id not in included
         )
     ]
 
@@ -175,8 +184,8 @@ def _build_file_edges_worker(
     config: dict[str, Any],
     resolve_cache: Optional[dict] = None,
     scope_suffix_index: Optional[dict[tuple[str, str], list[int]]] = None,
-    file_qname_index: Optional[dict[tuple[int, str], list[int]]] = None,
     file_suffix_index: Optional[dict[tuple[int, str], list[int]]] = None,
+    include_closure: Optional[dict[int, set[int]]] = None,
 ) -> list[EdgeInfo]:
     """Build directed edges from pre-collected references (no AST re-walk).
 
@@ -187,6 +196,7 @@ def _build_file_edges_worker(
     """
     edges: list[EdgeInfo] = []
     c_file = fp.endswith((".c", ".h"))
+    included = include_closure.get(fid, ()) if include_closure else ()
     for ref in pr.references:
         source_id = fnodes.get(ref.source_qname, 0)
         if not source_id:
@@ -208,9 +218,14 @@ def _build_file_edges_worker(
             scope_suffix_index=scope_suffix_index,
             class_scope=class_scope,
             fid=fid if c_file else 0,
-            file_qname_index=file_qname_index,
             file_suffix_index=file_suffix_index,
         )
+        if c_file:
+            # Internal linkage applies outside the TU; symbols in files the
+            # TU (transitively) includes are per-TU copies and stay reachable.
+            target_ids = _drop_cross_file_static(
+                target_ids, fid, node_id_map, included
+            )
         for tid in target_ids:
             if tid != source_id:
                 edges.append(EdgeInfo(source_id, tid, ref.edge_type, fid, ref.line))
@@ -237,8 +252,7 @@ class GraphBuilder:
         self._symbol_index: defaultdict[str, list[int]] = defaultdict(list)
         self._suffix_index: defaultdict[str, list[int]] = defaultdict(list)
         self._scope_suffix_index: defaultdict[tuple[str, str], list[int]] = defaultdict(list)
-        # Per-file indexes for C translation-unit-scope resolution.
-        self._file_qname_index: defaultdict[tuple[int, str], list[int]] = defaultdict(list)
+        # Per-file simple-name index for C translation-unit-scope resolution.
         self._file_suffix_index: defaultdict[tuple[int, str], list[int]] = defaultdict(list)
         self._next_node_id: int = 1
         self._node_id_map: dict[int, NodeInfo] = {}
@@ -282,7 +296,6 @@ class GraphBuilder:
         self._nodes.append(saved)
         self._node_id_map[nid] = saved
         if node.file_id:
-            self._file_qname_index[(node.file_id, node.qualified_name)].append(nid)
             self._file_suffix_index[(node.file_id, node.name)].append(nid)
         qname = node.qualified_name
         if qname:
@@ -424,6 +437,43 @@ class GraphBuilder:
                         fnodes_for_fp[n.qualified_name] = n.id
                 fnodes_map[fp] = fnodes_for_fp
 
+        # File-level include edges (C #include): a header included by a live
+        # file counts as live, so genuinely-used header symbols (include-guard
+        # macros, module-level typedef uses) are not reported dead. The
+        # transitive closure also feeds C resolution — a `static` in a header
+        # is per-TU and stays reachable from every file that (transitively)
+        # includes it.
+        include_fids: dict[int, list[int]] = {}
+        _pr_keys = set(parse_results)
+        # Basename index for include resolution — avoids an O(F) scan per
+        # unresolved include path.
+        _base_index: dict[str, list[str]] = {}
+        for _k in _pr_keys:
+            _base_index.setdefault(os.path.basename(_k), []).append(_k)
+        for _fp, _pr in parse_results.items():
+            _fid = fid_map.get(_fp, 0)
+            if not _fid:
+                continue
+            for _imp in _pr.imports or []:
+                _inc = getattr(_imp, "include_path", "") or ""
+                if not _inc:
+                    continue
+                _tgt = self._resolve_include(_inc, _fp, _pr_keys, _base_index)
+                if _tgt and _tgt in fid_map and fid_map[_tgt] != _fid:
+                    include_fids.setdefault(_fid, []).append(fid_map[_tgt])
+        self._include_fids = include_fids
+        include_closure: dict[int, set[int]] = {}
+        for _fid in include_fids:
+            _seen: set[int] = set()
+            _stack = list(include_fids[_fid])
+            while _stack:
+                _cur = _stack.pop()
+                if _cur in _seen:
+                    continue
+                _seen.add(_cur)
+                _stack.extend(include_fids.get(_cur, ()))
+            include_closure[_fid] = _seen
+
         # Detect entries via language adapters; in incremental mode only
         # changed files are scanned and prebuilt DB entries merged in.
         entries: list[EntryInfo] = []
@@ -467,6 +517,7 @@ class GraphBuilder:
 
         self._edges = self._build_edges_batch(
             changed_list, parse_results, fid_map, fnodes_map,
+            include_closure=include_closure,
         )
         # The edge batch replaces self._edges; re-attach the partial-fragment
         # part_of edges.
@@ -533,35 +584,13 @@ class GraphBuilder:
                     )
                     if _fp.endswith((".c", ".h")):
                         _tids = _drop_cross_file_static(
-                            _tids, _fid, self._node_id_map
+                            _tids, _fid, self._node_id_map,
+                            include_closure.get(_fid, ()),
                         )
                     for _tid in _tids:
                         self._edges.append(
                             EdgeInfo(0, _tid, _ref.edge_type, _fid, _ref.line)
                         )
-
-        # File-level include edges (C #include): a header included by a live
-        # file counts as live, so genuinely-used header symbols (include-guard
-        # macros, module-level typedef uses) are not reported dead.
-        include_fids: dict[int, list[int]] = {}
-        _pr_keys = set(parse_results)
-        # Basename index for include resolution — avoids an O(F) scan per
-        # unresolved include path.
-        _base_index: dict[str, list[str]] = {}
-        for _k in _pr_keys:
-            _base_index.setdefault(os.path.basename(_k), []).append(_k)
-        for _fp, _pr in parse_results.items():
-            _fid = fid_map.get(_fp, 0)
-            if not _fid:
-                continue
-            for _imp in _pr.imports or []:
-                _inc = getattr(_imp, "include_path", "") or ""
-                if not _inc:
-                    continue
-                _tgt = self._resolve_include(_inc, _fp, _pr_keys, _base_index)
-                if _tgt and _tgt in fid_map and fid_map[_tgt] != _fid:
-                    include_fids.setdefault(_fid, []).append(fid_map[_tgt])
-        self._include_fids = include_fids
 
         _sn = self._get_special_names()
         _pn = self._get_public_api_names()
@@ -629,6 +658,7 @@ class GraphBuilder:
         parse_results: dict[str, ParseResult],
         fid_map: dict[str, int],
         fnodes_map: dict[str, dict[str, int]],
+        include_closure: Optional[dict[int, set[int]]] = None,
     ) -> list[EdgeInfo]:
         """Build edges for a batch of files (parallel or sequential)."""
         all_edges: list[EdgeInfo] = []
@@ -650,7 +680,8 @@ class GraphBuilder:
                             self._node_id_map, self.config,
                             {},  # Per-worker independent resolve cache
                             self._scope_suffix_index,
-                            self._file_qname_index, self._file_suffix_index,
+                            self._file_suffix_index,
+                            include_closure,
                         )
                     ] = fp
                 for fut in as_completed(futs):
@@ -671,7 +702,8 @@ class GraphBuilder:
                         self._node_id_map, self.config,
                         {},
                         self._scope_suffix_index,
-                        self._file_qname_index, self._file_suffix_index,
+                        self._file_suffix_index,
+                        include_closure,
                     )
                 )
         return all_edges
