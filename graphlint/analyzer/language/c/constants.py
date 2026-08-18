@@ -5,6 +5,8 @@ from __future__ import annotations
 
 import fnmatch
 import os
+import re
+from functools import lru_cache
 from typing import Any
 
 # ---------------------------------------------------------------------------
@@ -85,6 +87,35 @@ _CST_TYPE_TO_NODE_TYPE: dict[str, str] = {
 # ---------------------------------------------------------------------------
 
 
+@lru_cache(maxsize=256)
+def _compile_globs(pattern: str) -> tuple[re.Pattern, ...]:
+    """Compile an fnmatch-style pattern (plus its ``**/``-stripped variant)."""
+    variants = [pattern]
+    if pattern.startswith("**/"):
+        variants.append(pattern[3:])
+    return tuple(
+        re.compile(fnmatch.translate(os.path.normcase(v))) for v in variants
+    )
+
+
+@lru_cache(maxsize=65536)
+def _glob_match(path: str, pattern: str) -> bool:
+    """Match *path* against an fnmatch-style *pattern*.
+
+    Semantics mirror ``fnmatch.fnmatch`` (case-insensitive via normcase on
+    Windows), including the ``**/`` prefix fallback used by entry rules.
+    Patterns are compiled once and results are memoized — ``fnmatch``
+    re-translates and normcases both arguments on every call, which is
+    expensive on Windows (normcase is an LCMapStringEx syscall per call).
+    """
+    if os.name == "nt" and path.isascii():
+        # normcase semantics for ASCII input on Windows.
+        norm = path.replace("/", "\\").lower()
+    else:
+        norm = os.path.normcase(path)
+    return any(p.match(norm) for p in _compile_globs(pattern))
+
+
 def _file_to_module(path: str) -> str:
     """Convert a C source path to its module name.
 
@@ -113,7 +144,6 @@ _C_TEST_FILE_PREFIXES: tuple[str, ...] = ("test_",)
 
 def _is_test_file(file_path: str, config: dict[str, Any]) -> bool:
     """Check whether *file_path* is a C test file."""
-    normalized = file_path.replace("\\", "/")
     basename = os.path.basename(file_path)
 
     for prefix in _C_TEST_FILE_PREFIXES:
@@ -134,12 +164,12 @@ def _is_test_file(file_path: str, config: dict[str, Any]) -> bool:
     dirname = os.path.dirname(file_path).replace(os.sep, "/")
     dir_with_slash = dirname + "/"
     if any(
-        fnmatch.fnmatch(dir_with_slash, d) or dir_with_slash.startswith(d)
+        _glob_match(dir_with_slash, d) or dir_with_slash.startswith(d)
         for d in dir_patterns
     ):
         return True
 
-    if any(fnmatch.fnmatch(basename, p) for p in file_patterns):
+    if any(_glob_match(basename, p) for p in file_patterns):
         return True
 
     return False

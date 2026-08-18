@@ -14,12 +14,10 @@ rules) is a documented follow-up — do NOT implement here.
 
 from __future__ import annotations
 
-import fnmatch
-import os
 from typing import Any
 
 from graphlint.analyzer._types import EntryInfo, NodeInfo, ParseResult
-from graphlint.analyzer.language.c.constants import _is_test_file
+from graphlint.analyzer.language.c.constants import _glob_match, _is_test_file
 
 
 class CEntryPointDetector:
@@ -64,10 +62,7 @@ class CEntryPointDetector:
                 if not rule_name:
                     continue
                 file_pattern = rule.get("file_pattern", "**/*.c")
-                matched = fnmatch.fnmatch(file_path, file_pattern)
-                if not matched and file_pattern.startswith("**/"):
-                    matched = fnmatch.fnmatch(file_path, file_pattern[3:])
-                if not matched:
+                if not _glob_match(file_path, file_pattern):
                     continue
 
                 entries.extend(
@@ -104,7 +99,7 @@ class CEntryPointDetector:
         for part in or_parts:
             if part.startswith("file_match:"):
                 glob_val = part.split(":", 1)[1]
-                if fnmatch.fnmatch(file_path, glob_val):
+                if _glob_match(file_path, glob_val):
                     return [
                         EntryInfo(
                             rule_name=rule_name,
@@ -122,7 +117,7 @@ class CEntryPointDetector:
                 if part.startswith("function_def:"):
                     name_pattern = part.split(":", 1)[1]
                     if node.node_type == "function":
-                        if fnmatch.fnmatch(node.name, name_pattern):
+                        if _glob_match(node.name, name_pattern):
                             # Find the real node_id from the global node list
                             nid = self._find_node_id(node.qualified_name, qname_to_id)
                             entries.append(

@@ -265,6 +265,14 @@ def _node_contains(root: Any, target: Any) -> bool:
     return False
 
 
+def _has_static_storage(node: Any) -> bool:
+    """Return True when *node* carries a ``static`` storage-class specifier."""
+    for child in node.children:
+        if child.type == "storage_class_specifier":
+            return _node_text(child).strip() == "static"
+    return False
+
+
 class CVisitor:
     """Walks a tree-sitter CST of C and extracts nodes, references,
     and imports."""
@@ -389,12 +397,10 @@ class CVisitor:
     # ------------------------------------------------------------------
 
     def _visit_function_definition(self, node: Any) -> None:
-        # NOTE: linkage model. Every function is treated as module-scoped and
-        # `static` (internal) linkage is NOT tracked. Same-named `static`
-        # helpers in different translation units currently cross-link by
-        # qualified name, which can over-report reachability. Tracking storage
-        # class specifiers (static vs extern) is a documented follow-up; keep
-        # behavior unchanged for now.
+        # NOTE: linkage model. ``static`` functions/variables are marked with
+        # visibility="static" so edge building can enforce internal linkage
+        # (no cross-file references). Same-named static helpers in different
+        # translation units therefore stay independent.
         name = _extract_function_name(node)
         if not name:
             return
@@ -410,6 +416,7 @@ class CVisitor:
             line_end=_node_end_line(node),
             col_offset=_node_col(node),
             parent_node_id=self._current_type_id,
+            visibility="static" if _has_static_storage(node) else "",
         )
         nid = self._add_node(info)
 
@@ -485,6 +492,7 @@ class CVisitor:
         # Process each declarator on its own. A mixed declarator list
         # (`int foo(void), bar;`) must only suppress the function-declaration
         # part — `bar` is a real variable and needs its own node.
+        is_static = _has_static_storage(node)
         for child in declarator_children:
             if _declarator_is_function(child):
                 # Function declaration / prototype — no body, no node
@@ -504,6 +512,7 @@ class CVisitor:
                 line_end=_node_end_line(node),
                 col_offset=_node_col(node),
                 parent_node_id=self._current_type_id,
+                visibility="static" if is_static else "",
             )
             self._add_node(info)
 

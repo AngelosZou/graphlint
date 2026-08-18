@@ -387,6 +387,23 @@ const char *app_name = "myapp";
         assert macro_nodes[0].name == "MAX_SIZE"
         assert macro_nodes[1].name == "SQUARE"
 
+    def test_static_function_visibility(self):
+        source = (
+            "static int helper(void) { return 1; }\n"
+            "int other(void) { return 2; }\n"
+        )
+        visitor = _parse_source(source)
+        fn = {n.name: n for n in visitor.nodes if n.node_type == "function"}
+        assert fn["helper"].visibility == "static"
+        assert fn["other"].visibility == ""
+
+    def test_static_variable_visibility(self):
+        source = "static int counter;\nint global;\n"
+        visitor = _parse_source(source)
+        var = {n.name: n for n in visitor.nodes if n.node_type == "variable"}
+        assert var["counter"].visibility == "static"
+        assert var["global"].visibility == ""
+
 
 @tree_sitter_available
 class TestCVisitorImports:
@@ -1214,3 +1231,43 @@ class TestCEndToEnd:
         live = _live_nodes(br)
         assert "src.main.Node" in live, live
         assert "src.main.Node.Node" in live, live
+
+    def test_static_functions_do_not_cross_link(self):
+        br, wb = self._build({
+            "src/a.c": (
+                'static void init(void) {}\n'
+                'void a_run(void) { init(); }\n'
+            ),
+            "src/b.c": (
+                'static void init(void) {}\n'
+                'void b_run(void) { init(); }\n'
+            ),
+            "src/main.c": (
+                'void a_run(void);\n'
+                'int main(void) { a_run(); return 0; }\n'
+            ),
+        })
+        live = _live_nodes(br)
+        dead = _dead_nodes(br)
+        assert "src.a.init" in live, live
+        assert "src.a.a_run" in live, live
+        assert "src.b.init" in dead, dead
+        assert "src.b.b_run" in dead, dead
+
+    def test_enum_constant_preferred_over_same_named_macro(self):
+        br, wb = self._build({
+            "src/color.h": "#define RED 5\n#define GREEN 6\n",
+            "src/palette.c": (
+                '#include "color.h"\n'
+                'enum Color { RED, GREEN };\n'
+                'int pick(void) { return RED; }\n'
+            ),
+            "src/main.c": "int pick(void);\nint main(void) { return pick(); }\n",
+        })
+        live = _live_nodes(br)
+        dead = _dead_nodes(br)
+        assert "src.palette.Color" in live, live
+        assert "src.palette.Color.RED" in live, live
+        # pick()'s RED resolves to the enum member; the macro stays unused.
+        assert "src.color.RED" in dead, dead
+        assert "src.color.GREEN" in dead, dead

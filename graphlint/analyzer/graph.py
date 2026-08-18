@@ -24,6 +24,7 @@ from graphlint.analyzer._types import (
     NodeInfo,
     ParseResult,
 )
+from graphlint.analyzer.language.base import LanguageAdapter
 from graphlint.analyzer.language.registry import LanguageRegistry
 from graphlint.analyzer.warnings import (
     WarningCollector,
@@ -45,6 +46,9 @@ def _resolve_symbol(
     resolve_cache: Optional[dict] = None,
     scope_suffix_index: Optional[dict[tuple[str, str], list[int]]] = None,
     class_scope: str = "",
+    fid: int = 0,
+    file_qname_index: Optional[dict[tuple[int, str], list[int]]] = None,
+    file_suffix_index: Optional[dict[tuple[int, str], list[int]]] = None,
 ) -> list[int]:
     """Resolve a symbol by exact qualified-name match, then suffix fallback.
 
@@ -57,6 +61,10 @@ def _resolve_symbol(
         resolve_cache: Optional cache keyed by ``(qname, scope)``.
         scope_suffix_index: Optional ``(scope, simple_name)`` lookup table.
         class_scope: Fallback scope for class-level field resolution.
+        fid: Optional source file ID. When given together with the per-file
+            indexes, C translation-unit scope applies: same-file symbols win
+            over cross-file matches and ``static`` symbols in other files are
+            dropped.
 
     Returns:
         List of node IDs matching the symbol. Empty list when no match is found.
@@ -88,9 +96,25 @@ def _resolve_symbol(
                 resolve_cache[cache_key] = list(r)
             return list(r)
 
+    # C translation-unit scope: prefer same-file symbols via O(1) per-file
+    # indexes. Without this, common `static` names (init, cleanup, ...)
+    # materialize the whole cross-file suffix list per reference — quadratic
+    # on large C codebases and cross-linking unrelated TUs.
+    if fid and file_suffix_index is not None:
+        r = file_suffix_index.get((fid, _q))
+        if not r:
+            r = file_qname_index.get((fid, qname))
+        if r:
+            result = list(r)
+            if resolve_cache is not None:
+                resolve_cache[cache_key] = result
+            return result
+
     r = suffix_index.get(_q)
     if r:
         result = list(r)
+        if fid:
+            result = _drop_cross_file_static(result, fid, node_id_map)
         if scope and len(result) > 1:
             scoped = [
                 i
@@ -118,6 +142,27 @@ def _resolve_symbol(
     return []
 
 
+def _drop_cross_file_static(
+    target_ids: list[int],
+    source_fid: int,
+    node_id_map: dict[int, NodeInfo],
+) -> list[int]:
+    """Drop C internal-linkage (``static``) targets that live in other files.
+
+    ``static`` symbols can only be referenced from their own translation
+    unit. Non-static (external-linkage) targets — including forward-declared
+    functions defined elsewhere — are kept.
+    """
+    return [
+        t for t in target_ids
+        if not (
+            node_id_map.get(t)
+            and node_id_map[t].visibility == "static"
+            and node_id_map[t].file_id != source_fid
+        )
+    ]
+
+
 def _build_file_edges_worker(
     fp: str,
     pr: ParseResult,
@@ -130,6 +175,8 @@ def _build_file_edges_worker(
     config: dict[str, Any],
     resolve_cache: Optional[dict] = None,
     scope_suffix_index: Optional[dict[tuple[str, str], list[int]]] = None,
+    file_qname_index: Optional[dict[tuple[int, str], list[int]]] = None,
+    file_suffix_index: Optional[dict[tuple[int, str], list[int]]] = None,
 ) -> list[EdgeInfo]:
     """Build directed edges from pre-collected references (no AST re-walk).
 
@@ -139,6 +186,7 @@ def _build_file_edges_worker(
     to the module pseudo-node (id=0).
     """
     edges: list[EdgeInfo] = []
+    c_file = fp.endswith((".c", ".h"))
     for ref in pr.references:
         source_id = fnodes.get(ref.source_qname, 0)
         if not source_id:
@@ -159,6 +207,9 @@ def _build_file_edges_worker(
             resolve_cache=resolve_cache,
             scope_suffix_index=scope_suffix_index,
             class_scope=class_scope,
+            fid=fid if c_file else 0,
+            file_qname_index=file_qname_index,
+            file_suffix_index=file_suffix_index,
         )
         for tid in target_ids:
             if tid != source_id:
@@ -186,6 +237,9 @@ class GraphBuilder:
         self._symbol_index: defaultdict[str, list[int]] = defaultdict(list)
         self._suffix_index: defaultdict[str, list[int]] = defaultdict(list)
         self._scope_suffix_index: defaultdict[tuple[str, str], list[int]] = defaultdict(list)
+        # Per-file indexes for C translation-unit-scope resolution.
+        self._file_qname_index: defaultdict[tuple[int, str], list[int]] = defaultdict(list)
+        self._file_suffix_index: defaultdict[tuple[int, str], list[int]] = defaultdict(list)
         self._next_node_id: int = 1
         self._node_id_map: dict[int, NodeInfo] = {}
         self._old_to_new: dict[tuple[str, str], int] = {}
@@ -227,6 +281,9 @@ class GraphBuilder:
         self._old_to_new[(str(node.file_id), str(node.id))] = nid
         self._nodes.append(saved)
         self._node_id_map[nid] = saved
+        if node.file_id:
+            self._file_qname_index[(node.file_id, node.qualified_name)].append(nid)
+            self._file_suffix_index[(node.file_id, node.name)].append(nid)
         qname = node.qualified_name
         if qname:
             self._symbol_index[qname].append(nid)
@@ -378,7 +435,8 @@ class GraphBuilder:
                 for adapter in self.registry.all_adapters():
                     entries.extend(
                         adapter.detect_entries(
-                            changed_pr, self._nodes, self._node_id_map, self.config
+                            self._adapter_parse_results(adapter, changed_pr),
+                            self._nodes, self._node_id_map, self.config,
                         )
                     )
             entries.extend(prebuilt_entries)
@@ -387,7 +445,8 @@ class GraphBuilder:
                 for adapter in self.registry.all_adapters():
                     entries.extend(
                         adapter.detect_entries(
-                            parse_results, self._nodes, self._node_id_map, self.config
+                            self._adapter_parse_results(adapter, parse_results),
+                            self._nodes, self._node_id_map, self.config,
                         )
                     )
         for e in entries:
@@ -415,12 +474,17 @@ class GraphBuilder:
         new_edge_count = len(self._edges)
 
         # Add synthetic module-level edges through the module pseudo-node (id=0).
+        # Index top-level nodes per file first — the naive double loop is
+        # O(files × nodes) and dominates on large codebases.
+        _top_nodes_by_fid: dict[int, list[int]] = {}
+        for _n in self._nodes:
+            if _n.parent_node_id == 0:
+                _top_nodes_by_fid.setdefault(_n.file_id, []).append(_n.id)
         for fp in parse_results:
             _fid = fid_map.get(fp, 0)
             if _fid:
-                for _n in self._nodes:
-                    if _n.file_id == _fid and _n.parent_node_id == 0:
-                        self.add_edge(0, _n.id, "read", _fid, 0)
+                for _nid in _top_nodes_by_fid.get(_fid, ()):
+                    self.add_edge(0, _nid, "read", _fid, 0)
 
         _changed_old_ids = set(old_to_new_global) if old_to_new_global else set()
         _all_old_ids = set(old_changed_node_ids) if old_changed_node_ids else set()
@@ -460,13 +524,18 @@ class GraphBuilder:
                 for _ref in _pr.references:
                     if not _ref.target_name:
                         continue
-                    for _tid in _resolve_symbol(
+                    _tids = _resolve_symbol(
                         _ref.target_name,
                         "",
                         self._symbol_index,
                         self._suffix_index,
                         self._node_id_map,
-                    ):
+                    )
+                    if _fp.endswith((".c", ".h")):
+                        _tids = _drop_cross_file_static(
+                            _tids, _fid, self._node_id_map
+                        )
+                    for _tid in _tids:
                         self._edges.append(
                             EdgeInfo(0, _tid, _ref.edge_type, _fid, _ref.line)
                         )
@@ -581,6 +650,7 @@ class GraphBuilder:
                             self._node_id_map, self.config,
                             {},  # Per-worker independent resolve cache
                             self._scope_suffix_index,
+                            self._file_qname_index, self._file_suffix_index,
                         )
                     ] = fp
                 for fut in as_completed(futs):
@@ -601,6 +671,7 @@ class GraphBuilder:
                         self._node_id_map, self.config,
                         {},
                         self._scope_suffix_index,
+                        self._file_qname_index, self._file_suffix_index,
                     )
                 )
         return all_edges
@@ -612,6 +683,25 @@ class GraphBuilder:
             if adapter:
                 return adapter.file_to_module_with_csproj(file_path, self.config)
         return file_path
+
+    @staticmethod
+    def _adapter_parse_results(
+        adapter: LanguageAdapter,
+        parse_results: dict[str, ParseResult],
+    ) -> dict[str, ParseResult]:
+        """Restrict parse results to the adapter's own file extensions.
+
+        Entry detection is per-language; without the filter every adapter
+        iterates every project file and applies every entry rule — the
+        Python detector even re-parses .c files as Python source.
+        """
+        exts = adapter.file_extensions
+        if not exts:
+            return parse_results
+        return {
+            fp: pr for fp, pr in parse_results.items()
+            if fp.endswith(tuple(exts))
+        }
 
     @staticmethod
     def _resolve_include(
