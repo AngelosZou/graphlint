@@ -868,7 +868,7 @@ class CVisitor:
         if self._is_declaration_parent(parent):
             return
 
-        if parent.type in ("init_declarator", "field_declaration",
+        if parent.type in ("init_declarator", "field_declaration", # TODO: type_identifier skipped with parent field_declaration and cause false positive, should delete field_declaration here
                            "parameter_declaration"):
             return
 
