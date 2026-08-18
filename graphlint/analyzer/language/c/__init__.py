@@ -36,9 +36,7 @@ class CAdapter(LanguageAdapter):
     """
 
     language_name = "c"
-    # NOTE: ``.h`` is parsed with the tree-sitter C grammar, so C++/ObjC
-    # headers may be mis-parsed. This is a documented limitation — we do not
-    # split ``.h`` into a separate header-only mode.
+    # ``.h`` is parsed with the C grammar; C++/ObjC headers may mis-parse.
     file_extensions = frozenset({".c", ".h"})
 
     @property

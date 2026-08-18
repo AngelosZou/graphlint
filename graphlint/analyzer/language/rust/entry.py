@@ -22,10 +22,7 @@ import os
 from typing import Any, Optional
 
 from graphlint.analyzer._types import EntryInfo, NodeInfo, ParseResult
-from graphlint.analyzer.language.rust.constants import (
-    _TREE_SITTER_AVAILABLE,
-    _parse_cargo_bin_paths,
-)
+from graphlint.analyzer.language.rust.constants import _parse_cargo_bin_paths
 
 
 class RustEntryPointDetector:

@@ -102,11 +102,9 @@ def _compile_globs(pattern: str) -> tuple[re.Pattern, ...]:
 def _glob_match(path: str, pattern: str) -> bool:
     """Match *path* against an fnmatch-style *pattern*.
 
-    Semantics mirror ``fnmatch.fnmatch`` (case-insensitive via normcase on
-    Windows), including the ``**/`` prefix fallback used by entry rules.
-    Patterns are compiled once and results are memoized — ``fnmatch``
-    re-translates and normcases both arguments on every call, which is
-    expensive on Windows (normcase is an LCMapStringEx syscall per call).
+    Mirrors ``fnmatch.fnmatch`` (case-insensitive on Windows) including the
+    ``**/`` prefix fallback. Patterns are compiled and results memoized —
+    ``fnmatch`` re-translates and normcases both arguments per call.
     """
     if os.name == "nt" and path.isascii():
         # normcase semantics for ASCII input on Windows.

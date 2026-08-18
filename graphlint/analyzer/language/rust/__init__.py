@@ -11,7 +11,6 @@ from graphlint.analyzer.language.rust.constants import (
     _RUST_DEFAULT_EXCLUDES,
     _RUST_PUBLIC_API_NAMES,
     _RUST_SPECIAL_NAMES,
-    _TREE_SITTER_AVAILABLE,
     _file_to_module,
     _is_test_file,
 )

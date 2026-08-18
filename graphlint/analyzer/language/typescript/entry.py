@@ -21,15 +21,10 @@ Patterns support OR with `` | `` (space‑pipe‑space)::
 from __future__ import annotations
 
 import fnmatch
-import os
 from typing import Any
 
 from graphlint.analyzer._types import EntryInfo, NodeInfo, ParseResult
-from graphlint.analyzer.language.typescript.constants import (
-    _TS_DEFAULT_DIR_PATTERNS,
-    _TS_DEFAULT_FILE_PATTERNS,
-    _is_test_file,
-)
+from graphlint.analyzer.language.typescript.constants import _is_test_file
 
 
 class TSEntryPointDetector:
@@ -59,13 +54,8 @@ class TSEntryPointDetector:
         entries: list[EntryInfo] = []
 
         global_public_as_entry = self.config.get("_public_as_entry", False)
-
-        # Decision (owner review point D): package.json/tsconfig-driven library
-        # detection (like the C# csproj path) is intentionally NOT implemented
-        # here. The ``--public-as-entry`` flag remains the explicit signal for
-        # "every export is an entry". Adding project-metadata detection is
-        # documented as a follow-up to keep this adapter minimal and avoid
-        # surprising implicit reachability changes.
+        # Package-metadata library detection (like the C# .csproj path) is a
+        # follow-up; --public-as-entry remains the explicit signal.
 
         for file_path, pr in parse_results.items():
             if not any(

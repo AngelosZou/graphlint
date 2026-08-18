@@ -10,10 +10,8 @@ Pattern syntax:
 Entry detection uses AST/filename heuristics plus a library mode: when no
 program entry (``main`` family) is detected — or when ``--public-as-entry``
 / ``c_library_mode`` asks for it — external-linkage top-level functions and
-variables of ``.c`` files become ``c_public_api`` entries.
-
-Build-config-driven entry (CMakeLists ``add_executable`` / Makefile link
-rules) is a documented follow-up — do NOT implement here.
+variables of ``.c`` files become ``c_public_api`` entries. Build-config
+entry detection (CMake/Makefile) is a follow-up.
 """
 
 from __future__ import annotations
@@ -229,12 +227,9 @@ class CEntryPointDetector:
 
         Uses the filename conventions defined in ``constants.py``
         (``_C_TEST_FILE_SUFFIXES`` / ``_C_TEST_FILE_PREFIXES``) plus the
-        configured ``test_patterns`` via ``_is_test_file``.
-
-        NOTE: CMake ``enable_testing()`` / ``add_test(NAME ... COMMAND ...)``
-        would be the authoritative build-config-driven source for test
-        detection; integrating it is scoped as a follow-up, mirroring how C#
-        parses ``.csproj``. No behavior change here.
+        configured ``test_patterns`` via ``_is_test_file``. Build-config
+        test detection (CMake ``enable_testing()`` / ``add_test``) is a
+        follow-up.
         """
         if not _is_test_file(file_path, self.config):
             return []

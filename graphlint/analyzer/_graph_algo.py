@@ -13,11 +13,9 @@ from graphlint.analyzer.warnings import WarningInfo
 _EMPTY_FROZENSET: frozenset[str] = frozenset()
 
 # Node types promoted from READ edges into the call graph (a read = a use).
-# ``macro``/``type``/``union`` carry C semantics (typedefs, unions, and macros
-# used from live code are alive). Rust also emits ``macro``/``union`` node
-# types, but its macro invocations use CALL edges (promoted unconditionally)
-# and its union type references produce no read edges, so these entries are
-# inert for Rust.
+# ``macro``/``type``/``union`` are C node types (typedefs, unions, macros).
+# Rust shares the names but is unaffected: its macro invocations use CALL
+# edges and its union type references produce no read edges.
 _READ_PROMOTED_TYPES: frozenset[str] = frozenset(
     {
         "function",
@@ -637,19 +635,11 @@ def find_connected_components(
             if _ninfo:
                 global_reachable_fids.add(_ninfo.file_id)
 
-    # Files transitively included by live files also count as live. Used to
-    # promote genuinely-used module-level symbols (C include-guard macros,
-    # module-level typedef uses) in headers whose own nodes are all dead.
-    #
-    # Known over-promotion trade-off (file-granularity heuristic): a typedef
-    # whose only use is the declaration of a dead global in an included
-    # header (``Item g_item;`` where ``g_item`` is never referenced) is
-    # reported live while ``g_item`` stays dead. The asymmetry is deliberate:
-    # module-level type/macro *references* count as uses of the target symbol
-    # even when the referencing declaration itself is dead, mirroring how
-    # variables in live files are blanket-treated as live. Upgrading to
-    # symbol-level propagation would eliminate it; keep the coarse rule until
-    # then.
+    # Files transitively included by live files also count as live, so
+    # genuinely-used module-level symbols (C include-guard macros, module-level
+    # typedef uses) in headers whose own nodes are all dead stay alive.
+    # File-granularity trade-off: a typedef used only by a dead global in an
+    # included header stays live while the global stays dead.
     module_live_fids: set[int] = set(global_reachable_fids)
     if include_fids:
         _inc_q: deque[int] = deque(global_reachable_fids)
@@ -660,11 +650,9 @@ def find_connected_components(
                     module_live_fids.add(_inc_fid)
                     _inc_q.append(_inc_fid)
 
-    # Pre-compute node-0 connected node IDs (O(E) once). _zero_used_targets
-    # holds targets of genuine module-level references (line > 0) — the
-    # synthetic module edges (line = 0) are excluded, so e.g. an include-guard
-    # macro (`#ifndef GUARD_H`) counts as used while an untouched #define in a
-    # live file does not.
+    # Targets of genuine module-level references (line > 0); synthetic module
+    # edges (line = 0) are excluded, so a guard macro referenced by #ifndef
+    # counts as used while an untouched #define does not.
     _zero_targets: set[int] = set()
     _zero_sources: set[int] = set()
     _zero_used_targets: set[int] = set()

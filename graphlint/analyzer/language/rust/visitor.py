@@ -4,7 +4,7 @@ nodes (symbol definitions), structured references (edges), and imports."""
 
 from __future__ import annotations
 
-from typing import Any, List, Optional, Set, Tuple
+from typing import Any, List, Set
 
 from graphlint.analyzer._types import NodeInfo, ReferenceInfo
 from graphlint.analyzer.language.rust.constants import (

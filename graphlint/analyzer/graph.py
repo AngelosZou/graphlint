@@ -97,14 +97,11 @@ def _resolve_symbol(
                 resolve_cache[cache_key] = list(r)
             return list(r)
 
-    # C translation-unit scope: prefer same-file symbols via an O(1)
-    # per-file simple-name index. Without this, common `static` names
-    # (init, cleanup, ...) materialize the whole cross-file suffix list per
-    # reference — quadratic on large C codebases and cross-linking unrelated
-    # TUs. Full-qualified-name references never reach this branch (they hit
-    # the exact-match lookup above), so no per-file qname index is needed.
-    # Cross-file `static` targets of the fallback are dropped by the caller
-    # via _drop_cross_file_static, which knows the include closure.
+    # C translation-unit scope: same-file symbols first, via an O(1)
+    # per-file index — common `static` names would otherwise scan the whole
+    # cross-file suffix list per reference. Full qnames never reach this
+    # branch (exact match above); cross-file statics of the fallback are
+    # dropped by the caller, which knows the include closure.
     if fid and file_suffix_index is not None:
         r = file_suffix_index.get((fid, _q))
         if r:
@@ -151,14 +148,9 @@ def _drop_cross_file_static(
 ) -> list[int]:
     """Drop C internal-linkage (``static``) targets outside the source TU.
 
-    ``static`` symbols can only be referenced from their own translation
-    unit. A ``static`` in a header is per-TU, though: every including
-    translation unit gets its own copy, so targets whose file is
-    (transitively) included by the source file stay reachable —
-    ``static inline`` helpers in headers are the standard C pattern and must
-    not be reported dead from their includers. Non-static
-    (external-linkage) targets — including forward-declared functions
-    defined elsewhere — are always kept.
+    A ``static`` in a header is per-TU: every including translation unit
+    gets its own copy, so targets in files the source file (transitively)
+    includes stay reachable. Non-static targets are always kept.
     """
     included = included_fids or set()
     return [
@@ -424,11 +416,9 @@ class GraphBuilder:
         for fp in changed_list:
             fid = fid_map.get(fp, 0)
             if fid and fid in file_nodes_by_fid:
-                # Collision-safe: first-writer-wins, then overwrite only when the
-                # new node is a function (mirrors C entry.py's qname_to_id rule).
-                # Otherwise a later non-function node (e.g. an anonymous
-                # struct/union/enum sharing the enclosing symbol's qname) would
-                # silently steal a function's node id and report live code as dead.
+                # First-writer-wins; a function overwrites a same-qname
+                # non-function (an anonymous struct sharing the enclosing
+                # symbol's qname must not steal a function's node id).
                 fnodes_for_fp: dict[str, int] = {}
                 for n in file_nodes_by_fid[fid]:
                     if n.qualified_name not in fnodes_for_fp:
@@ -437,16 +427,11 @@ class GraphBuilder:
                         fnodes_for_fp[n.qualified_name] = n.id
                 fnodes_map[fp] = fnodes_for_fp
 
-        # File-level include edges (C #include): a header included by a live
-        # file counts as live, so genuinely-used header symbols (include-guard
-        # macros, module-level typedef uses) are not reported dead. The
-        # transitive closure also feeds C resolution — a `static` in a header
-        # is per-TU and stays reachable from every file that (transitively)
-        # includes it.
+        # C #include graph: a header included by a live file counts as live,
+        # and the transitive closure feeds per-TU resolution (a header
+        # `static` is reachable from every file that includes it).
         include_fids: dict[int, list[int]] = {}
         _pr_keys = set(parse_results)
-        # Basename index for include resolution — avoids an O(F) scan per
-        # unresolved include path.
         _base_index: dict[str, list[str]] = {}
         for _k in _pr_keys:
             _base_index.setdefault(os.path.basename(_k), []).append(_k)
@@ -571,11 +556,10 @@ class GraphBuilder:
         expanded: set[int] = set()
         reachable: set[int] = set()
 
-        # Rebuild genuine module-level use edges for unchanged files from
-        # restored references (incremental mode). These 0→target edges (e.g.
-        # an include-guard macro referenced by #ifndef) cannot live in the
-        # edges table — its source_id column references nodes and node 0 does
-        # not exist — so they round-trip through the imports table.
+        # Rebuild genuine module-level use edges (source 0) for unchanged
+        # files from restored references. The edges table cannot hold them
+        # (its source_id references nodes; node 0 does not exist), so they
+        # round-trip through the imports table.
         if changed_files is not None and changed_files != set(parse_results):
             for _fp, _pr in parse_results.items():
                 if _fp in changed_files:
@@ -734,9 +718,9 @@ class GraphBuilder:
     ) -> dict[str, ParseResult]:
         """Restrict parse results to the adapter's own file extensions.
 
-        Entry detection is per-language; without the filter every adapter
-        iterates every project file and applies every entry rule — the
-        Python detector even re-parses .c files as Python source.
+        Without the filter every adapter iterates every project file and
+        applies every entry rule — the Python detector even re-parses .c
+        files as Python.
         """
         exts = adapter.file_extensions
         if not exts:

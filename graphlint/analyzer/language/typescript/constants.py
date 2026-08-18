@@ -6,7 +6,6 @@ from __future__ import annotations
 
 import fnmatch
 import os
-import re
 from typing import Any
 
 # ---------------------------------------------------------------------------

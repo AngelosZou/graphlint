@@ -686,8 +686,7 @@ class TestCSharpCsproj:
 
     @tree_sitter_available
     def test_public_operator_is_public_api_entry(self):
-        """Library-mode public operator overloads are public API entries
-        (round-3 W8 remainder: operator missing from the whitelist)."""
+        """Library-mode public operator overloads are public API entries."""
         from graphlint.analyzer.language.csharp.entry import CSharpEntryPointDetector
         from graphlint.analyzer.language.csharp.parser import CSharpSourceParser
 

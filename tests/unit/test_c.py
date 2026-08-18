@@ -4,12 +4,11 @@
 from __future__ import annotations
 
 import os
-import tempfile
 from typing import Any
 
 import pytest
 
-from graphlint.analyzer._types import GraphBuildResult, NodeInfo
+from graphlint.analyzer._types import GraphBuildResult
 from graphlint.analyzer.warnings import WarningCollector
 from graphlint.analyzer.language.c.constants import (
     _TREE_SITTER_C_AVAILABLE,
@@ -667,7 +666,7 @@ struct S {
         ]
         assert self_refs == []
 
-    # --- #2 nested-declarator fields ---------------------------------------
+    # Nested declarators in fields (pointer/function-pointer/array).
 
     def test_nested_pointer_field_node(self):
         source = """\
@@ -721,7 +720,7 @@ struct M {
         ]
         assert self_refs == []
 
-    # --- #1 anonymous struct/union/enum definitions ------------------------
+    # Anonymous struct/union/enum definitions.
 
     def test_typedef_anonymous_struct_no_phantom_node(self):
         source = """\

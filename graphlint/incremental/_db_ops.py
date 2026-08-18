@@ -419,23 +419,16 @@ def _insert_imports(
     fid_map: dict[str, int],
     changed_files: Optional[set[str]] = None,
 ) -> None:
-    """Persist file-level include records and module-level use references.
+    """Persist C ``#include`` records and genuine module-level uses.
 
-    - C ``#include`` records (``include_path``) feed the module-liveness
-      include graph on incremental builds, where unchanged files are restored
-      from the DB instead of being re-parsed.
-    - Genuine module-level uses (edges with source 0 and line > 0, e.g. an
-      include-guard macro referenced by ``#ifndef``) are stored as
-      ``module_ref:*`` rows because the edges table cannot hold them (its
-      ``source_id`` column references nodes and no node with id 0 exists).
-
-    Python-style imports (``module_path``) are recomputed by their language
-    parsers and are not persisted here.
+    ``c_include`` rows feed the module-liveness include graph on incremental
+    builds; ``module_ref:*`` rows carry 0→target uses (e.g. an include-guard
+    macro referenced by ``#ifndef``), which the edges table cannot hold —
+    its ``source_id`` references nodes and node 0 does not exist.
     """
     batch: list[tuple[Any, ...]] = []
-    # Memory file ids are assigned by enumeration order in
-    # GraphBuilder.build; resolve them through fid_map (as _do_insert_edges
-    # does) instead of trusting files[mem_fid - 1] positionally.
+    # Resolve memory file ids through fid_map (as _do_insert_edges does)
+    # instead of trusting files[mem_fid - 1] positionally.
     mem_fid_to_sql: dict[int, int] = {}
     for idx, fp in enumerate(build_result.files, 1):
         sql_fid = fid_map.get(fp, 0)

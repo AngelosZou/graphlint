@@ -405,10 +405,8 @@ class CVisitor:
     # ------------------------------------------------------------------
 
     def _visit_function_definition(self, node: Any) -> None:
-        # NOTE: linkage model. ``static`` functions/variables are marked with
-        # visibility="static" so edge building can enforce internal linkage
-        # (no cross-file references). Same-named static helpers in different
-        # translation units therefore stay independent.
+        # ``static`` definitions get visibility="static" so edge building
+        # enforces internal linkage.
         name = _extract_function_name(node)
         if not name:
             return
@@ -614,18 +612,12 @@ class CVisitor:
 
         is_definition = has_body or has_field_list
 
-        # Enum/struct/union definitions create their own node (below);
-        # enumerators get enum_member nodes via _visit_enumerator, so a use of
-        # `RED` resolves to `mod.Color.RED` and keeps the enum alive. A bare
-        # reference (`struct Point *p;`, `enum Color c;`) only emits a read
-        # edge — it does not create a new node.
+        # Definitions create a node below; a bare reference
+        # (`struct Point *p;`) only emits a read edge.
         if not is_definition:
-            # Type reference — emit a read edge, don't create a new node.
             # Skip self-references: `struct Node { struct Node *next; };` —
-            # a field whose type is the enclosing type is not an external
-            # use. The reference would otherwise resolve to the type itself
-            # (dropped as a self-edge) and could cross-link same-named types
-            # in other files.
+            # the enclosing type's own name is not an external use and would
+            # cross-link same-named types in other files.
             if name and name != self._innermost_scope_name():
                 sq = self._current_qname()
                 self.references.append(ReferenceInfo(
@@ -638,15 +630,10 @@ class CVisitor:
             return
 
         if not name:
-            # Anonymous struct/union/enum definition (e.g.
-            # `typedef struct { int x; } Item;` or
-            # `void f(void) { struct { int a; } s; }`). It is not a named
-            # symbol, so do NOT create a node: a phantom node here would share
-            # the enclosing scope's qualified name and, in graph.py's
-            # fnodes_map (last-writer-wins), silently clobber the enclosing
-            # function/typedef node id and report live code as dead. Still
-            # recurse into the body so fields stay attached to the enclosing
-            # type via the current type/scope context.
+            # Anonymous struct/union/enum definition: not a named symbol, so
+            # no node is created (a phantom node would share the enclosing
+            # scope's qname and clobber it in fnodes_map). Recurse so fields
+            # attach to the enclosing type.
             if body:
                 self._walk(body)
             else:
@@ -702,15 +689,11 @@ class CVisitor:
     # ------------------------------------------------------------------
 
     def _visit_enumerator(self, node: Any) -> None:
-        """Create an ``enum_member`` node for each enumerator.
+        """Create an ``enum_member`` node for an enumerator.
 
-        ``enum Color { RED, GREEN };`` yields ``mod.Color.RED`` /
-        ``mod.Color.GREEN`` with the enum node as parent, so a use of ``RED``
-        resolves to the member, promotes it (``enum_member`` is a read-promoted
-        type) and, through parent promotion, keeps the enclosing enum alive.
-        Mirrors the C# backend's enum-member model. The enumerator's value
-        expression is walked (``RED = BASE`` uses ``BASE``); the name
-        identifier itself is not — reading one's own declaration is not a use.
+        ``enum Color { RED };`` yields ``mod.Color.RED`` with the enum as
+        parent, so uses of ``RED`` keep the enum alive. The value expression
+        is walked (``RED = BASE`` uses ``BASE``); the name identifier is not.
         """
         name_node = node.child_by_field_name("name")
         if name_node is None:
@@ -887,11 +870,9 @@ class CVisitor:
         if not name:
             return
 
-        # A name referenced by a preproc conditional (`#ifndef GUARD_H` /
-        # `#ifdef FEATURE`) reaches this point and emits a genuine module-level
-        # `read <module> -> NAME` edge (line > 0). find_connected_components
-        # promotes macros with such a genuine module-level use when their file
-        # is live, so include-guard and feature macros are not reported dead.
+        # Preproc-conditional names (#ifndef GUARD_H) emit a genuine
+        # module-level read; find_connected_components keeps such macros
+        # alive when their file is live.
         sq = self._current_qname()
 
         if _is_on_left_of_assignment(node):
@@ -951,11 +932,9 @@ class CVisitor:
         if self._is_declaration_parent(parent):
             return
 
-        # NOTE: type_identifier leaves whose parent is a declarator name the
-        # type being declared (`typedef`/`init_declarator`), not a use.
-        # field_declaration / parameter_declaration parents are real type
-        # uses (`Item item;` as a struct field or parameter) and emit read
-        # edges so the typedef is kept alive when the container/function is.
+        # A type_identifier inside a declarator names the type being
+        # declared, not a use. Field/parameter types are real uses and emit
+        # read edges, keeping the typedef alive with its container.
         if parent.type in ("init_declarator",):
             return
 

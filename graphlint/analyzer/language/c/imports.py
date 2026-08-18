@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 
@@ -19,10 +19,8 @@ class CIncludeInfo:
 class CImportAnalyzer:
     """Analyzes ``#include`` preprocessor directives.
 
-    Only local includes (``"foo.h"`` via ``string_literal``) are recorded as
-    tracked file dependencies.  System includes (``<stdio.h>`` via
-    ``system_lib_string``) are conservatively skipped — the same approach the
-    C# backend takes for ``using System.*``.
+    Only local includes (``"foo.h"``) are tracked; system includes
+    (``<stdio.h>``) are skipped, like the C# backend skips ``using System.*``.
     """
 
     def analyze_include(self, node: Any) -> CIncludeInfo | None:
