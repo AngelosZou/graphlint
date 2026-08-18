@@ -189,6 +189,7 @@ class GraphBuilder:
         self._next_node_id: int = 1
         self._node_id_map: dict[int, NodeInfo] = {}
         self._old_to_new: dict[tuple[str, str], int] = {}
+        self._include_fids: Optional[dict[int, list[int]]] = None
         self.warning_collector = warning_collector
         self.config = config or {}
         self.registry = registry
@@ -475,6 +476,11 @@ class GraphBuilder:
         # macros, module-level typedef uses) are not reported dead.
         include_fids: dict[int, list[int]] = {}
         _pr_keys = set(parse_results)
+        # Basename index for include resolution — avoids an O(F) scan per
+        # unresolved include path.
+        _base_index: dict[str, list[str]] = {}
+        for _k in _pr_keys:
+            _base_index.setdefault(os.path.basename(_k), []).append(_k)
         for _fp, _pr in parse_results.items():
             _fid = fid_map.get(_fp, 0)
             if not _fid:
@@ -483,9 +489,10 @@ class GraphBuilder:
                 _inc = getattr(_imp, "include_path", "") or ""
                 if not _inc:
                     continue
-                _tgt = self._resolve_include(_inc, _fp, _pr_keys)
+                _tgt = self._resolve_include(_inc, _fp, _pr_keys, _base_index)
                 if _tgt and _tgt in fid_map and fid_map[_tgt] != _fid:
                     include_fids.setdefault(_fid, []).append(fid_map[_tgt])
+        self._include_fids = include_fids
 
         _sn = self._get_special_names()
         _pn = self._get_public_api_names()
@@ -611,11 +618,13 @@ class GraphBuilder:
         include_path: str,
         from_file: str,
         parse_keys: set[str],
+        base_index: dict[str, list[str]],
     ) -> str:
         """Resolve an ``#include`` path to a parsed file key.
 
         Tries the raw path, the including file's directory, then a unique
-        basename match. Returns ``""`` when unresolvable.
+        basename match (O(1) via ``base_index``). Returns ``""`` when
+        unresolvable.
         """
         if include_path in parse_keys:
             return include_path
@@ -624,8 +633,7 @@ class GraphBuilder:
         ).replace(os.sep, "/")
         if cand in parse_keys:
             return cand
-        base = os.path.basename(include_path)
-        matches = [k for k in parse_keys if os.path.basename(k) == base]
+        matches = base_index.get(os.path.basename(include_path), ())
         if len(matches) == 1:
             return matches[0]
         return ""
@@ -982,6 +990,7 @@ class GraphBuilder:
             special_method_names=self._get_special_names(),
             expanded_out=expanded,
             reachable_out=reachable,
+            include_fids=self._include_fids,
         )
         return GraphBuildResult(
             nodes=list(self._nodes),

@@ -341,6 +341,29 @@ struct Holder { Item item; };
         assert refs, "typedef used as a field type must emit a read edge"
         assert all(r.source_qname == "test_module.Holder" for r in refs)
 
+    def test_self_type_reference_not_emitted(self):
+        source = "struct Node { int v; struct Node *next; };\n"
+        visitor = _parse_source(source)
+        refs = [r for r in visitor.references if r.target_name == "Node"]
+        assert refs == [], refs
+
+    def test_typedef_self_struct_no_self_ref(self):
+        source = "typedef struct Node { int v; struct Node *next; } Node;\n"
+        visitor = _parse_source(source)
+        refs = [
+            r for r in visitor.references
+            if r.target_name == "Node"
+            and r.source_qname.startswith("test_module.Node")
+        ]
+        assert refs == [], refs
+
+    def test_nested_struct_keeps_outer_type_ref(self):
+        source = "struct A { struct B { struct A *a; } b; };\n"
+        visitor = _parse_source(source)
+        refs = [r for r in visitor.references if r.target_name == "A"]
+        assert len(refs) == 1
+        assert refs[0].source_qname == "test_module.A.B"
+
     def test_global_variable(self):
         source = """\
 int global_counter = 0;
@@ -1180,3 +1203,14 @@ class TestCEndToEnd:
         assert "src.b.useb" in dead, dead
         assert "src.b.bg" in dead, dead
         assert "src.main.gv" in live, live
+
+    def test_typedef_self_struct_live_when_used(self):
+        br, wb = self._build({
+            "src/main.c": (
+                'typedef struct Node { int v; struct Node *next; } Node;\n'
+                'int main(void) { Node n; return n.v; }\n'
+            ),
+        })
+        live = _live_nodes(br)
+        assert "src.main.Node" in live, live
+        assert "src.main.Node.Node" in live, live

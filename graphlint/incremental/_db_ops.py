@@ -433,7 +433,17 @@ def _insert_imports(
     parsers and are not persisted here.
     """
     batch: list[tuple[Any, ...]] = []
-    mem_fid_to_path: dict[int, str] = dict(enumerate(build_result.files, 1))
+    # Memory file ids are assigned by enumeration order in
+    # GraphBuilder.build; resolve them through fid_map (as _do_insert_edges
+    # does) instead of trusting files[mem_fid - 1] positionally.
+    mem_fid_to_sql: dict[int, int] = {}
+    for idx, fp in enumerate(build_result.files, 1):
+        sql_fid = fid_map.get(fp, 0)
+        if sql_fid:
+            mem_fid_to_sql[idx] = sql_fid
+    changed_sql_fids: set[int] = set()
+    if changed_files is not None:
+        changed_sql_fids = {fid_map.get(fp, 0) for fp in changed_files} - {0}
     for fp, pr in build_result.files_data.items():
         if changed_files is not None and fp not in changed_files:
             continue
@@ -450,11 +460,10 @@ def _insert_imports(
     for edge in build_result.edges:
         if edge.source_id != 0 or not edge.line:
             continue
-        fp = mem_fid_to_path.get(edge.file_id, "")
-        if changed_files is not None and fp not in changed_files:
-            continue
-        fid = fid_map.get(fp, 0)
+        fid = mem_fid_to_sql.get(edge.file_id, 0)
         if not fid:
+            continue
+        if changed_files is not None and fid not in changed_sql_fids:
             continue
         target = build_result.node_id_map.get(edge.target_id)
         if target is None or not target.qualified_name:

@@ -13,8 +13,11 @@ from graphlint.analyzer.warnings import WarningInfo
 _EMPTY_FROZENSET: frozenset[str] = frozenset()
 
 # Node types promoted from READ edges into the call graph (a read = a use).
-# ``macro``/``type``/``union`` are C-only node types (typedefs, unions, and
-# macros used from live code are alive).
+# ``macro``/``type``/``union`` carry C semantics (typedefs, unions, and macros
+# used from live code are alive). Rust also emits ``macro``/``union`` node
+# types, but its macro invocations use CALL edges (promoted unconditionally)
+# and its union type references produce no read edges, so these entries are
+# inert for Rust.
 _READ_PROMOTED_TYPES: frozenset[str] = frozenset(
     {
         "function",

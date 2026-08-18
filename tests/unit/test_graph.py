@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
 """GraphBuilder edge creation and graph algorithm tests."""
 
+import os
+
 import pytest
 from typing import Any
 
@@ -506,3 +508,44 @@ class TestLanguageScopedSpecialNames:
         })
         dead = self._dead_names(br, wb)
         assert "svc.Main" in dead, dead
+
+
+class TestResolveInclude:
+    """_resolve_include resolution strategies (raw path, dir, basename)."""
+
+    @staticmethod
+    def _index(keys):
+        base_index = {}
+        for k in keys:
+            base_index.setdefault(os.path.basename(k), []).append(k)
+        return base_index
+
+    def test_raw_path_match(self):
+        keys = {"src/helper.h"}
+        assert GraphBuilder._resolve_include(
+            "src/helper.h", "src/main.c", keys, self._index(keys)
+        ) == "src/helper.h"
+
+    def test_relative_to_including_file(self):
+        keys = {"src/sub/helper.h"}
+        assert GraphBuilder._resolve_include(
+            "sub/helper.h", "src/main.c", keys, self._index(keys)
+        ) == "src/sub/helper.h"
+
+    def test_unique_basename_fallback(self):
+        keys = {"lib/util/helper.h"}
+        assert GraphBuilder._resolve_include(
+            "helper.h", "src/main.c", keys, self._index(keys)
+        ) == "lib/util/helper.h"
+
+    def test_ambiguous_basename_unresolved(self):
+        keys = {"lib/a/helper.h", "lib/b/helper.h"}
+        assert GraphBuilder._resolve_include(
+            "helper.h", "src/main.c", keys, self._index(keys)
+        ) == ""
+
+    def test_missing_unresolved(self):
+        keys = {"src/main.c"}
+        assert GraphBuilder._resolve_include(
+            "nope.h", "src/main.c", keys, self._index(keys)
+        ) == ""

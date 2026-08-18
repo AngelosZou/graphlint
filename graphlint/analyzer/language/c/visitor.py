@@ -293,6 +293,10 @@ class CVisitor:
     def _current_qname(self) -> str:
         return ".".join(self._context) if self._context else ""
 
+    def _innermost_scope_name(self) -> str:
+        """Simple name of the innermost scope ("" at module level)."""
+        return self._context[-1] if self._context else ""
+
     def _push_scope(self, name: str) -> None:
         self._context.append(name)
 
@@ -594,8 +598,13 @@ class CVisitor:
         # reference (`struct Point *p;`, `enum Color c;`) only emits a read
         # edge — it does not create a new node.
         if not is_definition:
-            # Type reference — emit a read edge, don't create a new node
-            if name:
+            # Type reference — emit a read edge, don't create a new node.
+            # Skip self-references: `struct Node { struct Node *next; };` —
+            # a field whose type is the enclosing type is not an external
+            # use. The reference would otherwise resolve to the type itself
+            # (dropped as a self-edge) and could cross-link same-named types
+            # in other files.
+            if name and name != self._innermost_scope_name():
                 sq = self._current_qname()
                 self.references.append(ReferenceInfo(
                     source_qname=sq,
@@ -930,6 +939,11 @@ class CVisitor:
 
         name = _node_text(node)
         if not name:
+            return
+
+        # Skip self-references (`S *p;` inside `struct S` — the enclosing
+        # type's own name is not an external use).
+        if name == self._innermost_scope_name():
             return
 
         sq = self._current_qname()
