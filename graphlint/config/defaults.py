@@ -325,7 +325,13 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     # -------- Test file patterns --------
     "test_patterns": {
         "file_patterns": ["test_*.py", "*_test.py", "test_*.rs", "*_test.rs",
-                          "*Tests.cs", "*Test.cs", "*.Tests.cs"],
+                          "*Tests.cs", "*Test.cs", "*.Tests.cs",
+                          "*_test.cpp", "*_test.cc", "*_test.cxx",
+                          "*_test.hpp", "*_test.hh", "*_test.hxx",
+                          "*_tests.cpp", "*_tests.cc", "*_tests.cxx",
+                          "*_tests.hpp", "*_tests.hh", "*_tests.hxx",
+                          "test_*.cpp", "test_*.cc", "test_*.cxx",
+                          "test_*.hpp", "test_*.hh", "test_*.hxx"],
         "dir_patterns": ["tests/", "test/", "__tests__/", "Tests/", "Test/"],
         "config_files": ["conftest.py"],
         "function_patterns": ["test_*"],

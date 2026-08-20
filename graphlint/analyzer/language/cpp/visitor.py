@@ -63,7 +63,8 @@ def _scoped_name(node: Any) -> str:
     if node.type == "qualified_identifier":
         parts = []
         for child in node.children:
-            if child.type == "identifier":
+            if child.type in ("identifier", "namespace_identifier",
+                              "operator_name"):
                 parts.append(_node_text(child))
             elif child.type == "qualified_identifier":
                 inner = _scoped_name(child)
@@ -557,32 +558,45 @@ class CppVisitor:
         if not name:
             return
 
-        # Handle destructors: ~ClassName — the declarator's text already
-        # carries the leading "~" (destructor_name text is e.g. "~Entity").
-        # Keep the real class name so multiple destructors don't collide
-        # under a shared placeholder. Destructors are still excluded from
-        # Approach A method resolution below (never resolved via an explicit
-        # member call).
-        if name.startswith("~"):
-            sq = self._current_qname()
-            qualified = sq + "." + name if sq else name
-        elif name.startswith("operator"):
-            # operator overload
-            sq = self._current_qname()
-            qualified = sq + "." + name if sq else name
+        # Out-of-class member definitions: `void A::f() {}` at module scope
+        # carries a `::`-qualified declarator. Re-open the owning class scope
+        # chain so the member is rooted under its class (nested classes walk
+        # every `::` segment) instead of being emitted as a free function.
+        if not is_method and "::" in name and "(" not in name:
+            method_name = name.rsplit("::", 1)[-1]
+            scope_chain = name.rsplit("::", 1)[0]
+            scope_parts = [p for p in scope_chain.split("::") if p]
+            sq = ".".join(self._context + scope_parts) if self._context else ".".join(scope_parts)
+            qualified = sq + "." + method_name if sq else method_name
+            is_method = True
+            node_name = method_name
         else:
             sq = self._current_qname()
             qualified = sq + "." + name if sq else name
+            node_name = name
+
+        # Destructors / operator overloads are excluded from Approach A method
+        # resolution (they are never resolved via an explicit member call).
+        # The "~" and "operator" forms are still special so their nodes are
+        # recognized via CppAdapter.is_special_name (and not reported as
+        # dead code); a plain method follows normal handling.
+        is_ctor_or_dtor = node_name.startswith(("~", "operator"))
+
+        type_qname = (
+            self._current_type_qname
+            if is_method and "::" not in name
+            else sq.lstrip(".")
+        )
 
         qualified = _strip_template_prefix(qualified)
 
-        if is_method and not name.startswith(("operator", "~")):
+        if is_method and not is_ctor_or_dtor:
             # Register method for Approach A resolution
-            tq = self._current_type_qname
+            tq = type_qname
             if tq:
                 if tq not in self._type_methods:
                     self._type_methods[tq] = set()
-                self._type_methods[tq].add(name)
+                self._type_methods[tq].add(node_name)
 
         node_type_val = "method" if is_method else "function"
         parent_id = self._current_type_id if is_method else 0
@@ -592,7 +606,7 @@ class CppVisitor:
 
         info = NodeInfo(
             file_id=0,
-            name=name,
+            name=node_name,
             qualified_name=qualified,
             node_type=node_type_val,
             line_start=_node_line(node),
@@ -604,7 +618,7 @@ class CppVisitor:
         )
         nid = self._add_node(info)
 
-        self._push_scope(name)
+        self._push_scope(node_name)
         self._method_scope_depth += 1
         prev_method_id = self._current_method_id
         self._current_method_id = nid
@@ -653,6 +667,46 @@ class CppVisitor:
         )
 
         type_ann = _extract_type_annotation(node)
+
+        # Simple declarations without an initializer: `Player player;`
+        # (a bare type_identifier/type followed by a plain identifier). Handle
+        # these directly so the variable is emitted and its type registered
+        # for Approach A receiver resolution.
+        if not any(c.type == "init_declarator" for c in node.children):
+            if has_function_declarator:
+                # A function declaration (prototype) without a body is
+                # non-local; nothing to register here.
+                decl_type = None
+            else:
+                bare_type = _extract_type_annotation(node)
+                bare_name = None
+                for c in node.children:
+                    if c.type in ("identifier", "field_identifier"):
+                        bare_name = c
+                        break
+                if bare_name is not None and bare_type:
+                    name = _node_text(bare_name)
+                    qualified = sq + "." + name if sq else name
+                    info = NodeInfo(
+                        file_id=0,
+                        name=name,
+                        qualified_name=qualified,
+                        node_type=node_type_val,
+                        line_start=_node_line(node),
+                        line_end=_node_end_line(node),
+                        col_offset=_node_col(node),
+                        parent_node_id=parent_id,
+                        type_annotation=bare_type,
+                    )
+                    self._add_node(info)
+                    self.references.append(ReferenceInfo(
+                        source_qname=sq,
+                        target_name=name,
+                        edge_type="write",
+                        line=_node_line(node),
+                    ))
+                    self._var_types[name] = bare_type
+                    self._emit_type_read_name(bare_type, sq, _node_line(node))
 
         for child in node.children:
             if child.type == "init_declarator":
@@ -732,7 +786,13 @@ class CppVisitor:
 
     def _visit_call(self, node: Any) -> None:
         func = node.child_by_field_name("function")
-        if func:
+        if func and func.type == "field_expression":
+            # Approach A member call: dispatch the receiver/member through
+            # field-expression resolution so it emits a call edge via the
+            # receiver's known type (falling back to a conservative edge
+            # when the type is unknown).
+            self._visit_field_expression(func)
+        elif func:
             cname = _call_name_from_expr(func)
             if cname:
                 sq = self._current_qname()

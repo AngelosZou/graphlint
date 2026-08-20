@@ -110,35 +110,60 @@ def _file_to_module(path: str) -> str:
 # Test file detection
 # ---------------------------------------------------------------------------
 
-_CPP_TEST_FILE_SUFFIXES: tuple[str, ...] = ("_test", "_tests", "test_", "Test.")
+_CPP_TEST_FILE_SUFFIXES: tuple[str, ...] = (
+    "_test.cpp", "_test.cc", "_test.cxx",
+    "_test.hpp", "_test.hh", "_test.hxx",
+    "_tests.cpp", "_tests.cc", "_tests.cxx",
+    "_tests.hpp", "_tests.hh", "_tests.hxx",
+)
+_CPP_TEST_FILE_PREFIXES: tuple[str, ...] = ("test_",)
+_CPP_TEST_FILE_EXACT_NAMES: frozenset[str] = frozenset({"test.cpp", "test.h"})
 _CPP_DEFAULT_FILE_PATTERNS: tuple[str, ...] = (
     "*_test.cpp", "*_test.cc", "*_test.cxx",
     "*_test.hpp", "*_test.hh", "*_test.hxx",
     "*_tests.cpp", "*_tests.cc", "*_tests.cxx",
+    "*_tests.hpp", "*_tests.hh", "*_tests.hxx",
     "test_*.cpp", "test_*.cc", "test_*.cxx",
+    "test_*.hpp", "test_*.hh", "test_*.hxx",
 )
 _CPP_DEFAULT_DIR_PATTERNS: tuple[str, ...] = ("tests/", "test/", "Tests/", "Test/")
 
 
 def _is_test_file(file_path: str, config: dict[str, Any]) -> bool:
-    """Check whether *file_path* is a C++ test file."""
-    test_patterns = config.get("test_patterns", {})
-    file_patterns = test_patterns.get("file_patterns", list(_CPP_DEFAULT_FILE_PATTERNS))
-    dir_patterns = test_patterns.get("dir_patterns", list(_CPP_DEFAULT_DIR_PATTERNS))
+    """Check whether *file_path* is a C++ test file.
 
+    Language conventions (exact names, suffixes, prefixes, dir patterns)
+    are consulted first and are config-independent; configured ``test_patterns``
+    are applied as additional patterns on top.
+    """
     normalized = file_path.replace("\\", "/")
-    basename = os.path.basename(file_path)
-    dirname = os.path.dirname(file_path).replace(os.sep, "/")
+    basename = os.path.basename(normalized)
+    dirname = os.path.dirname(normalized)
 
-    for d in _CPP_DEFAULT_DIR_PATTERNS:
-        if normalized == d.rstrip("/") or normalized.startswith(d):
-            return True
+    if basename in _CPP_TEST_FILE_EXACT_NAMES:
+        return True
 
     for suffix in _CPP_TEST_FILE_SUFFIXES:
         if basename.endswith(suffix):
             return True
 
+    for prefix in _CPP_TEST_FILE_PREFIXES:
+        if basename.startswith(prefix):
+            return True
+
     dir_with_slash = dirname + "/"
+    for d in _CPP_DEFAULT_DIR_PATTERNS:
+        if normalized == d.rstrip("/") or normalized.startswith(d):
+            return True
+
+    test_patterns = config.get("test_patterns", {})
+    file_patterns = test_patterns.get(
+        "file_patterns", list(_CPP_DEFAULT_FILE_PATTERNS)
+    )
+    dir_patterns = test_patterns.get(
+        "dir_patterns", list(_CPP_DEFAULT_DIR_PATTERNS)
+    )
+
     if any(
         fnmatch.fnmatch(dir_with_slash, d) or dir_with_slash.startswith(d)
         for d in dir_patterns

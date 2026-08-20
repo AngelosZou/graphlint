@@ -87,11 +87,7 @@ class CppSourceParser:
         result.warnings.extend(visitor.warnings)
 
         for include_info in visitor.uses:
-            result.imports.append({
-                "target": include_info.target,
-                "is_system": include_info.is_system,
-                "line": include_info.line,
-            })
+            result.imports.append(include_info)
 
         return result
 

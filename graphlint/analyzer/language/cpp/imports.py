@@ -11,7 +11,7 @@ from typing import Any
 class IncludeInfo:
     """Resolved ``#include`` directive information."""
 
-    target: str = ""
+    include_path: str = ""
     is_system: bool = False
     line: int = 0
 
@@ -45,7 +45,7 @@ class CppImportAnalyzer:
         )
 
         return IncludeInfo(
-            target=path_text,
+            include_path=path_text,
             is_system=is_system,
             line=line,
         )

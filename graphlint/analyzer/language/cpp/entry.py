@@ -16,19 +16,14 @@ Patterns support OR with `` | `` (space‑pipe‑space)::
 from __future__ import annotations
 
 import fnmatch
-import os
 from typing import Any
 
 from graphlint.analyzer._types import EntryInfo, NodeInfo, ParseResult
-from graphlint.analyzer.language.cpp.constants import (
-    _CPP_DEFAULT_DIR_PATTERNS,
-    _CPP_DEFAULT_FILE_PATTERNS,
-)
+from graphlint.analyzer.language.cpp.constants import _is_test_file
 
 # ---------------------------------------------------------------------------
 # C++ entry patterns — matching ``main`` / ``WinMain`` / test entry points
 # ---------------------------------------------------------------------------
-_CPP_TEST_FUNC_PATTERNS: tuple[str, ...] = ("*Test*", "*_Test*", "test_*")
 
 
 def _fnmatch_brace(path: str, pattern: str) -> bool:
@@ -181,47 +176,7 @@ class CppEntryPointDetector:
         file_path: str,
         pr: ParseResult,
     ) -> list[EntryInfo]:
-        test_patterns = self.config.get("test_patterns", {})
-        file_patterns = test_patterns.get(
-            "file_patterns", list(_CPP_DEFAULT_FILE_PATTERNS)
-        )
-        dir_patterns = test_patterns.get(
-            "dir_patterns", list(_CPP_DEFAULT_DIR_PATTERNS)
-        )
-        func_patterns = test_patterns.get(
-            "function_patterns", list(_CPP_TEST_FUNC_PATTERNS)
-        )
-
-        normalized = file_path.replace("\\", "/")
-        basename = os.path.basename(file_path)
-        dirname = os.path.dirname(file_path).replace(os.sep, "/")
-
-        is_test = any(
-            normalized.startswith(d) for d in _CPP_DEFAULT_DIR_PATTERNS
-        )
-        if not is_test:
-            is_test = any(fnmatch.fnmatch(basename, p) for p in file_patterns)
-        if not is_test:
-            dir_with_slash = dirname + "/"
-            is_test = any(
-                dir_with_slash.startswith(d) or fnmatch.fnmatch(dir_with_slash, d)
-                for d in dir_patterns
-            )
-
-        if not is_test:
-            return []
-
-        # Check for test-named functions
-        has_test = any(
-            n.node_type in ("method", "function")
-            and (
-                any(fnmatch.fnmatch(n.name, p) for p in func_patterns)
-                or n.name.startswith("Test")
-            )
-            for n in pr.nodes
-        )
-
-        if not has_test:
+        if not _is_test_file(file_path, self.config):
             return []
 
         return [

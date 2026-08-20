@@ -378,8 +378,8 @@ int main() { return 0; }
         visitor = _parse_source(source)
         local = [u for u in visitor.uses if not u.is_system]
         assert len(local) == 2
-        assert local[0].target == "Player.h"
-        assert local[1].target == "utils/helpers.h"
+        assert local[0].include_path == "Player.h"
+        assert local[1].include_path == "utils/helpers.h"
 
     def test_mixed_includes(self):
         source = """\
@@ -390,7 +390,7 @@ int main() { return 0; }
         visitor = _parse_source(source)
         local = [u for u in visitor.uses if not u.is_system]
         assert len(local) == 1
-        assert local[0].target == "Entity.hpp"
+        assert local[0].include_path == "Entity.hpp"
 
 
 @tree_sitter_available
@@ -672,8 +672,8 @@ public:
         # At least one local include
         imports = [i for i in result.imports]
         assert len(imports) >= 1
-        assert imports[0]["target"] == "Player.h"
-        assert imports[0]["is_system"] is False
+        assert imports[0].include_path == "Player.h"
+        assert imports[0].is_system is False
 
     def test_parser_handles_missing_file(self):
         import tempfile
@@ -724,3 +724,220 @@ int main() {
         entries = detector.detect({"main.cpp": pr}, pr.nodes, {})
         cpp_main = [e for e in entries if e.rule_name == "cpp_main"]
         assert len(cpp_main) >= 1
+
+
+class TestCppTestFileDetection:
+    """PR #7 fix #2 — test-file detection sorting and conventions."""
+
+    def test_is_test_file_exact_test_basename(self):
+        assert _is_test_file("test.cpp", {}) is True
+        assert _is_test_file("latest.cpp", {}) is False
+
+    def test_is_test_file_suffix_match(self):
+        assert _is_test_file("foo_test.cpp", {}) is True
+        assert _is_test_file("my_test", {}) is False
+
+    def test_is_test_file_prefix_match(self):
+        assert _is_test_file("test_main.cpp", {}) is True
+
+    def test_is_test_file_dir_pattern(self):
+        assert _is_test_file("tests/foo.cpp", {}) is True
+        assert _is_test_file("src/foo.cpp", {}) is False
+
+    @tree_sitter_available
+    def test_check_test_file_no_func_requirement(self):
+        """File in tests/ without a test-named function is still detected."""
+        from graphlint.analyzer.language.cpp.entry import CppEntryPointDetector
+        from graphlint.analyzer.language.cpp.parser import CppSourceParser
+
+        source = "int helper() { return 0; }\n"
+        tmp = tempfile.mkdtemp()
+        src = os.path.join(tmp, "tests", "suite.cpp")
+        os.makedirs(os.path.dirname(src), exist_ok=True)
+        with open(src, "w", encoding="utf-8") as fh:
+            fh.write(source)
+
+        config = {
+            "entry_rules": [
+                {
+                    "name": "cpp_test",
+                    "file_pattern": "**/*.cpp",
+                    "ast_pattern": "test_file",
+                    "enabled": True,
+                    "description": "C++ test files",
+                },
+            ],
+        }
+        pr = CppSourceParser(tmp, config).parse_file(src)
+        detector = CppEntryPointDetector(config)
+        entries = detector.detect({"tests/suite.cpp": pr}, pr.nodes, {})
+        cpp_test = [e for e in entries if e.rule_name == "cpp_test"]
+        assert len(cpp_test) >= 1
+
+
+@tree_sitter_available
+class TestCppIncludesObjects:
+    """PR #7 fix #1: #include records are IncludeInfo objects."""
+
+    def test_imports_are_include_info_objects(self):
+        from graphlint.analyzer.language.cpp.parser import CppSourceParser
+
+        source = '#include <vector>\n#include "Player.h"\n#include "util.h"\n'
+        tmp = tempfile.mkdtemp()
+        src = os.path.join(tmp, "main.cpp")
+        with open(src, "w", encoding="utf-8") as fh:
+            fh.write(source)
+
+        result = CppSourceParser(tmp, {}).parse_file(src)
+        local = [i for i in result.imports]
+        assert len(local) >= 2
+        assert local[0].include_path == "Player.h"
+        assert local[0].is_system is False
+        assert local[1].include_path == "util.h"
+
+
+@tree_sitter_available
+class TestCppSpecialMethods:
+    """PR #7 fix #3: destructors / operators / constructors."""
+
+    def test_destructor_not_flagged_dead(self):
+        from graphlint.analyzer.language.cpp import CppAdapter
+
+        adapter = CppAdapter()
+        assert adapter.is_special_name("~Service") is True
+
+        br, wb = self._build({
+            "src/main.cpp": (
+                "class Service {\n"
+                "public:\n"
+                "    Service() { }\n"
+                "    ~Service() { }\n"
+                "    void run() { }\n"
+                "};\n"
+                "int main() {\n"
+                "    Service s;\n"
+                "    s.run();\n"
+                "    return 0;\n"
+                "}\n"
+            ),
+        })
+        nid_map = br.node_id_map
+        live = {nid_map[n].qualified_name for n in br.reachable if n in nid_map}
+        assert "src.main.Service.~Service" in live, live
+        dead_cpp = [
+            w for w in wb.get_all()
+            if w.warn_type == "dead_code" and "~Service" in str(w.message)
+        ]
+        assert dead_cpp == [], dead_cpp
+
+    def test_constructor_collision_with_class_name(self):
+        _visitor = _parse_source(
+            "class Service { public: Service() { } };\n"
+        )
+        methods = [n for n in _visitor.nodes if n.node_type == "method"]
+        assert len(methods) >= 1
+        assert methods[0].qualified_name == "test.Service.Service"
+
+    def test_operator_overload_node_created(self):
+        _visitor = _parse_source(
+            "class Vec { public: bool operator==(const Vec&) const { return true; } };\n"
+        )
+        names = [n.name for n in _visitor.nodes if n.node_type == "method"]
+        assert any(n == "operator==" for n in names), names
+
+    def _build(self, files: dict[str, str]) -> Any:
+        from graphlint.analyzer.graph import GraphBuilder
+        from graphlint.analyzer.warnings import WarningCollector
+        from graphlint.api import _build_registry
+        from graphlint.config.manager import ConfigManager
+
+        tmp = tempfile.mkdtemp()
+        for rel, content in files.items():
+            full = os.path.join(tmp, rel)
+            os.makedirs(os.path.dirname(full), exist_ok=True)
+            with open(full, "w", encoding="utf-8") as fh:
+                fh.write(content)
+
+        config = ConfigManager(tmp).load()
+        config["_root_dir"] = tmp
+        registry = _build_registry()
+        adapter = registry.adapter_for_file("x.cpp")
+        assert adapter is not None, "C++ adapter not registered"
+
+        prs = {}
+        for root, _d, fns in os.walk(tmp):
+            for fn in fns:
+                if any(fn.endswith(ext) for ext in (".cpp", ".cc", ".cxx",
+                                                      ".hpp", ".hh", ".hxx")):
+                    full = os.path.join(root, fn)
+                    rel = os.path.relpath(full, tmp).replace(os.sep, "/")
+                    prs[rel] = adapter.parse_file(full, tmp, config)
+
+        wb = WarningCollector()
+        gb = GraphBuilder(wb, registry=registry, config=config)
+        return gb.build(prs), wb
+
+
+@tree_sitter_available
+class TestCppApproachAMemberCall:
+    """PR #7 fix #4: Approach A member-call wiring."""
+
+    def test_member_call_resolved_via_receiver_type(self):
+        source = """\
+class Player {
+public:
+    void update() { }
+};
+int main() {
+    Player player;
+    player.update();
+    return 0;
+}
+"""
+        visitor = _parse_source(source)
+        call_edges = [
+            r for r in visitor.references
+            if r.edge_type == "call" and "update" in r.target_name
+        ]
+        assert len(call_edges) >= 1, call_edges
+        assert all("Player.update" in r.target_name for r in call_edges), call_edges
+
+    def test_unknown_receiver_falls_back_to_name_based(self):
+        source = """\
+class Unknown { };
+int main() {
+    Unknown u;
+    u.bogus();
+    return 0;
+}
+"""
+        visitor = _parse_source(source)
+        refs = visitor.references
+        assert all(r.edge_type != "call" or "bogus" not in r.target_name
+                   or r.target_name.endswith(".bogus") for r in refs)
+
+
+@tree_sitter_available
+class TestCppOutOfClassMethods:
+    """PR #7 fix #5: out-of-class member definitions."""
+
+    def test_out_of_class_method_attached_to_class(self):
+        source = """\
+class A { public: void f(); };
+void A::f() { }
+"""
+        visitor = _parse_source(source, module_qname="mod")
+        methods = [n for n in visitor.nodes if n.node_type == "method"]
+        qnames = [m.qualified_name for m in methods]
+        assert "mod.A.f" in qnames, qnames
+        assert all("::" not in q for q in qnames), qnames
+
+    def test_nested_class_method(self):
+        source = """\
+class Outer { class Inner { void g(); }; };
+void Outer::Inner::g() { }
+"""
+        visitor = _parse_source(source, module_qname="mod")
+        methods = [n for n in visitor.nodes if n.node_type == "method"]
+        qnames = [m.qualified_name for m in methods]
+        assert "mod.Outer.Inner.g" in qnames, qnames

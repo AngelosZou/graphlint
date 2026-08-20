@@ -67,6 +67,16 @@ class CppAdapter(LanguageAdapter):
     def special_names(self) -> frozenset[str]:
         return _CPP_SPECIAL_NAMES
 
+    def is_special_name(self, name: str) -> bool:
+        """C++ implicitly-invoked names: the explicit set plus destructors
+        (``~Name``) and operator overloads (``operator+``, ``operator==`` …),
+        which the language calls without an explicit call site."""
+        if name in _CPP_SPECIAL_NAMES:
+            return True
+        if name.startswith("~") or name.startswith("operator"):
+            return True
+        return False
+
     @property
     def default_excludes(self) -> frozenset[str]:
         return _CPP_DEFAULT_EXCLUDES
