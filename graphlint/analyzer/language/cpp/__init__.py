@@ -28,7 +28,7 @@ class CppAdapter(LanguageAdapter):
     """Language adapter for C++ (``.cpp``, ``.hpp``, etc.) files.
 
     Requires ``tree-sitter`` + ``tree-sitter-cpp``.
-    Install: ``pip install graphlint[cpp]``.
+    Install: ``pip install graphlint[c]``.
     """
 
     language_name = "cpp"

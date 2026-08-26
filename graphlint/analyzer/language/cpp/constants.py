@@ -254,7 +254,7 @@ def _get_cpp_language() -> Any:
         if not _TREE_SITTER_CPP_AVAILABLE:
             raise ImportError(
                 "tree-sitter-cpp is not installed. "
-                "Install with: pip install graphlint[cpp]"
+                "Install with: pip install graphlint[c]"
             )
         import tree_sitter
         import tree_sitter_cpp

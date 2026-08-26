@@ -25,15 +25,13 @@ AI Agent 在快速生成代码的同时，也会留下大量冗余和死代码�
 ```bash
 pip install graphlint[rust]        # 引入 tree-sitter 和 tree-sitter-rust
 pip install graphlint[csharp]      # 引入 tree-sitter 和 tree-sitter-c-sharp
-pip install graphlint[c]           # 引入 tree-sitter 和 tree-sitter-c
-pip install graphlint[cpp]         # 引入 tree-sitter 和 tree-sitter-cpp
+pip install graphlint[c]           # 引入 tree-sitter + tree-sitter-c + tree-sitter-cpp（C/C++）
 pip install graphlint[typescript]  # 引入 tree-sitter + tree-sitter-typescript + tree-sitter-javascript
 ```
 
 > C/C++ 由一个**统一的 C/C++ 分析器**分析，负责 `.c .h .cpp .cc .cxx .hpp .hh .hxx`。
 > 它使用 `tree-sitter-c` 解析 C 文件、`tree-sitter-cpp` 解析 C++ 文件，并依据「包含该头文件的
-> 翻译单元的语言」来路由 `.h` —— 与 C/C++ 编译器一致。混合项目按需安装
-> `graphlint[cpp]`（和/或）`graphlint[c]`。
+> 翻译单元的语言」来路由 `.h` —— 与 C/C++ 编译器一致。一个 `graphlint[c]` 即可同时安装两种语法。
 
 ## 特性
 

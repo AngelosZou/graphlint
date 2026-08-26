@@ -57,12 +57,16 @@ typescript = [
     "tree-sitter-typescript>=0.23,<0.25",
     "tree-sitter-javascript>=0.23,<0.25",
 ]
+# ``[c]`` installs the whole C/C++ family (tree-sitter-c for C and
+# tree-sitter-cpp for C++); ``[cpp]`` is a compatibility alias for the same set.
 c = [
     "tree-sitter>=0.22,<0.27",
     "tree-sitter-c>=0.21,<0.25",
+    "tree-sitter-cpp>=0.22,<0.24",
 ]
 cpp = [
     "tree-sitter>=0.22,<0.27",
+    "tree-sitter-c>=0.21,<0.25",
     "tree-sitter-cpp>=0.22,<0.24",
 ]
 

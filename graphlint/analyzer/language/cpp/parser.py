@@ -54,7 +54,7 @@ class CppSourceParser:
                 _make_warning(
                     "missing_dependency", "error",
                     "tree-sitter-cpp is not installed. "
-                    "Install with: pip install graphlint[cpp]",
+                    "Install with: pip install graphlint[c]",
                     file_path,
                 )
             )

@@ -44,18 +44,16 @@ _OPTIONAL_LANG_SUPPORT: dict[str, tuple[str, str]] = {
     ".jsx": ("JavaScript/React", "pip install graphlint[typescript]"),
     ".mjs": ("JavaScript", "pip install graphlint[typescript]"),
     ".cjs": ("JavaScript", "pip install graphlint[typescript]"),
-    ".c": ("C", "pip install graphlint[c]"),
-    # ``.h`` is ambiguous: it routes to the C or C++ adapter by content
-    # (see registry.sniff_header_language), so the hint must offer either
-    # grammar — a header-only project may need ``[cpp]`` even though ``.h``
-    # is nominally owned by the C adapter.
-    ".h": ("C/C++", "pip install graphlint[c] graphlint[cpp]"),
-    ".cpp": ("C++", "pip install graphlint[cpp]"),
-    ".cc": ("C++", "pip install graphlint[cpp]"),
-    ".cxx": ("C++", "pip install graphlint[cpp]"),
-    ".hpp": ("C++", "pip install graphlint[cpp]"),
-    ".hh": ("C++", "pip install graphlint[cpp]"),
-    ".hxx": ("C++", "pip install graphlint[cpp]"),
+    ".c": ("C/C++", "pip install graphlint[c]"),
+    # ``.h`` routes to the C or C++ grammar by the including TU; the unified
+    # C/C++ extra covers both, so the hint is the same single install.
+    ".h": ("C/C++", "pip install graphlint[c]"),
+    ".cpp": ("C/C++", "pip install graphlint[c]"),
+    ".cc": ("C/C++", "pip install graphlint[c]"),
+    ".cxx": ("C/C++", "pip install graphlint[c]"),
+    ".hpp": ("C/C++", "pip install graphlint[c]"),
+    ".hh": ("C/C++", "pip install graphlint[c]"),
+    ".hxx": ("C/C++", "pip install graphlint[c]"),
 }
 
 # Languages already hinted at in this process (dedupe).

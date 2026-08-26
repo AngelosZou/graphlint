@@ -25,16 +25,15 @@ Install optional language support:
 ```bash
 pip install graphlint[rust]        # adds tree-sitter and tree-sitter-rust
 pip install graphlint[csharp]      # adds tree-sitter and tree-sitter-c-sharp
-pip install graphlint[c]           # adds tree-sitter and tree-sitter-c (C grammar)
-pip install graphlint[cpp]         # adds tree-sitter and tree-sitter-cpp (C++ grammar)
+pip install graphlint[c]           # adds tree-sitter + tree-sitter-c + tree-sitter-cpp (C/C++)
 pip install graphlint[typescript]  # adds tree-sitter + tree-sitter-typescript + tree-sitter-javascript
 ```
 
 > C/C++ are analysed by a **single unified C/C++ analyzer** that owns `.c .h .cpp
 > .cc .cxx .hpp .hh .hxx`. It uses `tree-sitter-c` for C files, `tree-sitter-cpp`
 > for C++ files, and routes a `.h` by the language of the TU(s) that include it
-> — exactly as a C/C++ compiler does. Install `graphlint[cpp]` (and/or
-> `graphlint[c]`) as needed for a mixed project.
+> — exactly as a C/C++ compiler does. One extra, `graphlint[c]`, installs both
+> grammars.
 
 ## Features
 
@@ -70,11 +69,10 @@ For C# support (`.cs` files), install the optional `tree-sitter` dependencies:
 pip install graphlint[csharp]
 ```
 
-For C/C++ support (`.c` `.h` `.cpp` `.cc` `.cxx` `.hpp` `.hh` `.hxx` files), install the optional `tree-sitter` dependencies — `graphlint[cpp]` for the C++ grammar and `graphlint[c]` for the C grammar (both for a mixed C/C++ project):
+For C/C++ support (`.c` `.h` `.cpp` `.cc` `.cxx` `.hpp` `.hh` `.hxx` files), install the optional `tree-sitter` dependencies (one extra covers both grammars):
 
 ```bash
-pip install graphlint[cpp]   # tree-sitter-cpp (C++)
-pip install graphlint[c]     # tree-sitter-c (C)
+pip install graphlint[c]   # adds tree-sitter + tree-sitter-c + tree-sitter-cpp (C/C++)
 ```
 
 For TypeScript/JavaScript support (`.ts` `.tsx` `.js` `.jsx` `.mts` `.cts` `.mjs` `.cjs` files), install the optional `tree-sitter` dependencies:
