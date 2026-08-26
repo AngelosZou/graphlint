@@ -22,7 +22,23 @@ All notable changes to this project will be documented in this file.
 - Cross-TU member calls (`Service s; s.run();` with `Service` declared only
   in a header) now resolve to a **type-aware call edge** (e.g. to
   `svc.Service.run`) instead of an ambiguous bare `read run` edge, via a
-  project-wide class→method/inheritance index.
+  project-wide class→method/inheritance index. Namespace- and
+  template-qualified receiver types (`geo::Circle`, `Box<int>`) also resolve.
+- C++ constructor special-name recognition is restored after the unified
+  adapter (the `language_name == "cpp"` gate no longer matched the unified
+  `"c/cpp"`); constructors are special again.
+- Pure-virtual (`= 0`) interface methods are modelled as method nodes and
+  exempt from dead-code (dispatched by the vtable), so a call through a
+  base-class pointer resolves to them.
+- Method-body reads of unqualified members (``radius_`` in ``area()``) and
+  locals used as a return value or an ``operator<<`` operand are now captured,
+  so they are no longer mis-flagged ``write-only``.
+- Method names for pointer-return / ``override`` declarators
+  (``const char* name()``) are fixed — they previously took the whole
+  declarator text as the name.
+- ``.h`` routing uses the full project's include graph (not just the changed
+  batch), so incremental builds can't mis-route a header whose including TU is
+  unchanged.
 - A header-only project now gets an install hint covering both the C and C++
   grammars.
 

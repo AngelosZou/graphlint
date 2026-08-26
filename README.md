@@ -17,7 +17,7 @@ AI agents generate code rapidly, leaving behind dead and redundant code that pol
 | **Python** (`.py`) | Built-in | `ast` (stdlib) | Decorators, type annotations, dynamic imports, framework-aware entry detection |
 | **Rust** (`.rs`) | Built-in (opt-in deps) | `tree-sitter` | Attribute macros, traits, `pub` visibility, `macro_rules!` |
 | **C#** (`.cs`) | Built-in (opt-in deps) | `tree-sitter` | Partial classes, properties/indexers/events, attributes, `.csproj` awareness, test framework entries |
-| **C** (`.c` `.h`) | Built-in (opt-in deps) | `tree-sitter` | struct/union/enum members, typedefs, macros, `#include` tracking, per-TU `static` linkage, library entry mode |
+| **C / C++** (`.c` `.h` `.cpp` `.cc` `.cxx` `.hpp` `.hh` `.hxx`) | Built-in (opt-in deps) | `tree-sitter` | struct/union/enum members, typedefs, macros, `#include` tracking, per-TU `static` linkage, C library entry mode, C++ classes/namespaces/templates, cross-TU member-call resolution |
 | **TypeScript / JavaScript** (`.ts` `.tsx` `.js` `.jsx` `.mts` `.cts` `.mjs` `.cjs`) | Built-in (opt-in deps) | `tree-sitter` | JSX/React components, Next.js pages, NestJS decorators, Jest/Vitest tests, import/export analysis |
 
 Install optional language support:
@@ -40,10 +40,10 @@ pip install graphlint[typescript]  # adds tree-sitter + tree-sitter-typescript +
 
 - **Dead code detection** — finds components unreachable from any entry point via graph traversal
 - **Multi-language support** — Python, Rust, C#, C/C++ (unified), TypeScript, and JavaScript backends via a language adapter abstraction; Python uses stdlib `ast`, the others use `tree-sitter`
-- **Language-specific awareness** — Python decorators, Rust attribute macros (`#[tokio::main]`, `#[test]`), C# attributes (`[Fact]`, `[HttpGet]`), C translation-unit scope (`static` internal linkage, per-TU header `static`s) and library entry mode, TS/JS JSX elements and ES module imports/exports, trait implementations, `pub`/`public` visibility, partial classes, and more
+- **Language-specific awareness** — Python decorators, Rust attribute macros (`#[tokio::main]`, `#[test]`), C# attributes (`[Fact]`, `[HttpGet]`), C translation-unit scope (`static` internal linkage, per-TU header `static`s) and library entry mode, C++ classes/namespaces/templates, `enum class` members, and cross-TU member-call resolution, TS/JS JSX elements and ES module imports/exports, trait implementations, `pub`/`public` visibility, partial classes, and more
 - **AST/CST parsing** — extracts functions, methods, structs, enums, traits, impls, macros, classes, properties, indexers, events, variables, and fields; aware of type annotations, destructured variables, and generics
 - **Dependency graph** — builds directed edges: `read`, `write`, `call`, `inherit`, `decorate`
-- **Entry point detection** — 37 built-in rules covering Python frameworks (FastAPI, Flask, Django, Click, Typer, Celery, pytest), Rust conventions (main, async runtimes, WASM, proc macros, FFI, tests, pub API), .NET conventions (console, xUnit, NUnit, MSTest, Web API, Minimal API, Generic Host, WinForms, WPF), C conventions (main/WinMain/wWinMain/DllMain/_tmain, test files, library mode via external-linkage symbols), and TS/JS conventions (main, module index, CLI/server listen, Next.js pages, NestJS decorators, React JSX, Jest/Vitest tests) plus custom rules
+- **Entry point detection** — built-in rules covering Python frameworks (FastAPI, Flask, Django, Click, Typer, Celery, pytest), Rust conventions (main, async runtimes, WASM, proc macros, FFI, tests, pub API), .NET conventions (console, xUnit, NUnit, MSTest, Web API, Minimal API, Generic Host, WinForms, WPF), C/C++ conventions (`main`/`WinMain`/`wWinMain`/`DllMain`/`_tmain` for C and a free `main` for C++, `class_definition:` patterns, `test_file` by convention, and C library mode via external-linkage symbols), and TS/JS conventions (main, module index, CLI/server listen, Next.js pages, NestJS decorators, React JSX, Jest/Vitest tests) plus custom rules
 - **Configurable entry templates** — add custom entry rules via `ast_pattern` prefixes including `function_call:`, `function_def:`, `decorator:`, `class_definition:` (C#), `file_match:`, `file_is_program` (C#), `visibility:pub` (Rust), `visibility:public` (C#), `trait_impl:` (Rust), `macro_def:` (Rust), `jsx_element:` (TypeScript), `export:` (TypeScript), and more
 - **`--public-as-entry` flag** — treat all public items (Rust `pub`, C# `public`, C external-linkage symbols) as entry points for library analysis
 - **Warning detection** — 11 warning types including circular references, unused imports, write-only variables, and more
@@ -70,10 +70,11 @@ For C# support (`.cs` files), install the optional `tree-sitter` dependencies:
 pip install graphlint[csharp]
 ```
 
-For C support (`.c` / `.h` files), install the optional `tree-sitter` dependencies:
+For C/C++ support (`.c` `.h` `.cpp` `.cc` `.cxx` `.hpp` `.hh` `.hxx` files), install the optional `tree-sitter` dependencies — `graphlint[cpp]` for the C++ grammar and `graphlint[c]` for the C grammar (both for a mixed C/C++ project):
 
 ```bash
-pip install graphlint[c]
+pip install graphlint[cpp]   # tree-sitter-cpp (C++)
+pip install graphlint[c]     # tree-sitter-c (C)
 ```
 
 For TypeScript/JavaScript support (`.ts` `.tsx` `.js` `.jsx` `.mts` `.cts` `.mjs` `.cjs` files), install the optional `tree-sitter` dependencies:
@@ -257,6 +258,7 @@ Full documentation is available in the [docs/](docs/) directory:
 - **Python dynamic imports** — due to Python's dynamic import mechanisms (`importlib`, `getattr`, metaclasses, etc.), the default entry templates may produce false positives in codebases that rely heavily on runtime dispatch. Users should tune the `entry_rules` configuration to match their project's conventions.
 - **Rust macro expansion** — tree-sitter parses unexpanded source; procedural macros and `macro_rules!` bodies appear as opaque token trees. Some macro-generated call paths may be missed. `#[derive]` attributes are partially recognized via implicit `inherit` edges.
 - **C# partial classes & reflection** — tree-sitter parses each `.cs` file independently; partial class fragments are merged into a single logical node via `part_of` edges, but members called only through reflection (`Activator.CreateInstance`, DI container registration) may be missed, similar to Python's dynamic import limitations.
+- **C/C++ static analysis limits** — member calls resolve type-aware across translation units (via a project-wide class→method index), but there is **no virtual/overload/dynamic dispatch**: a call through a `Base*` pointer resolves statically to the base's method, so a derived override reached only that way may be reported dead. The preprocessor is treated as pure AST (`#if` is never evaluated, macros are not expanded); function-pointer indirect call targets are not traced; a `static` symbol in a header is per-TU. A pure-virtual (`= 0`) interface method is exempt from dead-code (dispatched by the vtable). C function parameters are not modelled as nodes, so a parameter named like a caller's local can resolve by flat name.
 - **`--public-as-entry` scope** — this flag applies to languages with `public` visibility declarations (Rust `pub`, C# `public`). It has no effect on Python files. Toggling this flag triggers a full re-index. For long-term library analysis, prefer enabling the `rust_pub_api` entry rule via `graphlint config` to persist the setting.
 - **Large codebase build time** — on a large codebase with 700+ `.py` files, 1,000+ classes, and 14,000+ functions, a full rebuild takes approximately 200 seconds (actual performance depends on hardware). Small projects (~60 files) complete in ~1 second. This cost is one-time, after the initial full scan, subsequent queries use incremental updates.
 

@@ -17,7 +17,7 @@ AI Agent 在快速生成代码的同时，也会留下大量冗余和死代码�
 | **Python** (`.py`) | 内置 | `ast`（标准库） | 装饰器、类型注解、动态导入、框架感知入口检测 |
 | **Rust** (`.rs`) | 内置（可选依赖） | `tree-sitter` | 属性宏、Trait、`pub` 可见性、`macro_rules!` |
 | **C#** (`.cs`) | 内置（可选依赖） | `tree-sitter` | 分部类、属性/索引器/事件、特性（Attribute）、`.csproj` 感知、测试框架入口 |
-| **C**（`.c` `.h`） | 内置（可选依赖） | `tree-sitter` | struct/union/enum 成员、typedef、宏、`#include` 跟踪、翻译单元级 `static` 链接、库入口模式 |
+| **C / C++**（`.c` `.h` `.cpp` `.cc` `.cxx` `.hpp` `.hh` `.hxx`） | 内置（可选依赖） | `tree-sitter` | struct/union/enum 成员、typedef、宏、`#include` 跟踪、翻译单元级 `static` 链接、C 库入口模式、C++ 类/命名空间/模板、`enum class` 成员、跨翻译单元成员调用解析 |
 | **TypeScript / JavaScript**（`.ts` `.tsx` `.js` `.jsx` `.mts` `.cts` `.mjs` `.cjs`） | 内置（可选依赖） | `tree-sitter` | JSX/React 组件、Next.js 页面、NestJS 装饰器、Jest/Vitest 测试、import/export 分析 |
 
 安装可选语言支持：
@@ -26,17 +26,23 @@ AI Agent 在快速生成代码的同时，也会留下大量冗余和死代码�
 pip install graphlint[rust]        # 引入 tree-sitter 和 tree-sitter-rust
 pip install graphlint[csharp]      # 引入 tree-sitter 和 tree-sitter-c-sharp
 pip install graphlint[c]           # 引入 tree-sitter 和 tree-sitter-c
+pip install graphlint[cpp]         # 引入 tree-sitter 和 tree-sitter-cpp
 pip install graphlint[typescript]  # 引入 tree-sitter + tree-sitter-typescript + tree-sitter-javascript
 ```
+
+> C/C++ 由一个**统一的 C/C++ 分析器**分析，负责 `.c .h .cpp .cc .cxx .hpp .hh .hxx`。
+> 它使用 `tree-sitter-c` 解析 C 文件、`tree-sitter-cpp` 解析 C++ 文件，并依据「包含该头文件的
+> 翻译单元的语言」来路由 `.h` —— 与 C/C++ 编译器一致。混合项目按需安装
+> `graphlint[cpp]`（和/或）`graphlint[c]`。
 
 ## 特性
 
 - **死代码检测** — 通过图遍历找出所有入口点不可达的组件
-- **多语言支持** — Python、Rust、C#、C、TypeScript 和 JavaScript 后端，通过语言适配器抽象层实现；Python 使用标准库 `ast`，其余语言使用 `tree-sitter`
-- **语言专有特性感知** — Python 装饰器、Rust 属性宏（`#[tokio::main]`、`#[test]`）、C# 特性（`[Fact]`、`[HttpGet]`）、C 的翻译单元作用域（`static` 内部链接、头文件 per-TU `static`）与库入口模式、TS/JS 的 JSX 元素与 ES 模块 import/export、Trait 实现、`pub`/`public` 可见性、分部类等
+- **多语言支持** — Python、Rust、C#、C/C++（统一）、TypeScript 和 JavaScript 后端，通过语言适配器抽象层实现；Python 使用标准库 `ast`，其余语言使用 `tree-sitter`
+- **语言专有特性感知** — Python 装饰器、Rust 属性宏（`#[tokio::main]`、`#[test]`）、C# 特性（`[Fact]`、`[HttpGet]`）、C 的翻译单元作用域（`static` 内部链接、头文件 per-TU `static`）与库入口模式、C++ 类/命名空间/模板、`enum class` 成员与跨翻译单元成员调用解析、TS/JS 的 JSX 元素与 ES 模块 import/export、Trait 实现、`pub`/`public` 可见性、分部类等
 - **AST/CST 解析** — 提取函数、方法、结构体、枚举、Trait、实现块、宏、类、属性、索引器、事件、变量、字段；感知类型声明、泛型，自动处理循环解包与解构等变量绑定
 - **依赖图构建** — 有向边：`read`、`write`、`call`、`inherit`、`decorate`
-- **入口点检测** — 37 种内置规则，覆盖 Python 框架（FastAPI、Flask、Django、Click、Typer、Celery、pytest）、Rust 惯例（main、异步运行时、WASM、proc 宏、FFI、测试、pub API）、.NET 惯例（控制台、xUnit、NUnit、MSTest、Web API、Minimal API、Generic Host、WinForms、WPF）、C 惯例（main/WinMain/wWinMain/DllMain/_tmain、测试文件、基于外部链接符号的库模式）和 TS/JS 惯例（main、模块 index、CLI/服务器 listen、Next.js 页面、NestJS 装饰器、React JSX、Jest/Vitest 测试）及自定义规则
+- **入口点检测** — 内置规则覆盖 Python 框架（FastAPI、Flask、Django、Click、Typer、Celery、pytest）、Rust 惯例（main、异步运行时、WASM、proc 宏、FFI、测试、pub API）、.NET 惯例（控制台、xUnit、NUnit、MSTest、Web API、Minimal API、Generic Host、WinForms、WPF）、C/C++ 惯例（C 的 main/WinMain/wWinMain/DllMain/_tmain 与 C++ 的自由 `main`、`class_definition:` 模式、测试文件、基于外部链接符号的 C 库模式）和 TS/JS 惯例（main、模块 index、CLI/服务器 listen、Next.js 页面、NestJS 装饰器、React JSX、Jest/Vitest 测试）及自定义规则
 - **可配置入口模板** — 通过 `ast_pattern` 前缀添加自定义入口规则，包括 `function_call:`、`function_def:`、`decorator:`、`class_definition:`（C#）、`file_match:`、`file_is_program`（C#）、`visibility:pub`（Rust）、`visibility:public`（C#）、`trait_impl:`（Rust）、`macro_def:`（Rust）、`jsx_element:`（TypeScript）、`export:`（TypeScript）等
 - **`--public-as-entry` 标志** — 将所有公开项（Rust `pub`、C# `public`、C 外部链接符号）视为入口点，用于库代码分析
 - **警告检测** — 11 种警告类型：循环引用、未使用 import、只写变量、死代码等
@@ -250,6 +256,7 @@ Graphlint 将配置存储在分析目录下的 `.graphlint/config.json` 中。�
 - **Python 动态导入** — 由于 Python 的动态导入机制（`importlib`、`getattr`、元类等），默认入口模板在重度依赖运行时调度的代码库中可能产生假阳性。用户应根据项目约定调整 `entry_rules` 配置。
 - **Rust 宏展开** — tree-sitter 解析未展开的源代码；过程宏和 `macro_rules!` 体显示为不透明标记树。部分宏生成的调用路径可能遗漏。`#[derive]` 属性通过隐式 `inherit` 边部分识别。
 - **C# 分部类与反射** — tree-sitter 逐个解析 `.cs` 文件；分部类片段通过 `part_of` 边合并为单一逻辑节点，但仅通过反射（`Activator.CreateInstance`、DI 容器注册）调用的成员可能被遗漏，与 Python 动态导入的局限类似。
+- **C/C++ 静态分析限制** — 成员调用可在跨翻译单元内按类型感知解析（借助项目级类→方法索引），但**没有虚函数/重载/动态分发**：通过 `Base*` 指针的调用会静态解析到基类方法，因此仅以该方式触达的派生类覆盖方法可能被判为死代码。预处理器按纯 AST 处理（`#if` 不求值、宏不展开）；函数指针间接调用目标不追踪；头文件中的 `static` 符号按翻译单元处理。纯虚（`= 0`）接口方法因由虚表分发而免于死代码判定。C 函数参数不作为节点建模，因此与调用方局部变量同名的形参可能按平名解析。
 - **`--public-as-entry` 适用范围** — 此标志适用于具有 `public` 可见性声明的语言（Rust `pub`、C# `public`），对 Python 文件无效。开关此标志会触发全量重新索引。对于长期库代码分析，建议通过 `graphlint config` 启用 `rust_pub_api` 入口规则以持久化设置。
 - **大规模代码库构建耗时** — 在包含 700+ 个 Python 文件、1,000+ 个类定义和 14,000+ 个函数的大规模代码库上，完整重构需要约 200 秒（实际时间与设备性能有关）。小型项目（~60 个文件）约 1 秒完成。首次全量扫描后，后续查询采用增量更新，仅重新计算变更文件。
 

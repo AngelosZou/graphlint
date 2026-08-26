@@ -1,6 +1,6 @@
 # Entry Point Detection Reference
 
-graphlint has 28 built-in entry point detection rules (10 for Python, 8 for Rust, 10 for C#) and supports custom rule extension. On first `graphlint build`, these rules are written as a template into `.graphlint/config.json`; thereafter the config file is the single source of truth — you may add, remove, or modify rules via `graphlint config` or by editing the file directly.
+graphlint has built-in entry point detection rules for every supported language (Python, Rust, C#, C/C++, and TypeScript/JavaScript) and supports custom rule extension. On first `graphlint build`, these rules are written as a template into `.graphlint/config.json`; thereafter the config file is the single source of truth — you may add, remove, or modify rules via `graphlint config` or by editing the file directly.
 
 ## Built-in Rules
 

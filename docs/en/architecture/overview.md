@@ -1,6 +1,6 @@
 # Architecture Overview
 
-graphlint is positioned as a dead code detection tool for AI-generated codebases (Python, Rust, C#, and more in the future). It analyzes the dependency graph to find components unreachable from all entry points (dead code), helping agents clean redundant code and reduce context pollution and attention dilution.
+graphlint is positioned as a dead code detection tool for AI-generated codebases (Python, Rust, C#, C/C++, TypeScript, and JavaScript). It analyzes the dependency graph to find components unreachable from all entry points (dead code), helping agents clean redundant code and reduce context pollution and attention dilution.
 
 ## Overall Architecture
 
@@ -91,10 +91,10 @@ Command-line interface built on `argparse`:
 ### 4. Analysis Engine Layer
 
 - **`LanguageRegistry`** (`graphlint/analyzer/language/registry.py`) — Language adapter registry, routes files to backends by extension, laying the foundation for future multi-language support
-- **`LanguageAdapter`** (`graphlint/analyzer/language/base.py`) — Abstract base class for language backends, defining unified interfaces for parsing, entry detection, node matching, etc.; implementations live in `language/python/`, `language/rust/`, and `language/csharp/`
+- **`LanguageAdapter`** (`graphlint/analyzer/language/base.py`) — Abstract base class for language backends, defining unified interfaces for parsing, entry detection, node matching, etc.; implementations live in `language/python/`, `language/rust/`, `language/csharp/`, `language/typescript/`, and `language/c/` / `language/cpp/`. C and C++ are *surfaced through one unified `language/cfamily/` adapter* that owns every C-family extension and routes each file to the C or C++ grammar by the translation unit's language (a `.h` is routed by the TU(s) that include it, exactly as a C/C++ compiler does).
 - **`SourceParser`** (`graphlint/analyzer/language/python/parser.py`) — Recursively scans directories, performs AST parsing on each `.py` file
 - **`GraphBuilder`** (`graphlint/analyzer/graph.py`) — Builds the dependency graph from parse results, including nodes, edges, and connected component analysis. Edges are built in parallel per file from structured `ReferenceInfo` collected during AST parsing — no second AST walk is needed. C# partial classes are merged into virtual logical nodes (`part_of` edges) so fragments share reachability.
-- **`EntryPointDetector`** (`graphlint/analyzer/language/python/entry.py`) — 28 built-in entry detection rules (10 Python + 8 Rust + 10 C#) + custom rule support
+- **`EntryPointDetector`** (`graphlint/analyzer/language/python/entry.py`) — built-in entry detection rules for each language (Python, Rust, C#, C/C++, TS/JS conventions, plus C library mode) + custom rule support
 - **`WarningCollector`** (`graphlint/analyzer/warnings.py`) — Warning collection, deduplication, filtering, and statistics
 - **`ImportAnalyzer`** (`graphlint/analyzer/language/python/imports.py`) — Import statement parsing and unused import detection
 
@@ -184,7 +184,7 @@ Open SQLite database
 build() call
     │
     ▼
-Scan directory, collect source files (.py / .rs / .cs)
+Scan directory, collect source files (.py / .rs / .cs / .c .h .cpp .hpp / .ts .tsx .js ...)
     │
     ├── Incremental mode? ──→ Compute SHA256 → Compare with cache → Process only changed files
     │
