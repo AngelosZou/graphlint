@@ -2,6 +2,30 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### Changed
+- **C and C++ are now a single unified analyzer** owning `.c .h .cpp .cc .cxx
+  .hpp .hh .hxx`. Routing is compiler-faithful: `.c` uses `tree-sitter-c`, the
+  C++ suffixes use `tree-sitter-cpp`, and a `.h` is routed by the language of
+  the TU(s) that include it — never by content-sniffing. The previous
+  two-adapter split plus `.h` content-sniff heuristic is removed, so a mixed
+  C/C++ project is analysed as one graph with no silent `.h` mis-routing.
+
+### Fixed (C/C++)
+- `.h` content-sniffing no longer mis-routes a plain-C header to the C++
+  adapter: string/char literals are stripped before matching, and the
+  ``operator`` marker (a legal C identifier) is no longer treated as a C++
+  signal.
+- C++ `enum class` / `enum` members are now modelled as `enum_member` nodes
+  (previously only the enum node was emitted), matching the C backend.
+- Cross-TU member calls (`Service s; s.run();` with `Service` declared only
+  in a header) now resolve to a **type-aware call edge** (e.g. to
+  `svc.Service.run`) instead of an ambiguous bare `read run` edge, via a
+  project-wide class→method/inheritance index.
+- A header-only project now gets an install hint covering both the C and C++
+  grammars.
+
 ## [0.6.0] - 2026-08-18
 
 ### Added

@@ -188,7 +188,7 @@ class IncrementalIndexer:
             with self.db.transaction():
                 for t in ("edges", "nodes", "imports", "warnings", "graph_snapshots", "entries", "files"):
                     self.db.execute(f"DELETE FROM {t}")
-            all_results = self._parse_batch(disk_files)
+            all_results = self._parse_batch(disk_files, disk_files)
             for fp, pr in all_results:
                 pr_map[fp] = pr
                 for w in pr.warnings:
@@ -206,7 +206,7 @@ class IncrementalIndexer:
         else:
             # ------ Phase 1-2: Parse changed / load unchanged ----------------
             if changed:
-                for fp, pr in self._parse_batch(changed):
+                for fp, pr in self._parse_batch(changed, disk_files):
                     if fp in hash_cache:
                         pr.hash = hash_cache[fp]
                     pr_map[fp] = pr
@@ -308,7 +308,9 @@ class IncrementalIndexer:
 
     # -- Parallel parsing -------------------------------------------------
 
-    def _parse_batch(self, fps: list[str]) -> list[tuple[str, ParseResult]]:
+    def _parse_batch(
+        self, fps: list[str], all_files: Optional[list[str]] = None
+    ) -> list[tuple[str, ParseResult]]:
         """Parse files in parallel using ProcessPoolExecutor.
 
         Routes each file to its language adapter's worker function
@@ -320,17 +322,23 @@ class IncrementalIndexer:
         # grammar from the language of the TU(s) that include it, exactly as a
         # C/C++ compiler does.  Resolve those flavours once here (main thread)
         # and hand them to the workers via the config so routing is a single,
-        # project-wide decision and is not re-computed per worker.
+        # project-wide decision and is not re-computed per worker.  The include
+        # graph is built over the *whole* project (not just this batch) so an
+        # incremental build can't mis-route a header whose including TU is
+        # unchanged.
         parse_config: dict[str, Any] = self.config
-        if self.registry and any(f.lower().endswith(".h") for f in fps):
-            from graphlint.analyzer.language.cfamily import resolve_header_flavors
+        if self.registry:
+            scan_source = all_files if all_files is not None else fps
+            if any(f.lower().endswith(".h") for f in scan_source):
+                from graphlint.analyzer.language.cfamily import resolve_header_flavors
 
-            all_paths = [os.path.join(self.root_dir, f) for f in fps]
-            header_flavors = resolve_header_flavors(all_paths)
-            parse_config = {
-                **self.config,
-                "_cfamily_header_flavors": header_flavors,
-            }
+                header_flavors = resolve_header_flavors(
+                    [os.path.join(self.root_dir, f) for f in scan_source]
+                )
+                parse_config = {
+                    **self.config,
+                    "_cfamily_header_flavors": header_flavors,
+                }
         with ProcessPoolExecutor(max_workers=workers) as ex:
             futs = {}
             for fp in fps:

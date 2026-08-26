@@ -25,14 +25,21 @@ Install optional language support:
 ```bash
 pip install graphlint[rust]        # adds tree-sitter and tree-sitter-rust
 pip install graphlint[csharp]      # adds tree-sitter and tree-sitter-c-sharp
-pip install graphlint[c]           # adds tree-sitter and tree-sitter-c
+pip install graphlint[c]           # adds tree-sitter and tree-sitter-c (C grammar)
+pip install graphlint[cpp]         # adds tree-sitter and tree-sitter-cpp (C++ grammar)
 pip install graphlint[typescript]  # adds tree-sitter + tree-sitter-typescript + tree-sitter-javascript
 ```
+
+> C/C++ are analysed by a **single unified C/C++ analyzer** that owns `.c .h .cpp
+> .cc .cxx .hpp .hh .hxx`. It uses `tree-sitter-c` for C files, `tree-sitter-cpp`
+> for C++ files, and routes a `.h` by the language of the TU(s) that include it
+> — exactly as a C/C++ compiler does. Install `graphlint[cpp]` (and/or
+> `graphlint[c]`) as needed for a mixed project.
 
 ## Features
 
 - **Dead code detection** — finds components unreachable from any entry point via graph traversal
-- **Multi-language support** — Python, Rust, C#, C, TypeScript, and JavaScript backends via a language adapter abstraction; Python uses stdlib `ast`, the others use `tree-sitter`
+- **Multi-language support** — Python, Rust, C#, C/C++ (unified), TypeScript, and JavaScript backends via a language adapter abstraction; Python uses stdlib `ast`, the others use `tree-sitter`
 - **Language-specific awareness** — Python decorators, Rust attribute macros (`#[tokio::main]`, `#[test]`), C# attributes (`[Fact]`, `[HttpGet]`), C translation-unit scope (`static` internal linkage, per-TU header `static`s) and library entry mode, TS/JS JSX elements and ES module imports/exports, trait implementations, `pub`/`public` visibility, partial classes, and more
 - **AST/CST parsing** — extracts functions, methods, structs, enums, traits, impls, macros, classes, properties, indexers, events, variables, and fields; aware of type annotations, destructured variables, and generics
 - **Dependency graph** — builds directed edges: `read`, `write`, `call`, `inherit`, `decorate`
