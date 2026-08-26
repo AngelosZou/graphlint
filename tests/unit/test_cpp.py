@@ -146,6 +146,22 @@ private:
         assert len(field_nodes) == 1
         assert field_nodes[0].name == "health"
 
+    def test_pointer_return_method_qname(self):
+        """A method whose return type is a pointer (``const char* name()``) must
+        use the bare method name, not the whole declarator text — previously it
+        produced ``name() const override`` as the qname."""
+        source = """\
+class Circle : public Shape {
+public:
+    const char* name() const override { return "c"; }
+    double area() const override { return 1.0; }
+};
+"""
+        visitor = _parse_source(source)
+        methods = {n.name: n.qualified_name for n in visitor.nodes if n.node_type == "method"}
+        assert methods["name"] == "test.Circle.name", methods
+        assert methods["area"] == "test.Circle.area", methods
+
     def test_top_level_function(self):
         source = """\
 #include <iostream>

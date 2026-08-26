@@ -81,6 +81,35 @@ def _scoped_name(node: Any) -> str:
     return ""
 
 
+def _leaf_declarator_name(node: Any) -> Any:
+    """Return the innermost name node of a declarator chain.
+
+    A method returning a pointer (``const char* name()``) wraps the
+    ``function_declarator`` in a ``pointer_declarator``; source files that
+    read ``child_by_field_name("declarator")`` once would land on the
+    ``function_declarator`` and take its whole text (``name() const override``)
+    as the name.  Descend through pointer/reference/function/array declarators
+    to the leaf identifier (or a ``qualified_identifier`` for ``A::f``).
+    """
+    if node is None:
+        return None
+    if node.type in ("identifier", "field_identifier", "qualified_identifier"):
+        return node
+    if node.type in ("pointer_declarator", "reference_declarator",
+                     "function_declarator", "array_declarator",
+                     "parenthesized_declarator", "init_declarator"):
+        inner = node.child_by_field_name("declarator")
+        if inner is not None:
+            return _leaf_declarator_name(inner)
+        for child in node.children:
+            if child.type in ("identifier", "field_identifier", "qualified_identifier"):
+                return child
+            r = _leaf_declarator_name(child)
+            if r is not None:
+                return r
+    return node
+
+
 def _call_name_from_expr(expr_node: Any) -> str:
     """Extract the callable name from an expression node."""
     if expr_node.type == "identifier":
@@ -700,13 +729,7 @@ class CppVisitor:
         if declarator is None:
             return
 
-        name_node = declarator.child_by_field_name("declarator")
-        if name_node is None:
-            for child in declarator.children:
-                if child.type in ("identifier", "field_identifier",
-                                  "qualified_identifier"):
-                    name_node = child
-                    break
+        name_node = _leaf_declarator_name(declarator)
         if name_node is None:
             return
 
