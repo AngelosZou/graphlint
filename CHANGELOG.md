@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## [Unreleased]
+## [0.7.0] - 2026-08-26
 
 ### Added
 - C and C++ are now supported through a single unified analyzer.

@@ -185,7 +185,7 @@ print(result["value"])
 import graphlint
 
 # __version__ 为模块常量，可直接访问
-print(graphlint.__version__)  # "0.1.4"
+print(graphlint.__version__)  # "0.7.0"
 
 # query / build / configure 在首次访问时惰性导入
 result = graphlint.query()       # 首次调用时延迟导入
