@@ -1201,8 +1201,19 @@ class TestCppCrossFileHeader:
         config["_root_dir"] = tmp
         registry = _build_registry()
 
-        # Route each file through the registry so a ``.h`` is sniffed to the
-        # C++ adapter consistently with the rest of the graph pipeline.
+        # Compiler-faithful ``.h`` routing: the grammar is decided by the
+        # language of the TU(s) that include it, so inject the project-wide
+        # header flavour map before parsing (the indexer does this in the
+        # production path).
+        from graphlint.analyzer.language.cfamily import resolve_header_flavors
+
+        config["_cfamily_header_flavors"] = resolve_header_flavors(
+            [os.path.join(tmp, rel) for rel in files]
+        )
+
+        # Route each file through the registry (all C-family files resolve to
+        # the unified C/C++ adapter) and parse it with its compiler-faithful
+        # grammar.
         prs: dict[str, Any] = {}
         for root, _d, fns in os.walk(tmp):
             for fn in fns:
@@ -1390,6 +1401,12 @@ class TestCppCrossFileHeader:
         config["_root_dir"] = tmp
         registry = _build_registry()
 
+        from graphlint.analyzer.language.cfamily import resolve_header_flavors
+
+        config["_cfamily_header_flavors"] = resolve_header_flavors(
+            [os.path.join(tmp, rel) for rel in files]
+        )
+
         prs: dict[str, Any] = {}
         for rel, content in files.items():
             adapter = registry.adapter_for_file(os.path.join(tmp, rel))
@@ -1410,14 +1427,15 @@ class TestCppCrossFileHeader:
             # (1) module-qname routing for the header parse key.
             assert gb._module_qname_for("engine/Service.h") == "engine.Service"
 
-            # (2) adapter filter: parse results routed by content sniffing,
-            # not by the raw relative key resolved against CWD.
-            cpp = registry.adapter_for_file(os.path.join(tmp, "main.cpp"))
-            cpp_keys = gb._adapter_parse_results(cpp, prs, registry, tmp)
-            assert "engine/Service.h" in cpp_keys, cpp_keys
-            c_adapter = registry.adapter_for_file(os.path.join(tmp, "main.c"))
-            c_keys = gb._adapter_parse_results(c_adapter, prs, registry, tmp)
-            assert "engine/Service.h" not in c_keys, c_keys
+            # (2) adapter filter: every C-family file resolves to the single
+            # unified C/C++ adapter; the header's grammar is decided by its
+            # including TU (flavour map), never by CWD-relative sniffing.
+            family_adapter = registry.adapter_for_file(os.path.join(tmp, "main.cpp"))
+            keys = gb._adapter_parse_results(family_adapter, prs, registry, tmp)
+            assert "engine/Service.h" in keys, keys
+            assert registry.adapter_for_file(
+                os.path.join(tmp, "engine/Service.h")
+            ) is family_adapter
 
             br = gb.build(prs)
         finally:

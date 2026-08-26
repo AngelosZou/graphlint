@@ -72,10 +72,9 @@ def _build_registry() -> LanguageRegistry:
     _try_register_csharp(registry)
     # TypeScript adapter — silently skipped when tree-sitter-typescript is not installed
     _try_register_typescript(registry)
-    # C adapter — silently skipped when tree-sitter-c is not installed
-    _try_register_c(registry)
-    # C++ adapter — silently skipped when tree-sitter-cpp is not installed
-    _try_register_cpp(registry)
+    # C/C++ family — one unified adapter owning every C-family extension;
+    # silently skipped when neither tree-sitter-c nor tree-sitter-cpp is installed.
+    _try_register_cfamily(registry)
     return registry
 
 
@@ -88,15 +87,22 @@ def _try_register(registry: LanguageRegistry, adapter_cls: type) -> None:
     registry.register(adapter_cls())
 
 
-def _try_register_c(registry: LanguageRegistry) -> None:
-    """Register the C adapter if tree-sitter-c is available."""
+def _try_register_cfamily(registry: LanguageRegistry) -> None:
+    """Register the unified C/C++ adapter when a C-family grammar is present.
+
+    Requires ``tree-sitter-cpp`` (for C++) and/or ``tree-sitter-c`` (for C);
+    a missing grammar degrades per-file with a ``missing_dependency`` warning.
+    Neither present -> silently skip (hints handled by
+    :func:`_warn_missing_lang_support`).
+    """
     try:
-        from graphlint.analyzer.language.c import CAdapter
+        from graphlint.analyzer.language.cfamily import CFamilyAdapter
         from graphlint.analyzer.language.c.constants import _TREE_SITTER_C_AVAILABLE
+        from graphlint.analyzer.language.cpp.constants import _TREE_SITTER_CPP_AVAILABLE
     except ImportError:
         return
-    if _TREE_SITTER_C_AVAILABLE:
-        _try_register(registry, CAdapter)
+    if _TREE_SITTER_C_AVAILABLE or _TREE_SITTER_CPP_AVAILABLE:
+        _try_register(registry, CFamilyAdapter)
 
 
 def _try_register_rust(registry: LanguageRegistry) -> None:
@@ -169,14 +175,8 @@ def _try_register_typescript(registry: LanguageRegistry) -> None:
 
 
 def _try_register_cpp(registry: LanguageRegistry) -> None:
-    """Register the C++ adapter if tree-sitter-cpp is available."""
-    try:
-        from graphlint.analyzer.language.cpp import CppAdapter
-        from graphlint.analyzer.language.cpp.constants import _TREE_SITTER_CPP_AVAILABLE
-    except ImportError:
-        return
-    if _TREE_SITTER_CPP_AVAILABLE:
-        _try_register(registry, CppAdapter)
+    """Unused: C++ is covered by the unified C/C++ adapter."""
+    return
 
 
 # ---------------------------------------------------------------------------

@@ -12,8 +12,7 @@ import tempfile
 import pytest
 
 from graphlint.analyzer.language.registry import LanguageRegistry, sniff_header_language
-from graphlint.analyzer.language.c import CAdapter
-from graphlint.analyzer.language.cpp import CppAdapter
+from graphlint.analyzer.language.cfamily import CFamilyAdapter
 from graphlint.analyzer.language.cpp.constants import _TREE_SITTER_CPP_AVAILABLE
 
 
@@ -111,37 +110,34 @@ class TestSniff:
 
 
 class TestRegistryRouting:
+    """The unified C/C++ adapter owns every C-family extension, including the
+    ambiguous ``.h`` — whose *grammar* (C or C++) is decided by the language of
+    the TU that includes it, never by content-sniffing the header."""
+
     def _registry(self) -> LanguageRegistry:
         reg = LanguageRegistry()
-        reg.register(CAdapter())
-        reg.register(CppAdapter())
+        reg.register(CFamilyAdapter())
         return reg
 
-    def test_hpp_not_sniffed_by_ext(self):
-        """x.hpp routes by extension to the C++ adapter, never sniffed."""
+    def test_hpp_routes_to_cfamily(self):
+        """x.hpp routes by extension to the unified C/C++ adapter."""
         reg = self._registry()
-        path = _write_header("int plain_c_looking_thing(void);\n", suffix=".hpp")
-        adapter = reg.adapter_for_parsing(path)
+        adapter = reg.adapter_for_parsing("x.hpp")
         assert adapter is not None
-        assert adapter.language_name == "cpp"
+        assert adapter.language_name == "c/cpp"
 
-    @pytest.mark.skipif(not hasattr(CppAdapter, "language_name"), reason="no cpp")
-    def test_h_class_sniffed_cpp(self):
+    def test_h_routes_to_cfamily(self):
+        """``.h`` is owned by the unified adapter (not split by content)."""
         reg = self._registry()
-        path = _write_header("class F {\npublic:\n    void m() {}\n};\n")
-        adapter = reg.adapter_for_parsing(path)
-        assert adapter.language_name == "cpp"
+        adapter = reg.adapter_for_parsing("x.h")
+        assert adapter is not None
+        assert adapter.language_name == "c/cpp"
 
-    def test_h_plain_stays_c(self):
+    def test_all_c_family_exts_route_to_cfamily(self):
         reg = self._registry()
-        path = _write_header("#include <stdio.h>\nstruct S { int x; };\n")
-        adapter = reg.adapter_for_parsing(path)
-        assert adapter.language_name == "c"
-
-    def test_cpp_extension_unchanged(self):
-        reg = self._registry()
-        assert reg.adapter_for_parsing("x.cpp").language_name == "cpp"
-        assert reg.adapter_for_parsing("x.c").language_name == "c"
+        for path in ("x.c", "x.cpp", "x.cc", "x.cxx", "x.h", "x.hpp", "x.hh", "x.hxx"):
+            adapter = reg.adapter_for_parsing(path)
+            assert adapter is not None and adapter.language_name == "c/cpp", path
 
 
 # =============================================================================
@@ -154,14 +150,17 @@ class TestRegistryRouting:
     not _TREE_SITTER_CPP_AVAILABLE, reason="tree-sitter-cpp not installed"
 )
 class TestSniffParsesHeader:
+    """A ``.h``'s grammar follows the language of the TU(s) that include it —
+    the compiler-faithful routing the unified C/C++ analyzer uses."""
+
     def test_class_in_h_parsed_as_cpp(self):
-        """A ``.h`` containing ``class F { }`` routes to the C++ backend and
-        produces a class node (no corruption, no syntax_error)."""
+        """A ``.h`` included by a ``.cpp`` TU is parsed as C++ and its class
+        is modelled (no corruption, no syntax_error)."""
         from graphlint.analyzer._types import ParseResult
+        from graphlint.analyzer.language.cfamily import resolve_header_flavors
 
         reg = LanguageRegistry()
-        reg.register(CAdapter())
-        reg.register(CppAdapter())
+        reg.register(CFamilyAdapter())
 
         root = tempfile.mkdtemp()
         src = os.path.join(root, "engine.h")
@@ -173,10 +172,23 @@ class TestSniffParsesHeader:
                 "    void stop() {}\n"
                 "};\n"
             )
+        tu = os.path.join(root, "main.cpp")
+        with open(tu, "w", encoding="utf-8") as fh:
+            fh.write(
+                '#include "engine.h"\n'
+                "int main() { Engine e; e.start(); return 0; }\n"
+            )
+
+        flavors = resolve_header_flavors([src, tu])
+        config = {
+            "_cfamily_header_flavors": flavors,
+            "entry_rules": [],
+            "test_patterns": {},
+        }
 
         adapter = reg.adapter_for_parsing(src)
-        assert adapter.language_name == "cpp"
-        result: ParseResult = adapter.worker_function(src, root, {})
+        assert adapter.language_name == "c/cpp"
+        result: ParseResult = adapter.parse_file(src, root, config)
         assert not any(
             w.warn_type == "syntax_error" or "parse_error" in str(w.warn_type)
             for w in result.warnings
@@ -187,12 +199,12 @@ class TestSniffParsesHeader:
         ]
 
     def test_plain_c_h_parsed_as_c(self):
-        """A plain-C ``.h`` routes to the C backend and parses cleanly."""
+        """A header with no including TU defaults to C grammar and parses
+        cleanly (unified adapter)."""
         from graphlint.analyzer._types import ParseResult
 
         reg = LanguageRegistry()
-        reg.register(CAdapter())
-        reg.register(CppAdapter())
+        reg.register(CFamilyAdapter())
 
         root = tempfile.mkdtemp()
         src = os.path.join(root, "point.h")
@@ -200,8 +212,8 @@ class TestSniffParsesHeader:
             fh.write("#include <stdio.h>\nstruct Point { int x; int y; };\n")
 
         adapter = reg.adapter_for_parsing(src)
-        assert adapter.language_name == "c"
-        result: ParseResult = adapter.worker_function(src, root, {})
+        assert adapter.language_name == "c/cpp"
+        result: ParseResult = adapter.parse_file(src, root, {})
         assert not any(
             w.warn_type == "syntax_error" or "parse_error" in str(w.warn_type)
             for w in result.warnings

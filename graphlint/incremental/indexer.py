@@ -316,13 +316,25 @@ class IncrementalIndexer:
         """
         results: list[tuple[str, ParseResult]] = []
         workers = min(self.parallel_workers, len(fps), 64) or 1
+        # ``.h`` is ambiguous (C or C++): the unified C/C++ adapter decides the
+        # grammar from the language of the TU(s) that include it, exactly as a
+        # C/C++ compiler does.  Resolve those flavours once here (main thread)
+        # and hand them to the workers via the config so routing is a single,
+        # project-wide decision and is not re-computed per worker.
+        parse_config: dict[str, Any] = self.config
+        if self.registry and any(f.lower().endswith(".h") for f in fps):
+            from graphlint.analyzer.language.cfamily import resolve_header_flavors
+
+            all_paths = [os.path.join(self.root_dir, f) for f in fps]
+            header_flavors = resolve_header_flavors(all_paths)
+            parse_config = {
+                **self.config,
+                "_cfamily_header_flavors": header_flavors,
+            }
         with ProcessPoolExecutor(max_workers=workers) as ex:
             futs = {}
             for fp in fps:
                 full_path = os.path.join(self.root_dir, fp)
-                # ``.h`` is ambiguous (C or C++): pick the C++ adapter when the
-                # file content shows C++ constructs, else the C adapter. Other
-                # extensions are routed by extension, unchanged.
                 adapter = (
                     self.registry.adapter_for_parsing(full_path)
                     if self.registry
@@ -349,7 +361,7 @@ class IncrementalIndexer:
                         adapter.worker_function,
                         full_path,
                         self.root_dir,
-                        self.config,
+                        parse_config,
                     )
                 ] = fp
             for fut in as_completed(futs):

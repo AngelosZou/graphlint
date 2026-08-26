@@ -185,35 +185,21 @@ class LanguageRegistry:
     def adapter_for_file(self, path: str) -> Optional[LanguageAdapter]:
         """Return the adapter that handles *path*, or ``None``.
 
-        Extension-based for all unambiguous suffixes (``.c`` → C,
-        ``.cpp/.hpp/...`` → C++). An ambiguous ``.h`` is routed by content
-        (see :func:`sniff_header_language`) so that a header sniffed as C++
-        resolves to the C++ adapter in every graph stage — module naming,
-        special-name / public-API checks, entry detection and adapter result
-        filtering — not just at parse time.
+        Extension-based for every suffix.  An ambiguous ``.h`` is owned by the
+        unified C/C++ adapter; its *grammar* (C or C++) is decided inside that
+        adapter by the language of the translation unit that includes it,
+        exactly as a C/C++ compiler does — never by content-sniffing a header.
         """
         _, ext = os.path.splitext(path)
         if ext and ext.startswith("."):
-            key = ext.lower()
-            if key == ".h":
-                return self._adapter_for_header(path)
-            return self._by_extension.get(key)
+            return self._by_extension.get(ext.lower())
         return None
-
-    def _adapter_for_header(self, path: str) -> Optional[LanguageAdapter]:
-        """Sniff ``.h`` content and return the C-family adapter it belongs to."""
-        language: str = sniff_header_language(path)
-        for adapter in self._adapters:
-            if adapter.language_name == language:
-                return adapter
-        return self._by_extension.get(".h")
 
     def adapter_for_parsing(self, path: str) -> Optional[LanguageAdapter]:
         """Pick the adapter used to *parse* *path*.
 
-        Uses the same single decision path as :meth:`adapter_for_file`: an
-        ambiguous ``.h`` is routed by content, non-ambiguous extensions
-        purely by extension.
+        Same decision path as :meth:`adapter_for_file`: an ambiguous ``.h``
+        resolves to the unified C/C++ adapter, which picks the grammar per file.
         """
         return self.adapter_for_file(path)
 
