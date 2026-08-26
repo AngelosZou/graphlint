@@ -70,6 +70,40 @@ class TestSniff:
     def test_sniff_missing_file_default_c(self):
         assert sniff_header_language("/no/such/header.h") == "c"
 
+    def test_sniff_string_literal_not_tricked(self):
+        """A C++ marker inside a string literal (shader/doc/JSON-template
+        name) must not route a plain-C header to C++."""
+        for body in (
+            'const char* s = "class Foo";',
+            'const char* s = "std::vector";',
+            'const char* n = "namespace x";',
+        ):
+            path = _write_header(body + "\nint x;\n")
+            assert sniff_header_language(path) == "c", body
+
+    def test_sniff_string_literal_include_not_signal(self):
+        """A ``#include <vector>`` inside a string literal is not a directive."""
+        path = _write_header('const char* e = "#include <vector>";\n')
+        assert sniff_header_language(path) == "c"
+
+    def test_sniff_operator_identifier_not_cpp(self):
+        """``operator`` is a legal C identifier/field, so a bare ``operator``
+        must not be treated as a C++ operator-overload signal."""
+        for body in (
+            "int operator;",
+            "struct S { int operator; };",
+        ):
+            path = _write_header(body + "\n")
+            assert sniff_header_language(path) == "c", body
+
+    def test_sniff_operator_overload_still_detected_via_class(self):
+        """A C++ operator overload retains a C++ signal through the enclosing
+        class, so the removed ``operator`` marker does not lose it."""
+        path = _write_header(
+            "class Vec { public: bool operator==(const Vec&) const; };\n"
+        )
+        assert sniff_header_language(path) == "cpp"
+
 
 # =============================================================================
 # Registry routing (extension vs content)

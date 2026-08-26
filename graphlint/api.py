@@ -45,7 +45,11 @@ _OPTIONAL_LANG_SUPPORT: dict[str, tuple[str, str]] = {
     ".mjs": ("JavaScript", "pip install graphlint[typescript]"),
     ".cjs": ("JavaScript", "pip install graphlint[typescript]"),
     ".c": ("C", "pip install graphlint[c]"),
-    ".h": ("C", "pip install graphlint[c]"),
+    # ``.h`` is ambiguous: it routes to the C or C++ adapter by content
+    # (see registry.sniff_header_language), so the hint must offer either
+    # grammar — a header-only project may need ``[cpp]`` even though ``.h``
+    # is nominally owned by the C adapter.
+    ".h": ("C/C++", "pip install graphlint[c] graphlint[cpp]"),
     ".cpp": ("C++", "pip install graphlint[cpp]"),
     ".cc": ("C++", "pip install graphlint[cpp]"),
     ".cxx": ("C++", "pip install graphlint[cpp]"),

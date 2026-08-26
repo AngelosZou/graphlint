@@ -11,17 +11,26 @@ from graphlint.analyzer.language.base import LanguageAdapter
 
 _HEADER_SNIFF_READ_BYTES: int = 64 * 1024
 
+# Memo of abspath → ("c" | "cpp") so a ``.h`` is sniffed at most once per
+# process, instead of once per registered adapter in ``_adapter_parse_results``.
+_HEADER_SNIFF_CACHE: dict[str, str] = {}
+
 # Word-bounded, token-level C++ markers. ``\\b`` around a keyword or symbol
 # keeps plain-C identifiers (e.g. a struct field named ``class_id``) from
-# tripping the C++ route, and the bare keyword never fires inside a comment or
-# string (those are stripped before matching). Plain-C constructs (``struct``,
-# ``#include <stdio.h>``) produce no C++ signal and stay on the C route.
+# tripping the C++ route. Markers are matched only on comment-, directive- and
+# literal-stripped text, so a marker inside a ``/* */``/``//`` comment, a
+# preprocessor line, or a ``"..."``/``'...'`` literal never mis-routes a
+# plain-C header. Every alternative below matches a construct that is invalid
+# in C (C++ keywords, ``std::`` scope, ``::``, access specifiers), so a hit
+# reliably implies C++. ``operator`` is deliberately NOT a signal: it is a
+# legal C identifier (variable / enum / struct field), and the finite
+# overloadable-operator set is anchored in the C++ adapter
+# (``_CPP_OPERATOR_NAMES``), not here — so ``int operator;`` stays on C.
 _HEADER_CPP_RE = re.compile(
     r"\bclass\s+[A-Za-z_]\w*"
     r"|\bnamespace\s+[A-Za-z_]"
     r"|\btemplate\s*<"
     r"|\bclass\s*[A-Za-z_]\w*\s*[:{]"
-    r"|\boperator\s*(?:load|store)?\b"
     r"|\bstd::"
     r"|\bconstexpr\b"
     r"|\bnullptr\b"
@@ -44,49 +53,100 @@ _HEADER_CPP_INCLUDE_RE = re.compile(
 
 _HEADER_C_COMMENT_RE = re.compile(r"/\*.*?\*/", re.DOTALL)
 _HEADER_LINE_COMMENT_RE = re.compile(r"//[^\n]*|#[^\n]*")
+# A ``"..."`` string literal (escapes allowed) and a ``'...'`` char literal.
+# They only need to be *neutralised* so a C++ marker (``class``, ``namespace``,
+# ``std::``, ``#include <...>``) inside a literal is not seen as a real one.
+_HEADER_STRING_LITERAL_RE = re.compile(r'"(?:\\.|[^"\\])*"')
+_HEADER_CHAR_LITERAL_RE = re.compile(r"'(?:\\.|[^'\\])*'")
+# A real ``#include "file.h"`` directive: the quoted filename is a directive
+# argument, not a string literal, so it is held aside while literals are
+# stripped and restored afterwards.
+_HEADER_INCLUDE_QUOTED_RE = re.compile(r'#\s*include\s*"[^"]*"')
+
+
+def _strip_header_literals(text: str) -> str:
+    """Strip ``"..."`` string and ``'...'`` char literals.
+
+    The sniffer's doc comment used to claim strings were stripped before
+    matching — they were not, so a plain-C header like
+    ``const char* s = "class Foo";`` (a shader/doc/JSON-template name, a C++
+    marker inside a string) was falsely routed to C++.  Literals are cleared
+    here so a marker inside one cannot trip the C++ route.
+    """
+    text = _HEADER_STRING_LITERAL_RE.sub(" ", text)
+    return _HEADER_CHAR_LITERAL_RE.sub(" ", text)
 
 
 def _strip_header_comments(text: str) -> str:
-    """Strip ``/*...*/``, ``//`` line, and C preprocessor ``#...`` comments so
-    C++ markers inside comments or directives don't mis-route the header."""
+    """Strip ``/*...*/``, ``//`` line, C preprocessor ``#...`` lines, and
+    string/char literals, so C++ markers inside comments, directives, or
+    literals don't mis-route the header."""
     text = _HEADER_C_COMMENT_RE.sub(" ", text)
-    return _HEADER_LINE_COMMENT_RE.sub(" ", text)
+    text = _HEADER_LINE_COMMENT_RE.sub(" ", text)
+    return _strip_header_literals(text)
 
 
 def _strip_header_comment_only(text: str) -> str:
-    """Strip ``/*...*/`` and ``//`` line comments only, keeping preprocessor
-    directives intact.  Used for the C++ ``#include`` signals, which are real
-    directives and must survive comment removal while comment-embedded
-    ``#include <...>`` lines are cleared."""
+    """Strip ``/*...*/`` and ``//`` line comments and string/char literals
+    only, keeping preprocessor directives intact.
+
+    Used for the C++ ``#include`` signals, which are real directives and must
+    survive comment removal while comment-embedded or literal-embedded
+    ``#include <...>`` lines are cleared.  A ``#include "file.h"`` directive's
+    quoted filename is a directive argument, not a literal, so it is held
+    aside during literal stripping and restored (kept as ``#include "util.hpp"``).
+    """
     text = _HEADER_C_COMMENT_RE.sub(" ", text)
-    return re.sub(r"//[^\n]*", " ", text)
+    text = re.sub(r"//[^\n]*", " ", text)
+    held: list[str] = []
+
+    def _hold(m: re.Match) -> str:
+        held.append(m.group(0))
+        return "\x00INC%d\x00" % (len(held) - 1)
+
+    text = _HEADER_INCLUDE_QUOTED_RE.sub(_hold, text)
+    text = _strip_header_literals(text)
+    for i, block in enumerate(held):
+        text = text.replace("\x00INC%d\x00" % i, block)
+    return text
 
 
 def sniff_header_language(path: str) -> str:
     """Route a ``.h`` header to a language by content.
 
     Reads the first :data:`_HEADER_SNIFF_READ_BYTES` bytes of *path*, strips
-    comments/directives, and looks for a C++-only construct. Returns ``"cpp"``
-    when a strong C++ marker is found, else ``"c"`` (backward compatible —
-    headers with no signal stay C).
+    comments, directives, and string/char literals, and looks for a C++-only
+    construct. Returns ``"cpp"`` when a strong C++ marker is found, else
+    ``"c"`` (backward compatible — headers with no signal stay C).
 
     Conservative by design: plain-C headers (``struct`` + ``#include <stdio.h>``)
     must never be mis-routed to the C++ adapter.
+
+    The decision is memoised per absolute path so ``_adapter_parse_results``
+    (graph.py) does not re-sniff the same header once per registered adapter.
     """
+    key = os.path.abspath(path)
+    cached = _HEADER_SNIFF_CACHE.get(key)
+    if cached is not None:
+        return cached
     try:
         with open(path, "r", encoding="utf-8", errors="replace") as fh:
             head = fh.read(_HEADER_SNIFF_READ_BYTES)
     except (OSError, UnicodeError):
+        _HEADER_SNIFF_CACHE[key] = "c"
         return "c"
     stripped = _strip_header_comments(head)
     if _HEADER_CPP_RE.search(stripped):
+        _HEADER_SNIFF_CACHE[key] = "cpp"
         return "cpp"
     # The C++ ``#include`` signals are directives, so they must be matched on
     # comment-*only*-stripped text (directives preserved): a real
     # ``#include <vector>`` counts, but one embedded in a ``//`` or ``/* */``
-    # comment does not.
+    # comment or a string literal does not.
     if _HEADER_CPP_INCLUDE_RE.search(_strip_header_comment_only(head)):
+        _HEADER_SNIFF_CACHE[key] = "cpp"
         return "cpp"
+    _HEADER_SNIFF_CACHE[key] = "c"
     return "c"
 
 _COMMON_EXCLUDE_DIRS: frozenset[str] = frozenset(

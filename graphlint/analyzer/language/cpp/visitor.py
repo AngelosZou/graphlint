@@ -319,6 +319,9 @@ class CppVisitor:
         elif ntype == "delete_expression":
             self._visit_delete_expression(node)
 
+        elif ntype == "enumerator":
+            self._visit_enumerator(node)
+
         elif ntype == "compound_statement":
             # A block introduces a local-variable scope so that inner locals
             # do not leak into the outer (function/file) scope.
@@ -457,6 +460,53 @@ class CppVisitor:
         self._current_type_id = prev_type_id
         self._current_type_qname = prev_type_qname
         self._current_base_types = prev_base_types
+
+    # ------------------------------------------------------------------
+    # Enumerators (enum constants / enum-class members)
+    # ------------------------------------------------------------------
+
+    def _visit_enumerator(self, node: Any) -> None:
+        """Create an ``enum_member`` node for an enumerator.
+
+        ``enum Color { RED };`` and ``enum class Color { RED };`` both yield
+        ``mod.Color.RED`` with the enum as parent, matching the C backend, so
+        a use of ``RED`` (or ``Color::RED``) keeps the enum alive instead of
+        becoming a dangling reference.  The value expression is walked
+        (``RED = BASE`` uses ``BASE``); the name identifier is not.
+        """
+        name_node = node.child_by_field_name("name")
+        if name_node is None:
+            for child in node.children:
+                if child.type in ("identifier", "field_identifier",
+                                  "type_identifier"):
+                    name_node = child
+                    break
+        if name_node is None:
+            for child in node.children:
+                self._walk(child)
+            return
+        name = _node_text(name_node)
+        if not name:
+            return
+
+        sq = self._current_qname()
+        qualified = sq + "." + name if sq else name
+        info = NodeInfo(
+            file_id=0,
+            name=name,
+            qualified_name=qualified,
+            node_type="enum_member",
+            line_start=_node_line(node),
+            line_end=_node_end_line(node),
+            col_offset=_node_col(node),
+            parent_node_id=self._current_type_id,
+        )
+        self._add_node(info)
+
+        for child in node.children:
+            if child == name_node:
+                continue
+            self._walk(child)
 
     # ------------------------------------------------------------------
     # Member declarations (methods, fields)

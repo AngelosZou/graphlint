@@ -184,6 +184,25 @@ enum Color { Red, Green, Blue };
         enums = [n for n in visitor.nodes if n.node_type == "enum"]
         assert len(enums) == 1
         assert enums[0].name == "Color"
+        # Enumerators are modeled as enum_member children (matches C backend),
+        # so a use of ``Red``/``Color::Red`` is not a dangling reference.
+        members = [n for n in visitor.nodes if n.node_type == "enum_member"]
+        assert [m.name for m in members] == ["Red", "Green", "Blue"]
+        assert all(m.parent_node_id == enums[0].id for m in members)
+
+    def test_scoped_enum_members(self):
+        """``enum class`` (scoped enum) members are modeled the same as plain
+        enum members — the C++ backend had no ``enum_member`` nodes at all."""
+        source = """\
+enum class Color { Red, Green, Blue };
+"""
+        visitor = _parse_source(source)
+        enums = [n for n in visitor.nodes if n.node_type == "enum"]
+        assert len(enums) == 1
+        assert enums[0].name == "Color"
+        members = [n for n in visitor.nodes if n.node_type == "enum_member"]
+        assert [m.name for m in members] == ["Red", "Green", "Blue"]
+        assert all(".Color." in m.qualified_name for m in members)
 
     def test_macro(self):
         source = """\
