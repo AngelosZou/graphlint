@@ -1108,6 +1108,16 @@ class GraphBuilder:
         class_seg = segments[-2]
         return bool(method_seg) and method_seg == class_seg
 
+    @staticmethod
+    def _is_cpp_pure_virtual(node: NodeInfo) -> bool:
+        """Whether *node* is a C++ pure-virtual (``= 0``) method declaration.
+
+        Interface methods are dispatched by the runtime via the vtable rather
+        than a static call edge, so they are exempt from dead-code reporting,
+        like the implicitly-invoked special names.
+        """
+        return node.node_type == "method" and node.visibility == "pure_virtual"
+
     def _root_dir_for_routing(self) -> str | None:
         """Project root used to resolve relative parse-result keys against."""
         return self.config.get("_root_dir") if self.config else None
@@ -1159,7 +1169,7 @@ class GraphBuilder:
             # and the unified C/C++ adapter both identify the C++ family, so
             # gate on the language family rather than an exact name.
             if _is_cpp_family_adapter(adapter):
-                return self._is_cpp_constructor(node)
+                return self._is_cpp_constructor(node) or self._is_cpp_pure_virtual(node)
             return False
 
         return check
@@ -1217,7 +1227,7 @@ class GraphBuilder:
         if adapter.is_special_name(node.name):
             return True
         if _is_cpp_family_adapter(adapter):
-            return self._is_cpp_constructor(node)
+            return self._is_cpp_constructor(node) or self._is_cpp_pure_virtual(node)
         return False
 
     def _node_is_public_api(

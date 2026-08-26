@@ -351,6 +351,19 @@ class CppVisitor:
         elif ntype == "preproc_function_def":
             self._visit_preproc_def(node)
 
+        elif ntype == "identifier":
+            # A bare identifier used in an expression (a local/parameter read,
+            # an unqualified member-field read, a return value, an operand, a
+            # callable name, ...).  Declarator names are extracted (and not
+            # re-walked) by their handlers, so they never reach here.
+            self._visit_identifier_read(node)
+
+        elif ntype == "field_identifier":
+            # An unqualified member-field read (e.g. ``radius_`` used inside a
+            # method).  Field-declaration names and ``obj.field`` members are
+            # handled by their own handlers and are not re-walked here.
+            self._visit_identifier_read(node)
+
         else:
             for child in node.children:
                 self._walk(child)
@@ -659,6 +672,11 @@ class CppVisitor:
                         line_end=_node_end_line(child),
                         col_offset=_node_col(child),
                         parent_node_id=self._current_type_id,
+                        # Mark interface methods: a pure virtual is invoked by
+                        # the runtime via virtual dispatch (not a static call
+                        # graph edge), so it is exempt from dead-code like the
+                        # implicitly-invoked special names.
+                        visibility="pure_virtual",
                     )
                     self._add_node(info)
                     tq = self._current_type_qname
@@ -1122,7 +1140,16 @@ class CppVisitor:
             ))
             self.name_usages.add(member_name)
 
+        # Walk remaining children.  The receiver and member identifiers are
+        # already handled above (receiver read + member edge); re-walking them
+        # would double-emit a read (the generic identifier-read case fires for
+        # bare identifiers).  A complex receiver (e.g. ``getObj().field``) is
+        # still walked so its own sub-expressions are analysed.
         for child in node.children:
+            if child == field_node:
+                continue
+            if child == argument and getattr(argument, "type", "") == "identifier":
+                continue
             self._walk(child)
 
     def _resolve_method(self, type_name: str, method_name: str) -> str | None:
@@ -1282,6 +1309,29 @@ class CppVisitor:
                 source_qname=sq, target_name="subscript",
                 edge_type="write", line=line,
             ))
+
+    def _visit_identifier_read(self, node: Any) -> None:
+        """Emit a read reference for a bare identifier used in an expression.
+
+        Without this, an unqualified member field read (``radius_`` in
+        ``area()``) and a local/parameter read used as a return value or an
+        operator operand (``return total + s;``, ``std::cout << s;``) were
+        never captured, so a field/local written only by its constructor was
+        mis-flagged ``write-only``.  Declarator names are extracted (and not
+        re-walked) by their own handlers, so only expression-position
+        identifiers reach here.
+        """
+        name = _node_text(node)
+        if not name:
+            return
+        sq = self._current_qname()
+        self.references.append(ReferenceInfo(
+            source_qname=sq,
+            target_name=name,
+            edge_type="read",
+            line=_node_line(node),
+        ))
+        self.name_usages.add(name)
 
     def _emit_type_read_name(self, type_name: str, sq: str, line: int) -> None:
         """Emit a read edge for a type name string."""

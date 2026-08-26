@@ -422,3 +422,104 @@ class TestCppResolutionRegressions:
         )
         assert ctor is not None
         assert gb._node_is_special(ctor, file_id_to_path, frozenset()) is True
+
+
+@pytest.mark.skipif(
+    not (_TREE_SITTER_C_AVAILABLE and _TREE_SITTER_CPP_AVAILABLE),
+    reason="tree-sitter grammars not installed",
+)
+class TestCppFalsePositiveFixes:
+    """The false positives flagged post-merge must not fire: unqualified member
+    field reads and local reads via return / ``operator<<`` must not be
+    write-only, and pure-virtual interface methods must not be dead."""
+
+    def _build(self, files: dict[str, str]):
+        from graphlint.config.manager import ConfigManager
+        from graphlint.analyzer.graph import GraphBuilder
+        from graphlint.analyzer.warnings import WarningCollector
+        from graphlint.api import _build_registry
+
+        root = tempfile.mkdtemp(prefix="cfam_fp_")
+        for rel, content in files.items():
+            _write(root, rel, content)
+
+        registry = _build_registry()
+        config = ConfigManager(root).load()
+        config["_root_dir"] = root
+        config["_cfamily_header_flavors"] = resolve_header_flavors(
+            [os.path.join(root, rel) for rel in files]
+        )
+
+        prs = {}
+        for rel in files:
+            full = os.path.join(root, rel)
+            adapter = registry.adapter_for_file(full)
+            parsed = adapter.parse_file(full, root, config)
+            if parsed is not None:
+                prs[rel] = parsed
+
+        wb = WarningCollector()
+        gb = GraphBuilder(wb, registry=registry, config=config)
+        br = gb.build(prs)
+        return br, wb, gb
+
+    def _write_only_messages(self, wb) -> list[str]:
+        return [
+            w.message for w in wb.get_all()
+            if w.warn_type in ("write_only", "write-only")
+        ]
+
+    def test_field_read_in_method_not_write_only(self):
+        """A private field written only by the ctor but read in a method body
+        (``radius_`` in ``area()``) is NOT write-only — the method body read is
+        captured now."""
+        br, wb, gb = self._build({
+            "main.cpp": (
+                'class Circle {\n'
+                '  double radius_;\n'
+                'public:\n'
+                '  Circle(double r) : radius_(r) {}\n'
+                '  double area() const { return 3.14 * radius_ * radius_; }\n'
+                '};\n'
+                'int main(){ Circle c(1.0); return (int)c.area(); }\n'
+            ),
+        })
+        msgs = self._write_only_messages(wb)
+        assert not any("radius_" in m for m in msgs), msgs
+
+    def test_local_read_via_return_and_operator_il_not_write_only(self):
+        """Locals written then read as a return value and as an ``<<`` operand
+        (``total``, ``s``) are NOT write-only."""
+        br, wb, gb = self._build({
+            "main.cpp": (
+                'int main(){\n'
+                '  int total = 3;\n'
+                '  int s = total;\n'
+                '  std::cout << s;\n'
+                '  return total;\n'
+                '}\n'
+            ),
+        })
+        msgs = self._write_only_messages(wb)
+        assert not any(("total" in m) or (m.count("'s'") and "'s'" in m) for m in msgs), msgs
+
+    def test_pure_virtual_interface_not_dead(self):
+        """A pure-virtual interface method (``Shape::area``) is not reported
+        dead: it is dispatched by the vtable, so it is exempt from dead-code
+        like the implicitly-invoked special names."""
+        br, wb, gb = self._build({
+            "shape.h": (
+                "class Shape { public: virtual double area() const = 0; };\n"
+                "class Circle : public Shape { public: double area() const override { return 1.0; } };\n"
+            ),
+            "main.cpp": '#include "shape.h"\nint main(){ Shape* s = new Circle(); return (int)s->area(); }\n',
+        })
+        dead = [w for w in wb.get_all() if w.warn_type == "dead_code"]
+        shape_area = next(
+            (n for n in br.node_id_map.values()
+             if n.qualified_name.endswith("Shape.area")), None,
+        )
+        assert shape_area is not None
+        assert not any(
+            "Shape.area" in (w.message or "") for w in dead
+        ), [w.message for w in dead]
