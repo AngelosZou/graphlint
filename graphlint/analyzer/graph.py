@@ -181,6 +181,114 @@ def _drop_cross_file_static(
     ]
 
 
+def _build_cpp_type_index(
+    parse_results: dict[str, ParseResult],
+    node_id_map: dict[int, NodeInfo],
+) -> dict[str, Any]:
+    """Project-wide C/C++ type index used for cross-TU member-call resolution.
+
+    Builds ``class simple name -> class node ids``, ``class node id ->
+    {method_name -> method node id}``, and ``class simple name -> base names``
+    (from ``inherit`` references).  Unlike the C++ visitor's per-TU
+    ``_type_methods``, this spans every parsed file, so a class declared only
+    in a header is visible to the TUs that call its methods.
+    """
+    classes_by_simple: dict[str, list[int]] = {}
+    class_by_id: dict[int, NodeInfo] = {}
+    methods_by_class: dict[int, dict[str, int]] = {}
+
+    for nid, n in node_id_map.items():
+        if n.node_type in ("class", "struct", "union"):
+            classes_by_simple.setdefault(n.name, []).append(nid)
+            class_by_id[nid] = n
+    for nid, n in node_id_map.items():
+        if n.node_type == "method" and n.parent_node_id in class_by_id:
+            methods_by_class.setdefault(n.parent_node_id, {})[n.name] = nid
+
+    inherit_by_simple: dict[str, set[str]] = {}
+    for pr in parse_results.values():
+        if not pr.references:
+            continue
+        for ref in pr.references:
+            if ref.edge_type == "inherit" and ref.source_qname:
+                src = ref.source_qname.rsplit(".", 1)[-1]
+                inherit_by_simple.setdefault(src, set()).add(ref.target_name)
+
+    return {
+        "classes_by_simple": classes_by_simple,
+        "class_by_id": class_by_id,
+        "methods_by_class": methods_by_class,
+        "inherit_by_simple": inherit_by_simple,
+    }
+
+
+def _resolve_member_call(
+    type_name: str,
+    member_name: str,
+    source_fid: int,
+    include_closure: Optional[dict[int, set[int]]],
+    cpp_type_index: dict[str, Any],
+    node_id_map: dict[int, NodeInfo],
+) -> list[int]:
+    """Resolve ``receiver.member()`` to the method node id(s) type-aware.
+
+    *type_name* is the receiver's declared type (e.g. ``Service``); *member*
+    is the called method.  Resolution walks the project-wide class index plus
+    inheritance, and disambiguates same-named classes by preferring the one
+    defined in the source file's (transitive) includes.  Empty when the call
+    cannot be resolved to a unique method — the conservative name-based edge
+    then remains.
+    """
+    if not type_name or not member_name:
+        return []
+    type_name = type_name.rstrip("*&").replace("::", ".").rsplit(".", 1)[-1]
+
+    classes_by_simple = cpp_type_index.get("classes_by_simple", {})
+    methods_by_class = cpp_type_index.get("methods_by_class", {})
+    inherit_by_simple = cpp_type_index.get("inherit_by_simple", {})
+    class_by_id = cpp_type_index.get("class_by_id", {})
+
+    candidates = classes_by_simple.get(type_name, [])
+    if not candidates:
+        return []
+
+    def method_for(cid: int) -> int | None:
+        direct = methods_by_class.get(cid, {}).get(member_name)
+        if direct:
+            return direct
+        seen: set[str] = set()
+        stack = list(inherit_by_simple.get(class_by_id[cid].name, ()))
+        while stack:
+            base = stack.pop()
+            if base in seen:
+                continue
+            seen.add(base)
+            for bid in classes_by_simple.get(base, ()):
+                m = methods_by_class.get(bid, {}).get(member_name)
+                if m:
+                    return m
+                stack.extend(inherit_by_simple.get(base, ()))
+        return None
+
+    matched: list[tuple[int, int]] = []
+    for cid in candidates:
+        m = method_for(cid)
+        if m:
+            matched.append((cid, m))
+    if not matched:
+        return []
+
+    included = include_closure.get(source_fid, set()) if include_closure else set()
+    in_includes = [
+        (cid, m) for cid, m in matched if class_by_id[cid].file_id in included
+    ]
+    if len(in_includes) == 1:
+        return [in_includes[0][1]]
+    if len(matched) == 1:
+        return [matched[0][1]]
+    return []
+
+
 def _build_file_edges_worker(
     fp: str,
     pr: ParseResult,
@@ -195,13 +303,16 @@ def _build_file_edges_worker(
     scope_suffix_index: Optional[dict[tuple[str, str], list[int]]] = None,
     file_suffix_index: Optional[dict[tuple[int, str], list[int]]] = None,
     include_closure: Optional[dict[int, set[int]]] = None,
+    cpp_type_index: Optional[dict[str, Any]] = None,
 ) -> list[EdgeInfo]:
     """Build directed edges from pre-collected references (no AST re-walk).
 
     For each reference in the parse result, resolves the target symbol
     and creates a directed edge between the source and target nodes.
     Module-level references from unregistered source nodes are assigned
-    to the module pseudo-node (id=0).
+    to the module pseudo-node (id=0).  Member-call candidates carrying a
+    receiver type (``resolve_type``) are resolved type-aware against the
+    project-wide C/C++ type index instead of by bare name.
     """
     edges: list[EdgeInfo] = []
     c_file = fp.endswith((".c", ".h"))
@@ -215,6 +326,20 @@ def _build_file_edges_worker(
                 continue
         source_node = node_id_map.get(source_id) if source_id else None
         scope = source_node.qualified_name if source_node else ""
+        if (
+            ref.resolve_type
+            and ref.edge_type == "call"
+            and cpp_type_index
+            and source_id
+        ):
+            tids = _resolve_member_call(
+                ref.resolve_type, ref.target_name, fid,
+                include_closure, cpp_type_index, node_id_map,
+            )
+            for tid in tids:
+                if tid != source_id:
+                    edges.append(EdgeInfo(source_id, tid, "call", fid, ref.line))
+            continue
         class_scope = ""
         if source_node and source_node.parent_node_id:
             parent = node_id_map.get(source_node.parent_node_id)
@@ -680,6 +805,11 @@ class GraphBuilder:
     ) -> list[EdgeInfo]:
         """Build edges for a batch of files (parallel or sequential)."""
         all_edges: list[EdgeInfo] = []
+        # Project-wide type index for cross-TU member-call resolution: built
+        # once here (before the parallel batch) from every parsed file, so a
+        # class declared only in a header resolves member calls from the TUs
+        # that include it.
+        cpp_type_index = _build_cpp_type_index(parse_results, self._node_id_map)
         pw = self.config.get("performance", {}).get("parallel_workers", 0) or 0
         if pw > 1 and len(changed_list) > 1:
             with ProcessPoolExecutor(max_workers=min(pw, len(changed_list))) as ex:
@@ -700,6 +830,7 @@ class GraphBuilder:
                             self._scope_suffix_index,
                             self._file_suffix_index,
                             include_closure,
+                            cpp_type_index,
                         )
                     ] = fp
                 for fut in as_completed(futs):
@@ -722,6 +853,7 @@ class GraphBuilder:
                         self._scope_suffix_index,
                         self._file_suffix_index,
                         include_closure,
+                        cpp_type_index,
                     )
                 )
         return all_edges

@@ -55,6 +55,10 @@ class ReferenceInfo:
     target_name: str = ""
     edge_type: str = ""
     line: int = 0
+    # The declared type of a member-call receiver (e.g. ``"Service"`` in
+    # ``Service s; s.run();``), used by the graph to resolve the call
+    # type-aware across translation units instead of by bare name.
+    resolve_type: str = ""
 
 
 @dataclass

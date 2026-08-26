@@ -143,3 +143,58 @@ class TestCFamilyEndToEnd:
         qnames = {n.qualified_name for n in br.node_id_map.values()}
         assert any("lib.h" in q or q.startswith("lib.") for q in qnames)
         assert any(q.endswith(".App") or ".App" in q for q in qnames)
+
+    @pytest.mark.skipif(
+        not (_TREE_SITTER_C_AVAILABLE and _TREE_SITTER_CPP_AVAILABLE),
+        reason="tree-sitter grammars not installed",
+    )
+    def test_cross_file_member_call_emits_call_edge(self):
+        """``Service s; s.run()`` in a TU whose ``Service`` is defined only in
+        a header resolves to a type-aware call edge (not a bare name-based
+        read edge) — the payoff of the unified analyzer."""
+        from graphlint.analyzer.graph import GraphBuilder
+        from graphlint.analyzer.warnings import WarningCollector
+        from graphlint.api import _build_registry
+
+        root = tempfile.mkdtemp(prefix="cfam_call_")
+        _write(
+            root, "svc.h",
+            "class Service { public: Service(){} ~Service(){} void run(){} };\n",
+        )
+        _write(
+            root, "main.cpp",
+            '#include "svc.h"\nint main(){ Service s; s.run(); return 0; }\n',
+        )
+
+        registry = _build_registry()
+        config: dict = {"entry_rules": [], "test_patterns": {}, "_root_dir": root}
+        from graphlint.analyzer.language.cfamily import resolve_header_flavors
+        config["_cfamily_header_flavors"] = resolve_header_flavors(
+            [os.path.join(root, f) for f in ("svc.h", "main.cpp")]
+        )
+
+        prs = {}
+        for rel in ("svc.h", "main.cpp"):
+            full = os.path.join(root, rel)
+            adapter = registry.adapter_for_file(full)
+            parsed = adapter.parse_file(full, root, config)
+            if parsed is not None:
+                prs[rel] = parsed
+
+        wb = WarningCollector()
+        gb = GraphBuilder(wb, registry=registry, config=config)
+        br = gb.build(prs)
+
+        run_id = next(
+            (n.id for n in br.node_id_map.values()
+             if n.qualified_name.endswith(".Service.run")), 0,
+        )
+        main_id = next(
+            (n.id for n in br.node_id_map.values()
+             if n.qualified_name.endswith(".main")), 0,
+        )
+        assert run_id and main_id, [n.qualified_name for n in br.node_id_map.values()]
+        assert any(
+            e.source_id == main_id and e.target_id == run_id and e.edge_type == "call"
+            for e in br.edges
+        ), [(e.source_id, e.target_id, e.edge_type) for e in br.edges]

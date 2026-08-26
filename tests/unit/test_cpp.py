@@ -984,8 +984,16 @@ int main() {
 """
         visitor = _parse_source(source)
         refs = visitor.references
-        assert all(r.edge_type != "call" or "bogus" not in r.target_name
-                   or r.target_name.endswith(".bogus") for r in refs)
+        # Conservative name-based read fallback for a method not on the type.
+        assert any(r.edge_type == "read" and r.target_name == "bogus" for r in refs)
+        # A cross-file call candidate is emitted with the receiver's type; the
+        # graph resolves it type-aware (producing a call edge only when the
+        # method exists) and never emits a bare call edge for it.
+        call_candidates = [
+            r for r in refs if r.edge_type == "call" and "bogus" in r.target_name
+        ]
+        assert call_candidates, refs
+        assert all(r.resolve_type == "Unknown" for r in call_candidates), refs
 
     @tree_sitter_available
     def test_field_call_is_arrow(self):

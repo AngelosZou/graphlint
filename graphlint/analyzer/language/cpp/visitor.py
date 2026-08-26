@@ -1010,11 +1010,22 @@ class CppVisitor:
                     ))
                     self.name_usages.add(member_name)
                 else:
-                    # Method not found — conservative read edge.  For a
-                    # ``::``-qualified receiver (e.g. ``engine::Service``) emit
-                    # the best-effort module-qualified member target too so a
-                    # same-named class in another module resolves to its own
-                    # method.
+                    # Method not found in this TU — emit a cross-file
+                    # member-call candidate the graph resolves type-aware
+                    # against the project-wide type index (so ``s.run()`` with
+                    # ``Service`` defined only in a header still produces a
+                    # call edge to ``Service``'s ``run``), alongside the
+                    # conservative read edge.  For a ``::``-qualified receiver
+                    # (e.g. ``engine::Service``) emit the best-effort
+                    # module-qualified member target too so a same-named class
+                    # in another module resolves to its own method.
+                    self.references.append(ReferenceInfo(
+                        source_qname=sq,
+                        target_name=member_name,
+                        edge_type="call",
+                        line=_node_line(node),
+                        resolve_type=type_name,
+                    ))
                     self.references.append(ReferenceInfo(
                         source_qname=sq,
                         target_name=member_name,
