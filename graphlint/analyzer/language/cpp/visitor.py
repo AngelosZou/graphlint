@@ -64,7 +64,8 @@ def _scoped_name(node: Any) -> str:
         parts = []
         for child in node.children:
             if child.type in ("identifier", "namespace_identifier",
-                              "operator_name"):
+                              "type_identifier", "template_type",
+                              "operator_name", "field_identifier"):
                 parts.append(_node_text(child))
             elif child.type == "qualified_identifier":
                 inner = _scoped_name(child)
@@ -156,6 +157,18 @@ def _strip_template_prefix(qualified: str) -> str:
 def _is_type_like(node_type: str) -> bool:
     """Check if a node type represents a type declaration that has methods."""
     return node_type in ("class", "struct", "union")
+
+
+def _is_pure_virtual(node: Any) -> bool:
+    """Whether a method-declaration ``field_declaration`` is pure virtual
+    (``= 0``).  Such a method has no definition anywhere, so modelling it is
+    the only way the class interface is visible to call resolution."""
+    if not any(getattr(c, "type", "") == "=" for c in node.children):
+        return False
+    for c in node.children:
+        if getattr(c, "type", "") == "number_literal" and _node_text(c).strip() == "0":
+            return True
+    return False
 
 
 class CppVisitor:
@@ -628,10 +641,30 @@ class CppVisitor:
                 if not name:
                     continue
 
-                # Declaration-only methods have no body → no node emitted
-                # (per spec: "method without body = no node").
-                # But we still emit parameter type reads.
                 line = _node_line(child)
+                # Pure-virtual methods (``= 0``) have no body and no definition
+                # elsewhere, so model them as a method node to keep the class
+                # interface visible to member-call resolution (e.g. a call
+                # through a base-class pointer).  Ordinary declaration-only
+                # methods are satisfied by a definition in another TU and are
+                # still skipped (no node), as before.
+                if _is_pure_virtual(node):
+                    qualified = sq + "." + name if sq else name
+                    info = NodeInfo(
+                        file_id=0,
+                        name=name,
+                        qualified_name=qualified,
+                        node_type="method",
+                        line_start=line,
+                        line_end=_node_end_line(child),
+                        col_offset=_node_col(child),
+                        parent_node_id=self._current_type_id,
+                    )
+                    self._add_node(info)
+                    tq = self._current_type_qname
+                    if tq:
+                        self._type_methods.setdefault(tq, set()).add(name)
+
                 params = child.child_by_field_name("parameters")
                 if params is not None:
                     self._emit_parameter_type_reads(params, sq, line)
@@ -881,6 +914,23 @@ class CppVisitor:
                 # Approach A: register variable's type
                 if type_ann:
                     self._register_var_type(name, type_ann, is_field=is_field)
+
+                # Direct construction: `Type var(args)` invokes the
+                # constructor — emit a call candidate so the ctor is reachable.
+                if (
+                    type_ann
+                    and any(gc.type == "argument_list" for gc in child.children)
+                ):
+                    ctor = type_ann.split("::")[-1].split("<")[0]
+                    if ctor:
+                        self.references.append(ReferenceInfo(
+                            source_qname=sq,
+                            target_name=ctor,
+                            edge_type="call",
+                            line=_node_line(child),
+                            resolve_type=type_ann,
+                        ))
+                        self.name_usages.add(ctor)
 
                 # Walk initializer
                 value_node = child.child_by_field_name("value")
@@ -1144,7 +1194,8 @@ class CppVisitor:
     # ------------------------------------------------------------------
 
     def _visit_new_expression(self, node: Any) -> None:
-        """Handle ``new Foo(...)`` — read edge to the type name."""
+        """Handle ``new Foo(...)`` — read edge to the type name plus a call
+        candidate to the constructor (so ``main -> Foo.Foo`` is reachable)."""
         type_node = node.child_by_field_name("type")
         if type_node:
             sq = self._current_qname()
@@ -1157,6 +1208,16 @@ class CppVisitor:
                     line=_node_line(node),
                 ))
                 self.name_usages.add(type_name.split("::")[-1])
+                simple = type_name.split("::")[-1].split("<")[0]
+                if simple:
+                    self.references.append(ReferenceInfo(
+                        source_qname=sq,
+                        target_name=simple,
+                        edge_type="call",
+                        line=_node_line(node),
+                        resolve_type=type_name,
+                    ))
+                    self.name_usages.add(simple)
         for child in node.children:
             self._walk(child)
 

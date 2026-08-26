@@ -657,8 +657,14 @@ public:
 """
         visitor = _parse_source(source)
         methods = [n for n in visitor.nodes if n.node_type == "method"]
-        # Pure virtual and declaration-only methods have no body → no node
-        assert len(methods) == 0
+        # A pure-virtual method (``= 0``) has no definition anywhere, so it is
+        # modelled as a method node to keep the class interface visible to
+        # member-call resolution.  An ordinary declaration-only method (no
+        # ``= 0``) is satisfied by a definition in another TU and still yields
+        # no node.
+        assert [m.name for m in methods] == ["render"], [
+            m.qualified_name for m in methods
+        ]
 
 
 @tree_sitter_available

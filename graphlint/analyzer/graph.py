@@ -181,6 +181,16 @@ def _drop_cross_file_static(
     ]
 
 
+def _is_cpp_family_adapter(adapter: Any) -> bool:
+    """True when *adapter* is the C++ (or unified C/C++) language adapter.
+
+    The old separate ``CppAdapter`` used ``language_name == "cpp"``; the
+    unified ``CFamilyAdapter`` uses ``"c/cpp"``.  C++-specific graph-level
+    semantics (e.g. constructor special names) must apply to both.
+    """
+    return getattr(adapter, "language_name", "") in ("cpp", "c/cpp")
+
+
 def _build_cpp_type_index(
     parse_results: dict[str, ParseResult],
     node_id_map: dict[int, NodeInfo],
@@ -241,7 +251,15 @@ def _resolve_member_call(
     """
     if not type_name or not member_name:
         return []
-    type_name = type_name.rstrip("*&").replace("::", ".").rsplit(".", 1)[-1]
+    type_name = type_name.rstrip("*&").replace("::", ".")
+    # Drop template arguments (``Box<int>`` -> ``Box``) and any remaining
+    # namespace scope (``geo.Circle`` -> ``Circle``) so the declared type
+    # matches the class index's simple-name key.
+    lt = type_name.find("<")
+    if lt != -1:
+        type_name = type_name[:lt]
+    type_name = type_name.split()[-1] if type_name.split() else ""
+    type_name = type_name.rsplit(".", 1)[-1]
 
     classes_by_simple = cpp_type_index.get("classes_by_simple", {})
     methods_by_class = cpp_type_index.get("methods_by_class", {})
@@ -1137,9 +1155,10 @@ class GraphBuilder:
                 return True
             # C++ constructors are not in the adapter's name set (the bare
             # method name is indistinguishable from an ordinary method); use
-            # the graph-level qname predicate derived from the registry-routed
-            # adapter's language, not the file suffix.
-            if adapter.language_name == "cpp":
+            # the graph-level qname predicate.  The old separate C++ adapter
+            # and the unified C/C++ adapter both identify the C++ family, so
+            # gate on the language family rather than an exact name.
+            if _is_cpp_family_adapter(adapter):
                 return self._is_cpp_constructor(node)
             return False
 
@@ -1197,7 +1216,7 @@ class GraphBuilder:
             return node.name in fallback
         if adapter.is_special_name(node.name):
             return True
-        if adapter.language_name == "cpp":
+        if _is_cpp_family_adapter(adapter):
             return self._is_cpp_constructor(node)
         return False
 

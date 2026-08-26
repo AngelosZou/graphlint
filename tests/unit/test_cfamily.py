@@ -167,7 +167,9 @@ class TestCFamilyEndToEnd:
         )
 
         registry = _build_registry()
-        config: dict = {"entry_rules": [], "test_patterns": {}, "_root_dir": root}
+        from graphlint.config.manager import ConfigManager
+        config: dict = ConfigManager(root).load()
+        config["_root_dir"] = root
         from graphlint.analyzer.language.cfamily import resolve_header_flavors
         config["_cfamily_header_flavors"] = resolve_header_flavors(
             [os.path.join(root, f) for f in ("svc.h", "main.cpp")]
@@ -198,6 +200,10 @@ class TestCFamilyEndToEnd:
             e.source_id == main_id and e.target_id == run_id and e.edge_type == "call"
             for e in br.edges
         ), [(e.source_id, e.target_id, e.edge_type) for e in br.edges]
+        # Reachability exercised: main is an entry and the program is reachable,
+        # so this test (not just node/edge existence) guards entry/reachability.
+        assert br.node_id_map[main_id].is_entry
+        assert main_id in br.reachable
 
 
 @pytest.mark.skipif(
@@ -210,6 +216,7 @@ class TestCFamilyProjectMatrix:
     correct per-file grammar."""
 
     def _build(self, files: dict[str, str]):
+        from graphlint.config.manager import ConfigManager
         from graphlint.analyzer.graph import GraphBuilder
         from graphlint.analyzer.warnings import WarningCollector
         from graphlint.api import _build_registry
@@ -219,7 +226,11 @@ class TestCFamilyProjectMatrix:
             _write(root, rel, content)
 
         registry = _build_registry()
-        config: dict = {"entry_rules": [], "test_patterns": {}, "_root_dir": root}
+        # Use the DEFAULT config (with entry rules) so ``main`` is detected as an
+        # entry and reachability is actually exercised — not disabled, which would
+        # let every program be reported unreachable while the test still passed.
+        config = ConfigManager(root).load()
+        config["_root_dir"] = root
         config["_cfamily_header_flavors"] = resolve_header_flavors(
             [os.path.join(root, rel) for rel in files]
         )
@@ -279,6 +290,9 @@ class TestCFamilyProjectMatrix:
             e.source_id == main and e.target_id == run and e.edge_type == "call"
             for e in br.edges
         )
+        # Reachability is actually exercised: ``main`` is an entry and reachable.
+        assert br.node_id_map[main].is_entry, [n.qualified_name for n in br.node_id_map.values()]
+        assert main in br.reachable, "main() should be reachable from an entry"
 
     def test_mixed_project_no_corruption(self):
         """A C header (with a C++-looking string literal) and a C++ header
@@ -300,3 +314,111 @@ class TestCFamilyProjectMatrix:
         assert not any("Foo" in q for q in names), sorted(names)
         # C++ header parsed as C++: a real class.
         assert any(q.endswith(".Engine") for q in names), sorted(names)
+
+
+@pytest.mark.skipif(
+    not (_TREE_SITTER_C_AVAILABLE and _TREE_SITTER_CPP_AVAILABLE),
+    reason="tree-sitter grammars not installed",
+)
+class TestCppResolutionRegressions:
+    """Cross-TU member-call resolution regressions the reviewer flagged:
+    namespace/template receiver types, constructor call edges, pure-virtual
+    declarations, and constructor special names."""
+
+    def _build(self, files: dict[str, str]):
+        from graphlint.config.manager import ConfigManager
+        from graphlint.analyzer.graph import GraphBuilder
+        from graphlint.analyzer.warnings import WarningCollector
+        from graphlint.api import _build_registry
+
+        root = tempfile.mkdtemp(prefix="cfam_reg_")
+        for rel, content in files.items():
+            _write(root, rel, content)
+
+        registry = _build_registry()
+        config = ConfigManager(root).load()
+        config["_root_dir"] = root
+        config["_cfamily_header_flavors"] = resolve_header_flavors(
+            [os.path.join(root, rel) for rel in files]
+        )
+
+        prs = {}
+        for rel in files:
+            full = os.path.join(root, rel)
+            adapter = registry.adapter_for_file(full)
+            parsed = adapter.parse_file(full, root, config)
+            if parsed is not None:
+                prs[rel] = parsed
+
+        wb = WarningCollector()
+        gb = GraphBuilder(wb, registry=registry, config=config)
+        br = gb.build(prs)
+        file_id_to_path = {i: fp for i, fp in enumerate(prs, start=1)}
+        return br, wb, gb, file_id_to_path
+
+    def _calls_to(self, br, source_ids, target):
+        target_nodes = {
+            n.id for n in br.node_id_map.values() if n.qualified_name.endswith(target)
+        }
+        return [
+            e for e in br.edges
+            if e.edge_type == "call"
+            and e.source_id in source_ids
+            and e.target_id in target_nodes
+        ]
+
+    def test_namespace_receiver_call_edge(self):
+        br, wb, gb, _ = self._build({
+            "geo.h": "namespace geo { class Circle { public: void area(){} }; }\n",
+            "main.cpp": '#include "geo.h"\nint main(){ geo::Circle c; c.area(); return 0; }\n',
+        })
+        main = next((n.id for n in br.node_id_map.values() if n.qualified_name.endswith(".main")), 0)
+        assert self._calls_to(br, {main}, "Circle.area"), [
+            (e.source_id, e.target_id, e.edge_type) for e in br.edges
+        ]
+
+    def test_template_receiver_call_edge(self):
+        br, wb, gb, _ = self._build({
+            "box.h": "template<typename T> class Box { public: void get(){} }; \n",
+            "main.cpp": '#include "box.h"\nint main(){ Box<int> b; b.get(); return 0; }\n',
+        })
+        main = next((n.id for n in br.node_id_map.values() if n.qualified_name.endswith(".main")), 0)
+        assert self._calls_to(br, {main}, "Box.get"), [
+            (e.source_id, e.target_id, e.edge_type) for e in br.edges
+        ]
+
+    def test_constructor_call_edges(self):
+        br, wb, gb, _ = self._build({
+            "main.cpp": (
+                'class Circle { public: Circle(double){} void area(){} };\n'
+                'int main(){ Circle a(1.0); Circle* p = new Circle(2.0); return 0; }\n'
+            ),
+        })
+        main = next((n.id for n in br.node_id_map.values() if n.qualified_name.endswith(".main")), 0)
+        calls = self._calls_to(br, {main}, "Circle.Circle")
+        assert len(calls) >= 2, [
+            (e.source_id, e.target_id, e.edge_type) for e in br.edges
+        ]
+
+    def test_pure_virtual_modeled(self):
+        br, wb, gb, _ = self._build({
+            "shape.h": "class Shape { public: virtual double area() const = 0; };\n",
+            "main.cpp": '#include "shape.h"\nint main(){ Shape* s = nullptr; return 0; }\n',
+        })
+        assert any(
+            n.node_type == "method" and n.qualified_name.endswith("Shape.area")
+            for n in br.node_id_map.values()
+        ), [n.qualified_name for n in br.node_id_map.values()]
+
+    def test_constructor_is_special(self):
+        br, wb, gb, file_id_to_path = self._build({
+            "main.cpp": (
+                'class Service { public: Service(){} void run(){} };\n'
+                'int main(){ return 0; }\n'
+            ),
+        })
+        ctor = next(
+            (n for n in br.node_id_map.values() if n.qualified_name.endswith(".Service.Service")), None,
+        )
+        assert ctor is not None
+        assert gb._node_is_special(ctor, file_id_to_path, frozenset()) is True
