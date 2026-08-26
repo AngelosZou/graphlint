@@ -320,7 +320,14 @@ class IncrementalIndexer:
             futs = {}
             for fp in fps:
                 full_path = os.path.join(self.root_dir, fp)
-                adapter = self.registry.adapter_for_file(fp) if self.registry else None
+                # ``.h`` is ambiguous (C or C++): pick the C++ adapter when the
+                # file content shows C++ constructs, else the C adapter. Other
+                # extensions are routed by extension, unchanged.
+                adapter = (
+                    self.registry.adapter_for_parsing(full_path)
+                    if self.registry
+                    else None
+                )
                 if not adapter:
                     results.append((
                         fp,

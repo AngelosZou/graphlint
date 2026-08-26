@@ -140,6 +140,23 @@ def _resolve_symbol(
     return []
 
 
+def _resolve_project_path(fp: str, root_dir: str | None) -> str:
+    """Resolve a possibly relative parse-result key against *root_dir*.
+
+    Parse-result keys are kept relative to the project root, while the
+    registry's ``.h`` content sniff opens paths as-is (relative to the
+    *current working directory*).  Resolving against the root keeps
+    ``.h``→adapter routing deterministic regardless of CWD.  Absolute paths
+    pass through; a missing root falls back to the raw relative path (no
+    exception).
+    """
+    if not fp or os.path.isabs(fp):
+        return fp
+    if root_dir:
+        return os.path.normpath(os.path.join(root_dir, fp))
+    return fp
+
+
 def _drop_cross_file_static(
     target_ids: list[int],
     source_fid: int,
@@ -481,7 +498,10 @@ class GraphBuilder:
                 for adapter in self.registry.all_adapters():
                     entries.extend(
                         adapter.detect_entries(
-                            self._adapter_parse_results(adapter, changed_pr),
+                            self._adapter_parse_results(
+                                adapter, changed_pr, self.registry,
+                                self._root_dir_for_routing(),
+                            ),
                             self._nodes, self._node_id_map, detect_config,
                         )
                     )
@@ -491,7 +511,10 @@ class GraphBuilder:
                 for adapter in self.registry.all_adapters():
                     entries.extend(
                         adapter.detect_entries(
-                            self._adapter_parse_results(adapter, parse_results),
+                            self._adapter_parse_results(
+                                adapter, parse_results, self.registry,
+                                self._root_dir_for_routing(),
+                            ),
                             self._nodes, self._node_id_map, self.config,
                         )
                     )
@@ -706,7 +729,9 @@ class GraphBuilder:
     def _module_qname_for(self, file_path: str) -> str:
         """Convert file path to module qname using the registered language adapter."""
         if self.registry:
-            adapter = self.registry.adapter_for_file(file_path)
+            adapter = self.registry.adapter_for_file(
+                self._resolve_source_path(file_path)
+            )
             if adapter:
                 return adapter.file_to_module_with_csproj(file_path, self.config)
         return file_path
@@ -715,13 +740,30 @@ class GraphBuilder:
     def _adapter_parse_results(
         adapter: LanguageAdapter,
         parse_results: dict[str, ParseResult],
+        registry: LanguageRegistry | None = None,
+        root_dir: str | None = None,
     ) -> dict[str, ParseResult]:
-        """Restrict parse results to the adapter's own file extensions.
+        """Restrict *parse_results* to files handled by *adapter*.
 
         Without the filter every adapter iterates every project file and
-        applies every entry rule — the Python detector even re-parses .c
+        applies every entry rule — the Python detector even re-parses ``.c``
         files as Python.
+
+        Uses the registry's own file→adapter routing (including content
+        sniffing for ``.h``) so that a C++ header sniffed as C++ is filtered into
+        the C++ adapter — keeping routing, parsing and entry rules consistent.
+        Parse-result keys are relative to *root_dir*; the keys are resolved
+        against it before routing so a ``.h`` sniff reads the actual file
+        regardless of the current working directory.
         """
+        if registry is not None:
+            return {
+                fp: pr
+                for fp, pr in parse_results.items()
+                if registry.adapter_for_file(
+                    _resolve_project_path(fp, root_dir)
+                ) is adapter
+            }
         exts = adapter.file_extensions
         if not exts:
             return parse_results
@@ -892,6 +934,45 @@ class GraphBuilder:
             return self.registry.special_names()
         return frozenset()
 
+    @staticmethod
+    def _is_cpp_constructor(node: NodeInfo) -> bool:
+        """Whether *node* is a C++ constructor, recognised from its qname.
+
+        The C++ adapter's :meth:`is_special_name` handles destructors and
+        operators but cannot recognise a plain constructor (it only receives
+        the bare method name, which for ``Service() {}`` is just ``Service`` —
+        indistinguishable from an ordinary method).  Here we use the
+        *qualified* name: a ``method`` whose final segment equals the
+        immediately preceding segment is a constructor, e.g.
+        ``engine.Service.Service``.  ``node_type == "method"`` and at least two
+        segments are required so an arbitrary class/function name is not
+        misclassified, and destructors/operators (``~N`` / ``operatorX`` final
+        segments) still never match.
+        """
+        if node.node_type != "method" or not node.qualified_name:
+            return False
+        segments = node.qualified_name.split(".")
+        if len(segments) < 2:
+            return False
+        method_seg = segments[-1]
+        class_seg = segments[-2]
+        return bool(method_seg) and method_seg == class_seg
+
+    def _root_dir_for_routing(self) -> str | None:
+        """Project root used to resolve relative parse-result keys against."""
+        return self.config.get("_root_dir") if self.config else None
+
+    def _resolve_source_path(self, fp: str) -> str:
+        """Resolve a possible relative project path to a path the registry's
+        ``.h`` content sniff can actually read.
+
+        ``fid_map`` keys are the parse-result paths, which the pipeline keeps
+        relative to ``_root_dir``; ``sniff_header_language`` opens the path as-is,
+        so a relative ``.h`` would drop to the C fallback and a C++ header's
+        destructor would never be marked special.  Absolute paths pass through.
+        """
+        return _resolve_project_path(fp, self._root_dir_for_routing())
+
     def _make_special_name_check(
         self, fid_map: dict[str, int], fallback: frozenset[str]
     ) -> Callable[[NodeInfo], bool]:
@@ -906,7 +987,7 @@ class GraphBuilder:
         with no registered adapter fall back to the legacy union set.
         """
         registry = self.registry
-        path_by_fid = {fid: fp for fp, fid in fid_map.items()}
+        path_by_fid = {fid: self._resolve_source_path(fp) for fp, fid in fid_map.items()}
         adapter_cache: dict[int, Any] = {}
 
         def check(node: NodeInfo) -> bool:
@@ -920,7 +1001,15 @@ class GraphBuilder:
             adapter = adapter_cache[fid]
             if adapter is None:
                 return node.name in fallback
-            return adapter.is_special_name(node.name)
+            if adapter.is_special_name(node.name):
+                return True
+            # C++ constructors are not in the adapter's name set (the bare
+            # method name is indistinguishable from an ordinary method); use
+            # the graph-level qname predicate derived from the registry-routed
+            # adapter's language, not the file suffix.
+            if adapter.language_name == "cpp":
+                return self._is_cpp_constructor(node)
+            return False
 
         return check
 
@@ -935,7 +1024,9 @@ class GraphBuilder:
         code.
         """
         registry = self.registry
-        path_by_fid = {fid: fp for fp, fid in fid_map.items()}
+        path_by_fid = {
+            fid: self._resolve_source_path(fp) for fp, fid in fid_map.items()
+        }
         adapter_cache: dict[int, Any] = {}
 
         def check(node: NodeInfo) -> bool:
@@ -969,10 +1060,14 @@ class GraphBuilder:
         if self.registry is None:
             return node.name in fallback
         fp = file_id_to_path.get(node.file_id, "")
-        adapter = self.registry.adapter_for_file(fp) if fp else None
+        adapter = self.registry.adapter_for_file(self._resolve_source_path(fp)) if fp else None
         if adapter is None:
             return node.name in fallback
-        return adapter.is_special_name(node.name)
+        if adapter.is_special_name(node.name):
+            return True
+        if adapter.language_name == "cpp":
+            return self._is_cpp_constructor(node)
+        return False
 
     def _node_is_public_api(
         self,
@@ -984,7 +1079,7 @@ class GraphBuilder:
         if self.registry is None:
             return node.name in fallback
         fp = file_id_to_path.get(node.file_id, "")
-        adapter = self.registry.adapter_for_file(fp) if fp else None
+        adapter = self.registry.adapter_for_file(self._resolve_source_path(fp)) if fp else None
         if adapter is None:
             return node.name in fallback
         return node.name in adapter.public_api_names
