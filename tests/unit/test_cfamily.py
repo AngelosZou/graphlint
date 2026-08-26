@@ -198,3 +198,105 @@ class TestCFamilyEndToEnd:
             e.source_id == main_id and e.target_id == run_id and e.edge_type == "call"
             for e in br.edges
         ), [(e.source_id, e.target_id, e.edge_type) for e in br.edges]
+
+
+@pytest.mark.skipif(
+    not (_TREE_SITTER_C_AVAILABLE and _TREE_SITTER_CPP_AVAILABLE),
+    reason="tree-sitter grammars not installed",
+)
+class TestCFamilyProjectMatrix:
+    """The maintainer-required matrix: pure-C, pure-C++, and mixed C/C++
+    projects all analyse cleanly — no silent corruption, no phantom classes,
+    correct per-file grammar."""
+
+    def _build(self, files: dict[str, str]):
+        from graphlint.analyzer.graph import GraphBuilder
+        from graphlint.analyzer.warnings import WarningCollector
+        from graphlint.api import _build_registry
+
+        root = tempfile.mkdtemp(prefix="cfam_mat_")
+        for rel, content in files.items():
+            _write(root, rel, content)
+
+        registry = _build_registry()
+        config: dict = {"entry_rules": [], "test_patterns": {}, "_root_dir": root}
+        config["_cfamily_header_flavors"] = resolve_header_flavors(
+            [os.path.join(root, rel) for rel in files]
+        )
+
+        prs = {}
+        for rel in files:
+            full = os.path.join(root, rel)
+            adapter = registry.adapter_for_file(full)
+            parsed = adapter.parse_file(full, root, config)
+            if parsed is not None:
+                prs[rel] = parsed
+
+        wb = WarningCollector()
+        gb = GraphBuilder(wb, registry=registry, config=config)
+        br = gb.build(prs)
+        return br, wb, registry
+
+    def test_pure_c_project(self):
+        br, wb, _reg = self._build({
+            "point.h": (
+                "const char* s = \"class Foo\";\n"  # C string literal, must not create a class
+                "struct Point { int x; int y; };\n"
+                "int add(Point p);\n"
+            ),
+            "point.c": (
+                '#include "point.h"\n'
+                "static int impl(int y){ return y + 1; }\n"
+                "int add(Point p){ return impl(p.x); }\n"
+                "int main(void){ return add((struct Point){0}); }\n"
+            ),
+        })
+        types = {n.node_type for n in br.node_id_map.values()}
+        # Pure C: no `class` node, and the "class Foo" string literal does NOT
+        # create a phantom class (silent-corruption guard).
+        assert "class" not in types, sorted(types)
+        assert any(n.node_type == "struct" for n in br.node_id_map.values())
+        assert not any(
+            n.name == "Foo" for n in br.node_id_map.values()
+        ), [n.qualified_name for n in br.node_id_map.values()]
+
+    def test_pure_cpp_project(self):
+        br, wb, _reg = self._build({
+            "app.hpp": "class App { public: int run(){ return 42; } };\n",
+            "main.cpp": '#include "app.hpp"\nint main(){ App a; a.run(); return 0; }\n',
+        })
+        assert any(n.node_type == "class" and n.name == "App" for n in br.node_id_map.values())
+        run = next(
+            (n.id for n in br.node_id_map.values()
+             if n.qualified_name.endswith(".App.run")), 0,
+        )
+        main = next(
+            (n.id for n in br.node_id_map.values()
+             if n.qualified_name.endswith(".main")), 0,
+        )
+        assert run and main
+        assert any(
+            e.source_id == main and e.target_id == run and e.edge_type == "call"
+            for e in br.edges
+        )
+
+    def test_mixed_project_no_corruption(self):
+        """A C header (with a C++-looking string literal) and a C++ header
+        coexist: the C header stays C (struct, no phantom class), the C++ header
+        becomes a C++ class, and both share one graph."""
+        br, wb, _reg = self._build({
+            "util.h": (
+                'const char* s = "class Foo";\n'
+                "struct Point { int x; };\n"
+                "int helper(void);\n"
+            ),
+            "util.c": '#include "util.h"\nint helper(void){ return 1; }\nint main(void){ return helper(); }\n',
+            "engine.h": "class Engine { public: void start(){}; };\n",
+            "main.cpp": '#include "engine.h"\nint main(){ Engine e; e.start(); return 0; }\n',
+        })
+        names = {n.qualified_name for n in br.node_id_map.values()}
+        # C header parsed as C: struct exists, and the "class Foo" string is not a class.
+        assert any(q.endswith(".Point") for q in names), sorted(names)
+        assert not any("Foo" in q for q in names), sorted(names)
+        # C++ header parsed as C++: a real class.
+        assert any(q.endswith(".Engine") for q in names), sorted(names)
