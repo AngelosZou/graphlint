@@ -1,6 +1,6 @@
 ---
 name: graphlint
-description: Dead-code detection for AI-generated codebases via the graphlint dependency-graph analyzer.
+description: Load for codebase understanding, exploration, and modification — maps the real dependency graph to separate live, reachable code from dead code, unused imports, and circular references, so refactors, cleanups, and deletions are safe.
 ---
 
 # graphlint — Dead-Code & Dependency Analysis
@@ -10,8 +10,9 @@ Static analysis of a project's dependency graph: finds components unreachable fr
 **Languages:** Python (built in) · Rust (`pip install graphlint[rust]`) · C# (`pip install graphlint[csharp]`) · C/C++ (`pip install graphlint[c]`) · TypeScript/JavaScript (`pip install graphlint[typescript]`)
 
 ## When to use
-- After code modifications: check whether your edits left dead or redundant code.
-- Before analyzing or changing a codebase: understand how a feature is wired in.
+- When understanding or exploring a codebase: see how a feature is wired in and which code is actually reachable.
+- Before modifying, refactoring, or deleting code: confirm a symbol is truly live before you change or remove it.
+- After modifications: verify your edits left no dead or redundant code behind.
 
 ## Core commands
 ```bash

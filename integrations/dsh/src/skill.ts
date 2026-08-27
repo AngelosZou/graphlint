@@ -20,9 +20,10 @@ graphlint is exposed as tools — **prefer the tools over shelling out to the CL
 
 const GRAPHLINT_SKILL: SkillRegistration = {
   name: 'graphlint',
-  description: 'Dead-code detection for AI-generated codebases via the graphlint dependency-graph analyzer.',
+  description:
+    'Load for codebase understanding, exploration, and modification: map the real dependency graph to separate live, reachable code from dead code, unused imports, and circular references, so refactors, cleanups, and deletions are safe.',
   whenToUse:
-    'After code modifications, or before analyzing a codebase, to find dead code, circular references, unused imports and other warnings.',
+    'Use when understanding, exploring, or modifying a codebase. Before editing/refactoring/deleting or auditing code you have not fully mapped, run graphlint (via graphlint_query) to see which symbols are actually reachable from entry points; after edits, rerun it to confirm no dead or redundant code was left behind.',
   source: 'custom',
   invocation: { modelInvocable: true, userInvocable: true },
   content: DSH_INTRO + SKILL_BODY,
