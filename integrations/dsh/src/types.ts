@@ -123,4 +123,11 @@ export interface PluginContext {
   skills: SkillsService
   jobs: JobsService
   timer: TimerLike
+  /**
+   * Optional service lookup (Cordis `ctx.get`). Used only to probe peer
+   * plugins that must never become a hard dependency — see `secondary.ts`.
+   * Declared optional so a host that omits the mixin degrades to "not
+   * installed" instead of throwing.
+   */
+  get?(name: string): unknown
 }

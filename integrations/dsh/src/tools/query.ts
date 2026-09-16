@@ -4,13 +4,15 @@ import type { JsonValue, PluginContext, ToolExecutionLike } from '../types.js'
 import { queryArgv } from '../args.js'
 import { failureText, parseQueryOutput, renderQueryText, type QuerySuccess } from '../parse.js'
 import { resolveGraphlint } from '../python.js'
-import { guardRoot, sessionCwd } from '../root.js'
+import { SECONDARY_ROOT_NOTE, guardAllowedRoot, sessionCwd } from '../root.js'
 import { DEFAULT_LIMITS, runGraphlint } from '../runner.js'
+import { secondaryDirs } from '../secondary.js'
 
 const ROOT_DESCRIPTION =
   'Project root directory to analyze. Defaults to the session working directory. ' +
   'Only pass the working directory itself or one of its subdirectories — scanning a high-level root ' +
-  '(such as a user home directory) builds a huge index and can block for many minutes.'
+  '(such as a user home directory) builds a huge index and can block for many minutes. ' +
+  SECONDARY_ROOT_NOTE
 
 interface QueryArgs {
   root_dir?: string
@@ -67,9 +69,10 @@ export function registerQueryTool(ctx: PluginContext): void {
       async execute(args, exec): Promise<Record<string, JsonValue>> {
         const typed = (args ?? {}) as QueryArgs
         const sessionRoot = sessionCwd(exec as ToolExecutionLike | undefined)
+        const extraRoots = await secondaryDirs(ctx, sessionRoot)
         let rootDir: string
         try {
-          rootDir = guardRoot(typed.root_dir, sessionRoot)
+          rootDir = guardAllowedRoot(typed.root_dir, sessionRoot, extraRoots)
         } catch (err) {
           return { error: err instanceof Error ? err.message : String(err) }
         }

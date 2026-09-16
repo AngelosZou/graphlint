@@ -64,6 +64,26 @@ working directory** (the default) — a hard guard rejects anything else with a
 clear error. Scanning a high-level root (such as a user home directory) makes
 graphlint build a huge first-time index and can block for many minutes.
 
+### Optional Secondary working directories (`dsh-multi-folder`)
+
+When the [dsh-multi-folder](https://github.com/AngelosZou/dsh-multi-folder)
+plugin is installed and the user has configured secondary working directories
+for the session, those directories automatically become valid `root_dir`
+values for all three tools: the analysis root is accepted inside any configured
+secondary directory, graphlint runs with that directory as its working
+directory, and the index lands in its `.graphlint/`. A relative `root_dir`
+still resolves against the primary session workspace.
+
+This compatibility is automatic and optional. Each tool probes
+`ctx.get('multiFolder')` at call time and nothing else changes:
+
+- multi-folder absent, unconfigured, incompatible, or throwing → the plugin
+  behaves exactly as if it did not exist (the guard falls back to the session
+  working directory, and the refusal message keeps its original wording);
+- multi-folder present → a refusal still names the configured secondary
+  directories and the `/multi-folder` command that adds one, so the model
+  learns the valid roots instead of retrying blindly.
+
 ## Development
 
 ```bash
@@ -74,5 +94,7 @@ npm test             # node --test lib/test/
 ```
 
 The test suite covers the pure logic layers (root guard, argv construction,
-JSON parsing) plus manifest/patch contract checks. A committed
-`package-lock.json` is required (CI runs `npm ci`).
+JSON parsing), the optional multi-folder probe and its end-to-end tool wiring
+(root resolution and spawned CLI cwd, with and without the peer plugin), plus
+manifest/patch contract checks. A committed `package-lock.json` is required (CI
+runs `npm ci`).

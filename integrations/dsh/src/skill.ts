@@ -14,7 +14,7 @@ graphlint is exposed as tools — **prefer the tools over shelling out to the CL
 - \`graphlint_build\` — \`graphlint build --force\` as a **background job** (poll with \`job_output\`). Use only when \`graphlint_query\` results look wrong or stale.
 - \`graphlint_config\` — \`graphlint config\` operations: \`show\`/\`get\`/\`set\`, plus \`add-entry-rule\` (\`rule_json\`), \`remove-entry-rule\` (\`name\`), \`add-exclude\`/\`remove-exclude\` (\`exclude_pattern\`) for custom entry rules.
 
-\`root_dir\` must stay inside the session working directory (the default) — scanning a high-level root can block for minutes. Flags the tools do not expose (e.g. \`--sort-by\`, \`--fail-on\`) require running \`graphlint\` directly in a shell.
+\`root_dir\` must stay inside the session working directory (the default) — or inside one of the session's secondary working directories when the dsh-multi-folder plugin is configured for this session. Scanning any other (high-level) root can block for minutes. Flags the tools do not expose (e.g. \`--sort-by\`, \`--fail-on\`) require running \`graphlint\` directly in a shell.
 
 `
 

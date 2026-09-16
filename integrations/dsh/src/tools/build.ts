@@ -3,12 +3,14 @@ import { defineTool } from '@deepseek-ai/dsh-tools'
 import type { JobHooks, JsonValue, PluginContext, ToolExecutionLike } from '../types.js'
 import { buildArgv } from '../args.js'
 import { resolveGraphlint } from '../python.js'
-import { guardRoot, sessionCwd } from '../root.js'
+import { SECONDARY_ROOT_NOTE, guardAllowedRoot, sessionCwd } from '../root.js'
+import { secondaryDirs } from '../secondary.js'
 
 const ROOT_DESCRIPTION =
   'Project root directory to build the index for. Defaults to the session working directory. ' +
   'Only pass the working directory itself or one of its subdirectories — building an index for a high-level root ' +
-  '(such as a user home directory) can take many minutes.'
+  '(such as a user home directory) can take many minutes. ' +
+  SECONDARY_ROOT_NOTE
 
 interface BuildArgs {
   root_dir?: string
@@ -47,9 +49,10 @@ export function registerBuildTool(ctx: PluginContext): void {
       async execute(args, exec): Promise<Record<string, JsonValue>> {
         const typed = (args ?? {}) as BuildArgs
         const sessionRoot = sessionCwd(exec as ToolExecutionLike | undefined)
+        const extraRoots = await secondaryDirs(ctx, sessionRoot)
         let rootDir: string
         try {
-          rootDir = guardRoot(typed.root_dir, sessionRoot)
+          rootDir = guardAllowedRoot(typed.root_dir, sessionRoot, extraRoots)
         } catch (err) {
           return { error: err instanceof Error ? err.message : String(err) }
         }

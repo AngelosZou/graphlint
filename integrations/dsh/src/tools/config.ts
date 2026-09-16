@@ -3,12 +3,14 @@ import { defineTool } from '@deepseek-ai/dsh-tools'
 import type { JsonValue, PluginContext, ToolExecutionLike } from '../types.js'
 import { configArgv, type ConfigAction } from '../args.js'
 import { resolveGraphlint } from '../python.js'
-import { guardRoot, sessionCwd } from '../root.js'
+import { SECONDARY_ROOT_NOTE, guardAllowedRoot, sessionCwd } from '../root.js'
 import { runGraphlint } from '../runner.js'
+import { secondaryDirs } from '../secondary.js'
 
 const ROOT_DESCRIPTION =
   'Project root directory whose .graphlint/config.json is read or updated. Defaults to the session working directory. ' +
-  'Only pass the working directory itself or one of its subdirectories.'
+  'Only pass the working directory itself or one of its subdirectories. ' +
+  SECONDARY_ROOT_NOTE
 
 interface ConfigArgs {
   action?: string
@@ -78,9 +80,10 @@ export function registerConfigTool(ctx: PluginContext): void {
         const requested = typeof typed.action === 'string' ? typed.action : 'show'
         const action: ConfigAction = CONFIG_ACTIONS.has(requested) ? (requested as ConfigAction) : 'show'
         const sessionRoot = sessionCwd(exec as ToolExecutionLike | undefined)
+        const extraRoots = await secondaryDirs(ctx, sessionRoot)
         let rootDir: string
         try {
-          rootDir = guardRoot(typed.root_dir, sessionRoot)
+          rootDir = guardAllowedRoot(typed.root_dir, sessionRoot, extraRoots)
         } catch (err) {
           return { error: err instanceof Error ? err.message : String(err) }
         }
