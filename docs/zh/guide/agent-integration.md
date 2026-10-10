@@ -26,7 +26,7 @@ graphlint install
 | 部分 | 内容 |
 |------|------|
 | **使用场景** | 何时运行 graphlint — 修改后清理、分析前审计 |
-| **核心命令** | `query`（自动增量构建）、`query --json`、`query -g <id>`、`config show`；仅当 query 结果异常时才用 `build --force` |
+| **核心命令** | `query`（自动增量构建）、`query --json`、`query -g <id>`、`config show`、`config diff`；仅当 query 结果异常时才用 `build --force` |
 | **关键参数** | `-g`/`--graph-id`、`-j`/`--json`、`-w`/`--warn-types`、`-C`、`-R`/`--reachability`、`--public-as-entry`、`-t`、`--dead-code-tests`、`--sort-by`、`--fail-on`、build 的 `-f`/`-P` |
 | **自定义入口规则** | `config add-entry-rule` / `remove-entry-rule` / `add-exclude`，适配项目框架约定 |
 | **使用示例** | 重构后检查、按严重度排序死代码、图详情、CI 门禁 |

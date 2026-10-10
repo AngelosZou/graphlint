@@ -38,6 +38,7 @@ test('canonical body covers the core CLI surface', () => {
   for (const needle of [
     'graphlint query',
     'graphlint build --force',
+    'graphlint config diff',
     '--warn-types',
     '--reachability',
     '--public-as-entry',

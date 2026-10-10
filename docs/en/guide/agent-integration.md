@@ -26,7 +26,7 @@ Re-running `install` reports `up to date` or upgrades an older installed version
 | Section | Content |
 |---------|---------|
 | **Usage scenarios** | When to run graphlint — post-modification cleanup, pre-analysis audit |
-| **Core commands** | `query` (auto incremental build), `query --json`, `query -g <id>`, `config show`; `build --force` only when query results look stale |
+| **Core commands** | `query` (auto incremental build), `query --json`, `query -g <id>`, `config show`, `config diff`; `build --force` only when query results look stale |
 | **Key parameters** | `-g`/`--graph-id`, `-j`/`--json`, `-w`/`--warn-types`, `-C`, `-R`/`--reachability`, `--public-as-entry`, `-t`, `--dead-code-tests`, `--sort-by`, `--fail-on`, build `-f`/`-P` |
 | **Custom entry rules** | `config add-entry-rule` / `remove-entry-rule` / `add-exclude` for framework-specific conventions |
 | **Examples** | Refactor check, dead code by severity, graph detail, CI gate |

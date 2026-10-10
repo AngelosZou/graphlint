@@ -128,7 +128,7 @@ All channels derive from one canonical skill document shipped in the package (`g
 
 A plugin bundle for the [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) plugin ecosystem ships in this repository under [integrations/dsh](integrations/dsh/):
 
-- **Tools** — `graphlint_query` (dependency-graph queries with structured results), `graphlint_build` (index build as a background job, polled with `job_output`), `graphlint_config` (show/get/set for `.graphlint/config.json`).
+- **Tools** — `graphlint_query` (dependency-graph queries with structured results), `graphlint_build` (index build as a background job, polled with `job_output`), `graphlint_config` (show/diff/get/set for `.graphlint/config.json`).
 - **Skill** — a `graphlint` skill teaches the agent when and how to use the tools.
 - **Safety** — tools default to the session working directory and hard-refuse any root outside it, so an accidental high-level scan cannot block a turn.
 

@@ -20,6 +20,7 @@ graphlint query                  # List dependency graphs; auto-rebuilds the ind
 graphlint query --json           # Structured output
 graphlint query -g <id> -d full  # Full detail on one graph
 graphlint config show            # Current project config
+graphlint config diff            # How project config differs from the shipped default rule template
 ```
 
 Run `query` normally — it keeps the index up to date by itself (automatic incremental build). Use `graphlint build --force` **only when query results look wrong or stale**; a full rebuild is slow on large codebases.

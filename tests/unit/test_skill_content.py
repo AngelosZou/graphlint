@@ -48,6 +48,7 @@ def test_canonical_body_covers_current_cli_surface() -> None:
     for needle in (
         "graphlint query",
         "graphlint build --force",
+        "config diff",
         "--warn-types",
         "--reachability",
         "--public-as-entry",
@@ -58,5 +59,7 @@ def test_canonical_body_covers_current_cli_surface() -> None:
         "~200 s",
     ):
         assert needle in body, f"canonical body must mention: {needle}"
-    # The skill guidance is concise — guard against doc-style bloat.
-    assert len(body) < 5000, "canonical body should stay concise"
+    # The skill guidance is concise — guard against doc-style bloat. The budget
+    # tracks the CLI surface this file documents (query, build, config incl. the
+    # template-version notice workflow).
+    assert len(body) < 5600, "canonical body should stay concise"
