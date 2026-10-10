@@ -765,3 +765,101 @@ class TestEdgeIdentityInsert:
         rows = conn.execute("SELECT DISTINCT target_id FROM edges").fetchall()
         assert [r[0] for r in rows] == [3]
         assert conn.execute("SELECT COUNT(*) FROM edges").fetchone()[0] == 1
+
+
+# =============================================================================
+# TEST-T4: a warning whose node row is not stored must not abort the update
+# =============================================================================
+
+
+@pytest.mark.timeout(30)
+class TestWarningNodeReference:
+    """``warnings.node_id`` is a foreign key onto ``nodes``.
+
+    A warning can reference an id this pass does not store (a synthetic or
+    file-less graph-level finding, or in incremental mode a node outside the
+    changed files). Writing it aborted the whole ``update_db`` transaction with
+    ``FOREIGN KEY constraint failed``, losing every other table's work.
+    """
+
+    def _db(self):
+        conn = _in_memory_db()
+        db = MagicMock(spec=Database)
+        db.conn = conn
+
+        def mock_execute(sql: str, params=None):
+            if params is None:
+                return conn.execute(sql)
+            return conn.execute(sql, params)
+
+        db.execute = mock_execute
+        db.fetchall = lambda sql, p=(): conn.execute(sql, p).fetchall()
+        db.executemany = lambda sql, pl: conn.executemany(sql, pl)
+        return conn, db
+
+    def _run(self, warnings, changed=("src/mod.py",), incremental=False):
+        from graphlint.incremental._db_ops import update_db
+
+        conn, db = self._db()
+        node = NodeInfo(
+            id=1, file_id=1, name="f", qualified_name="mod.f",
+            node_type="function", line_start=1, line_end=3,
+        )
+        br = _make_build_result(
+            nodes=[node],
+            edges=[],
+            files_data={"src/mod.py": _make_parse_result([])},
+            files=["src/mod.py"],
+            warnings=warnings,
+        )
+        update_db(db, br, [], list(changed), "/root", {}, incremental=incremental)
+        return conn
+
+    def test_warning_for_an_unstored_node_keeps_the_row_without_the_id(self):
+        """The build survives; the warning stays, only its node link is lost."""
+        conn = self._run([
+            WarningInfo(
+                warn_type="dead_code", message="unreachable", file_path="src/mod.py",
+                line=4, node_id=99,
+            ),
+        ])
+        rows = conn.execute("SELECT file_id, node_id, warn_type FROM warnings").fetchall()
+        assert len(rows) == 1
+        assert rows[0]["warn_type"] == "dead_code"
+        assert rows[0]["node_id"] is None
+        assert rows[0]["file_id"] is not None
+
+    def test_warning_for_a_stored_node_keeps_its_id(self):
+        conn = self._run([
+            WarningInfo(
+                warn_type="dead_code", message="unreachable", file_path="src/mod.py",
+                line=1, node_id=1,
+            ),
+        ])
+        assert conn.execute("SELECT node_id FROM warnings").fetchone()["node_id"] == 1
+
+    def test_warning_without_a_known_file_is_still_stored(self):
+        """Graph-level findings have no file; they must not raise either."""
+        conn = self._run([
+            WarningInfo(
+                warn_type="circular_ref", message="Resource cycle: a -> a",
+                file_path="", line=0, node_id=0,
+            ),
+        ])
+        row = conn.execute("SELECT file_id, node_id FROM warnings").fetchone()
+        assert row is not None
+        assert row["file_id"] is None
+        assert row["node_id"] is None
+
+    def test_incremental_update_drops_warnings_of_unchanged_files(self):
+        conn = self._run(
+            [
+                WarningInfo(
+                    warn_type="dead_code", message="unreachable",
+                    file_path="src/other.py", line=2, node_id=0,
+                ),
+            ],
+            changed=("src/mod.py",),
+            incremental=True,
+        )
+        assert conn.execute("SELECT COUNT(*) FROM warnings").fetchone()[0] == 0

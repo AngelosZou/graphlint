@@ -177,6 +177,32 @@ def _load_fid_map(db: Database) -> dict[str, int]:
     return result
 
 
+def _insertable_node_ids(
+    build_result: GraphBuildResult,
+    fid_map: dict[str, int],
+    changed_files: Optional[set[str]] = None,
+) -> set[int]:
+    """Node ids this pass actually stores.
+
+    A node row is written only when the node has a positive id, its file has a
+    row in ``files`` and — in incremental mode — that file changed. The
+    predicate lives here because ``warnings.node_id`` is a foreign key onto
+    exactly these rows: the warning writer must gate on the same rule.
+    """
+    mem_fid_to_path: dict[int, str] = dict(enumerate(build_result.files, 1))
+    insertable: set[int] = set()
+    for node in build_result.nodes:
+        if node.id == 0:
+            continue
+        fp = mem_fid_to_path.get(node.file_id, "")
+        if changed_files is not None and fp not in changed_files:
+            continue
+        if not fid_map.get(fp, 0):
+            continue
+        insertable.add(node.id)
+    return insertable
+
+
 def _insert_nodes(
     db: Database,
     build_result: GraphBuildResult,
@@ -186,18 +212,15 @@ def _insert_nodes(
     """Insert nodes sorted by parent dependency for FK-safe ordering."""
     # build_result.files[fid-1] = path for each memory file_id
     mem_fid_to_path: dict[int, str] = dict(enumerate(build_result.files, 1))
+    insertable = _insertable_node_ids(build_result, fid_map, changed_files)
 
     rows: list[tuple[Any, ...]] = []
     for node in build_result.nodes:
-        if node.id == 0:
+        if node.id not in insertable:
             continue
         fp = mem_fid_to_path.get(node.file_id, "")
-        if changed_files is not None and fp not in changed_files:
-            continue
         fid = fid_map.get(fp, 0)
         node_id = node.id or 0
-        if not fid or node_id == 0:
-            continue
         cn = node.canonical_name or None
         ip = node.is_partial
         vis = node.visibility or None
@@ -340,7 +363,18 @@ def _insert_warnings(
     fid_map: dict[str, int],
     changed_files: Optional[set[str]] = None,
 ) -> None:
-    """Insert warnings."""
+    """Insert warnings.
+
+    ``warnings.node_id`` is a foreign key onto ``nodes``, but the warning
+    channel is fed by checks whose ids are not always stored by this pass:
+    graph-level findings (cycles, manifest problems) carry synthetic or
+    file-less ids, and in incremental mode a node outside the changed files is
+    never re-inserted. Writing such an id aborted the whole update with
+    ``FOREIGN KEY constraint failed``, discarding every other table's work. The
+    unresolvable id is dropped instead — the warning itself survives at
+    file/line level, which is what a caller can still act on.
+    """
+    insertable_nodes = _insertable_node_ids(build_result, fid_map, changed_files)
     batch: list[tuple[Any, ...]] = []
     for w in build_result.warnings:
         if (
@@ -350,10 +384,13 @@ def _insert_warnings(
         ):
             continue
         wfid = fid_map.get(w.file_path or "")
+        node_id = w.node_id or None
+        if node_id is not None and node_id not in insertable_nodes:
+            node_id = None
         batch.append(
             (
                 wfid,
-                w.node_id or None,
+                node_id,
                 w.warn_type,
                 w.severity,
                 w.message,
