@@ -19,7 +19,7 @@ test('queryArgv: base invocation forces json, english and root-dir', () => {
 
 test('queryArgv: maps every optional flag', () => {
   assert.deepEqual(
-    queryArgv(EXE, { rootDir: 'C:\\proj', warnTypes: 'dead_code,circular_ref', includeTests: true, graphId: 7, publicAsEntry: true }),
+    queryArgv(EXE, { rootDir: 'C:\\proj', warnTypes: 'dead_code,unused_import', includeTests: true, graphId: 7, publicAsEntry: true }),
     [
       EXE,
       'query',
@@ -27,7 +27,7 @@ test('queryArgv: maps every optional flag', () => {
       '--lang',
       'en',
       '--warn-types',
-      'dead_code,circular_ref',
+      'dead_code,unused_import',
       '--include-tests',
       '--public-as-entry',
       '--graph-id',

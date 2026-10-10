@@ -259,7 +259,7 @@ class TestFullBuildDelete:
         conn.execute(
             "INSERT INTO warnings (file_id, warn_type, severity, message, line) "
             "VALUES (?, ?, ?, ?, ?)",
-            (1, "circular_ref", "warning", "cycle", 2),
+            (1, "write_only", "warning", "write-only variable", 2),
         )
         conn.execute(
             "INSERT INTO graph_snapshots (snapshot_time, node_count) "
@@ -842,7 +842,7 @@ class TestWarningNodeReference:
         """Graph-level findings have no file; they must not raise either."""
         conn = self._run([
             WarningInfo(
-                warn_type="circular_ref", message="Resource cycle: a -> a",
+                warn_type="unresolved_ref", message="Missing resource: a.tscn",
                 file_path="", line=0, node_id=0,
             ),
         ])

@@ -57,14 +57,14 @@ graphlint query -g 3 --detail full
 # 仅显示有 5 个以上节点且按警告数排序的结果
 graphlint query --min-nodes 5 --sort-by warnings
 
-# 仅查询循环引用警告
-graphlint query -w "circular_ref"
+# 仅查询未使用 import 警告
+graphlint query -w "unused_import"
 
 # 无自动扫描模式（适用于只读查询）
 graphlint query --no-scan
 
-# 检测到死代码或循环引用时返回退出码 2
-graphlint query --json --fail-on dead_code,circular_ref
+# 检测到死代码或未使用 import 时返回退出码 2
+graphlint query --json --fail-on dead_code,unused_import
 ```
 
 ### 退出码
@@ -80,8 +80,8 @@ graphlint query --json --fail-on dead_code,circular_ref
 使用 `--fail-on`（逗号分隔的警告类型列表）可在匹配到警告时使命令失败。这支持在 CI pipeline 中集成：
 
 ```bash
-# CI pipeline：检测到死代码或循环引用时失败
-graphlint query --json --fail-on dead_code,circular_ref || exit 1
+# CI pipeline：检测到死代码或未使用 import 时失败
+graphlint query --json --fail-on dead_code,unused_import || exit 1
 ```
 
 ## install — 为 Agent 工具安装

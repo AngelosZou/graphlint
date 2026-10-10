@@ -16,7 +16,6 @@ WARN_TYPE_VALUES: frozenset[str] = frozenset(
     {
         "unused_import",
         "dynamic_import",
-        "circular_ref",
         "syntax_error",
         "write_only",
         "deprecated_usage",

@@ -1,6 +1,6 @@
 # Warning Type Reference
 
-graphlint supports 11 code analysis warning types.
+graphlint supports 10 code analysis warning types.
 
 ## Warning Types Overview
 
@@ -8,7 +8,6 @@ graphlint supports 11 code analysis warning types.
 |-------------|----------|-------------|
 | `unused_import` | `warning` | Imported module or name is never used |
 | `dynamic_import` | `warning` | Dynamic import (e.g., `__import__()` or `importlib.import_module()`) |
-| `circular_ref` | `warning` | Circular dependency between modules or components |
 | `syntax_error` | `error` | File contains a syntax error, cannot be parsed |
 | `write_only` | `warning` | Variable is assigned but never read |
 | `deprecated_usage` | `warning` | Usage of a deprecated API |
@@ -39,10 +38,6 @@ Detects dynamic imports using `__import__()` or `importlib.import_module()`. If 
 module = __import__(f"plugin_{name}")       # Dynamic import → warning
 lib = importlib.import_module("json")        # Absolute import → OK
 ```
-
-### circular_ref — Circular Reference
-
-Detects circular dependencies between components via graph algorithms. Triggered when two or more components have mutual references.
 
 ### syntax_error — Syntax Error
 
@@ -99,11 +94,11 @@ File size exceeds the `performance.max_file_size_mb` config value (default 10MB)
 ### CLI Method
 
 ```bash
-# Show only circular reference warnings
-graphlint query --warn-types "circular_ref"
+# Show only unused import warnings
+graphlint query --warn-types "unused_import"
 
 # Show multiple warning types
-graphlint query --warn-types "circular_ref,unused_import"
+graphlint query --warn-types "unused_import,write_only"
 ```
 
 ### API Method
@@ -111,8 +106,8 @@ graphlint query --warn-types "circular_ref,unused_import"
 ```python
 from graphlint.api import query
 
-# Show only circular references
-result = query(warn_types="circular_ref", json_output=True)
+# Show only unused imports
+result = query(warn_types="unused_import", json_output=True)
 
 # Exclude clean graphs
 result = query(exclude_clean=True)

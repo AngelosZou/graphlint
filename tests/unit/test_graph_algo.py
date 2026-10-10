@@ -485,51 +485,6 @@ class TestBuildCallGraph:
 
 
 @pytest.mark.timeout(30)
-class TestBuildDigraph:
-    """Tests for _build_digraph."""
-
-    def test_call_and_inherit_edges(self):
-        from graphlint.analyzer._graph_algo import _build_digraph
-
-        nodes = [_make_node(i, f"Node{i}") for i in range(1, 4)]
-        edges = [
-            _make_edge(1, 2, "call"),
-            _make_edge(2, 3, "inherit"),
-        ]
-
-        dg = _build_digraph(nodes, edges)
-
-        assert dg[1] == [2]
-        assert dg[2] == [3]
-        assert dg[3] == []
-
-    def test_non_call_inherit_ignored(self):
-        from graphlint.analyzer._graph_algo import _build_digraph
-
-        nodes = [_make_node(1, "A"), _make_node(2, "B")]
-        edges = [
-            _make_edge(1, 2, "read"),
-            _make_edge(1, 2, "decorate"),
-        ]
-
-        dg = _build_digraph(nodes, edges)
-
-        assert dg[1] == []
-        assert dg[2] == []
-
-    def test_all_nodes_present(self):
-        from graphlint.analyzer._graph_algo import _build_digraph
-
-        nodes = [_make_node(i, f"Node{i}") for i in range(1, 4)]
-        edges: list[EdgeInfo] = []
-
-        dg = _build_digraph(nodes, edges)
-
-        assert set(dg.keys()) == {1, 2, 3}
-        assert all(v == [] for v in dg.values())
-
-
-@pytest.mark.timeout(30)
 class TestBuildClassSpecialMap:
     """Tests for _build_class_special_map."""
 

@@ -93,10 +93,10 @@ graphlint query --max-results 10
 graphlint query --sort-by nodes
 
 # 过滤警告类型
-graphlint query --warn-types "circular_ref,unused_import"
+graphlint query --warn-types "unused_import,write_only"
 
 # CI pipeline：检测到死代码时返回非零退出码
-graphlint query --json --fail-on dead_code,circular_ref
+graphlint query --json --fail-on dead_code,unused_import
 ```
 
 ### 构建/重建索引
@@ -219,8 +219,8 @@ cfg = graphlint.configure(action="show")
 
 ```bash
 #!/bin/bash
-# 检查循环引用
-graphlint query --warn-types "circular_ref" --json | grep -q "circular_ref" && echo "发现循环引用！" || echo "通过"
+# 检查未使用 import
+graphlint query --warn-types "unused_import" --json | grep -q "unused_import" && echo "发现未使用 import！" || echo "通过"
 ```
 
 ### 与代码质量工具集成

@@ -128,8 +128,14 @@ class TestGraphBuilder:
         warnings = [w for w in self.wc.get_all() if w.warn_type == "unused_variable"]
         assert isinstance(warnings, list)
 
-    def test_circular_detection(self):
-        """A→B→C→A call chain produces circular_ref warning."""
+    def test_no_circular_ref_warning(self):
+        """Cycle detection was removed: an A→B→C→A call chain must not warn.
+
+        The old node-level SCC detector reported intra-file mutual recursion as
+        ``circular_ref``; that warn type no longer exists, and the collector
+        raises ``ValueError`` for an unknown type, so this also guards against
+        a silent re-introduction.
+        """
         node_a = _make_node(1, "A", "function", qname="mod.A")
         node_b = _make_node(2, "B", "function", qname="mod.B")
         node_c = _make_node(3, "C", "function", qname="mod.C")
@@ -137,20 +143,7 @@ class TestGraphBuilder:
         result_b = _make_result("b.py", [node_b], name_usages={"C"})
         result_c = _make_result("c.py", [node_c], name_usages={"A"})
         self._build({"a.py": result_a, "b.py": result_b, "c.py": result_c})
-        circular = [w for w in self.wc.get_all() if w.warn_type == "circular_ref"]
-        assert isinstance(circular, list)
-
-    def test_no_false_circular(self):
-        """Plain A→B→C chain (no cycle) should not have circular_ref."""
-        node_a = _make_node(1, "A", "function", qname="mod.A")
-        node_b = _make_node(2, "B", "function", qname="mod.B")
-        node_c = _make_node(3, "C", "function", qname="mod.C")
-        result_a = _make_result("a.py", [node_a], name_usages={"B"})
-        result_b = _make_result("b.py", [node_b], name_usages={"C"})
-        result_c = _make_result("c.py", [node_c])
-        self._build({"a.py": result_a, "b.py": result_b, "c.py": result_c})
-        circular = [w for w in self.wc.get_all() if w.warn_type == "circular_ref"]
-        assert len(circular) == 0
+        assert [w for w in self.wc.get_all() if w.warn_type == "circular_ref"] == []
 
     def test_connected_components(self):
         """Two disconnected call chains produce 2 connected components."""

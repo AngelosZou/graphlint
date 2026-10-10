@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Dependency graph builder — builds directed/undirected edges, detects circular references and connected components."""
+"""Dependency graph builder — builds directed/undirected edges and connected components."""
 
 from __future__ import annotations
 
@@ -11,9 +11,7 @@ from typing import Any, Callable, Optional
 from graphlint.analyzer._graph_algo import (
     _build_call_graph,
     _build_class_special_map,
-    _build_digraph,
     _build_undirected_adj,
-    detect_circular_refs,
     find_connected_components,
 )
 from graphlint.analyzer._types import (
@@ -821,7 +819,6 @@ class GraphBuilder:
         _cached_csm = _build_class_special_map(
             self._node_id_map, _sn, is_special_name=special_check,
         )
-        _cached_dg = _build_digraph(self._nodes, self._edges)
 
         changed_nids: Optional[set[int]] = None
         if changed_files is not None and old_reachable is not None:
@@ -850,7 +847,7 @@ class GraphBuilder:
             include_fids=include_fids,
         )
         file_id_to_path = {v: k for k, v in fid_map.items()}
-        self._add_warnings(comps, file_id_to_path, cached_digraph=_cached_dg,
+        self._add_warnings(comps, file_id_to_path,
                            special_names=_sn, public_api_names=_pn)
         self._run_validate_hooks(parse_results, fid_map)
 
@@ -1306,7 +1303,6 @@ class GraphBuilder:
         self,
         comps: list[ComponentInfo],
         file_id_to_path: Optional[dict[int, str]] = None,
-        cached_digraph: Optional[dict[int, list[int]]] = None,
         special_names: Optional[frozenset[str]] = None,
         public_api_names: Optional[frozenset[str]] = None,
     ) -> None:
@@ -1330,16 +1326,6 @@ class GraphBuilder:
             self._nodes, self._edges, self._node_id_map, file_id_to_path,
             public_api_names=public_api_names,
         ):
-            self.warning_collector.add(
-                w.warn_type,
-                w.severity,
-                w.message,
-                w.file_path,
-                w.line,
-                w.node_id,
-                w.details,
-            )
-        for w in detect_circular_refs(self._nodes, self._edges, self._node_id_map, cached_digraph=cached_digraph):
             self.warning_collector.add(
                 w.warn_type,
                 w.severity,

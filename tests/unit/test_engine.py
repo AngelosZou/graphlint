@@ -183,7 +183,7 @@ class TestWarnSummaryCache:
         self.conn.execute(
             "INSERT INTO warnings (file_id, node_id, warn_type, severity, message, line) "
             "VALUES (?, ?, ?, ?, ?, ?)",
-            (1, 1, "circular_ref", "warning", "cycle detected", 5),
+            (1, 1, "write_only", "warning", "cycle detected", 5),
         )
         self.conn.execute(
             "INSERT INTO warnings (file_id, node_id, warn_type, severity, message, line) "
@@ -193,7 +193,7 @@ class TestWarnSummaryCache:
         self.conn.execute(
             "INSERT INTO warnings (file_id, node_id, warn_type, severity, message, line) "
             "VALUES (?, ?, ?, ?, ?, ?)",
-            (1, 2, "circular_ref", "warning", "another cycle", 15),
+            (1, 2, "write_only", "warning", "another cycle", 15),
         )
         self.conn.execute(
             "INSERT INTO warnings (file_id, node_id, warn_type, severity, message, line) "
@@ -222,8 +222,8 @@ class TestWarnSummaryCache:
         """First call to list_graphs verifies warnings_summary is correct."""
         result = self.engine.list_graphs(QueryFilters())
         assert result.warnings_summary is not None
-        # Expected: circular_ref=2, unused_import=1, dead_code=1
-        assert result.warnings_summary.get("circular_ref") == 2
+        # Expected: write_only=2, unused_import=1, dead_code=1
+        assert result.warnings_summary.get("write_only") == 2
         assert result.warnings_summary.get("unused_import") == 1
         assert result.warnings_summary.get("dead_code") == 1
 
@@ -262,18 +262,18 @@ class TestWarnSummaryCache:
         result = self.engine.list_graphs(QueryFilters())
 
         # Modify returned summary (shallow copy, does not affect cache)
-        result.warnings_summary["circular_ref"] = 999
+        result.warnings_summary["write_only"] = 999
 
         # Fetch again, verify cached original value unchanged
         result2 = self.engine.list_graphs(QueryFilters())
-        assert result2.warnings_summary["circular_ref"] == 2, \
+        assert result2.warnings_summary["write_only"] == 2, \
             "Modifying shallow copy should not change cached value"
 
     def test_warn_summary_cached_after_list_graphs(self):
         """Verify _warn_summary_cache is not None after list_graphs."""
         _ = self.engine.list_graphs(QueryFilters())
         assert self.engine._warn_summary_cache is not None
-        assert "circular_ref" in self.engine._warn_summary_cache
+        assert "write_only" in self.engine._warn_summary_cache
 
 
 def _create_large_db():

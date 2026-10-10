@@ -93,10 +93,10 @@ graphlint query --max-results 10
 graphlint query --sort-by nodes
 
 # Filter by warning types
-graphlint query --warn-types "circular_ref,unused_import"
+graphlint query --warn-types "unused_import,write_only"
 
 # CI pipeline: exit non-zero when dead code found
-graphlint query --json --fail-on dead_code,circular_ref
+graphlint query --json --fail-on dead_code,unused_import
 ```
 
 ### Build / Rebuild Index
@@ -219,8 +219,8 @@ cfg = graphlint.configure(action="show")
 
 ```bash
 #!/bin/bash
-# Check for circular references
-graphlint query --warn-types "circular_ref" --json | grep -q "circular_ref" && echo "Found circular refs!" || echo "Pass"
+# Check for unused imports
+graphlint query --warn-types "unused_import" --json | grep -q "unused_import" && echo "Found unused imports!" || echo "Pass"
 ```
 
 ### Integration with Code Quality Tools

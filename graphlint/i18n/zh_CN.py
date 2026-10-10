@@ -31,7 +31,6 @@ STRINGS: dict[str, str] = {
     # -------- Warnings --------
     "warning.unused_import": "{count} 个 import 未使用",
     "warning.dynamic_import": "{count} 个动态导入",
-    "warning.circular_ref": "{count} 个循环引用",
     "warning.syntax_error": "{count} 个语法错误",
     "warning.write_only": "{count} 个只写变量",
     "warning.deprecated_usage": "{count} 个弃用函数被调用",

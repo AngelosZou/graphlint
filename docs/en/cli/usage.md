@@ -57,14 +57,14 @@ graphlint query -g 3 --detail full
 # Show only graphs with 5+ nodes, sorted by warning count
 graphlint query --min-nodes 5 --sort-by warnings
 
-# Query only circular reference warnings
-graphlint query -w "circular_ref"
+# Query only unused import warnings
+graphlint query -w "unused_import"
 
 # No auto-scan mode (for read-only queries)
 graphlint query --no-scan
 
-# Fail with exit code 2 when dead code or circular refs found
-graphlint query --json --fail-on dead_code,circular_ref
+# Fail with exit code 2 when dead code or unused imports found
+graphlint query --json --fail-on dead_code,unused_import
 ```
 
 ### Exit Codes
@@ -80,8 +80,8 @@ The `query` subcommand returns the following exit codes:
 Use `--fail-on` with a comma-separated list of warning types to fail the command when matching warnings exist. This enables CI pipeline integration:
 
 ```bash
-# CI pipeline: fail if dead code or circular refs found
-graphlint query --json --fail-on dead_code,circular_ref || exit 1
+# CI pipeline: fail if dead code or unused imports found
+graphlint query --json --fail-on dead_code,unused_import || exit 1
 ```
 
 ## install — Install for Agent Tools

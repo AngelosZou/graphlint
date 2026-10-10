@@ -55,11 +55,10 @@ class TestParams:
         assert len(duplicates) == 0, f"Duplicate CLI flags: {duplicates}"
 
     def test_valid_warn_types(self):
-        """Verify VALID_WARN_TYPES contains all 11 types."""
+        """Verify VALID_WARN_TYPES contains all 10 types."""
         expected = {
             "unused_import",
             "dynamic_import",
-            "circular_ref",
             "syntax_error",
             "write_only",
             "deprecated_usage",

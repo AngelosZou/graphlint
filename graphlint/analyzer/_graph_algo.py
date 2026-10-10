@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Graph algorithms — connected components (BFS) and circular reference detection (Tarjan SCC)."""
+"""Graph algorithms — connected components (BFS), reachability and write-only detection."""
 
 from __future__ import annotations
 
@@ -7,7 +7,6 @@ from collections import deque
 from typing import Callable, Optional
 
 from graphlint.analyzer._types import ComponentInfo, EdgeInfo, EntryInfo, NodeInfo
-from graphlint.analyzer.warnings import WarningInfo
 
 
 _EMPTY_FROZENSET: frozenset[str] = frozenset()
@@ -127,20 +126,6 @@ def _build_call_graph(
             if tgt and tgt.node_type in _READ_PROMOTED_TYPES:
                 call_graph.setdefault(edge.source_id, []).append(edge.target_id)
     return call_graph
-
-
-def _build_digraph(
-    nodes: list[NodeInfo],
-    edges: list[EdgeInfo],
-) -> dict[int, list[int]]:
-    """Build directed graph for SCC detection (CALL + INHERIT edges)."""
-    digraph: dict[int, list[int]] = {}
-    for node in nodes:
-        digraph[node.id] = []
-    for edge in edges:
-        if edge.edge_type in ("call", "inherit"):
-            digraph.setdefault(edge.source_id, []).append(edge.target_id)
-    return digraph
 
 
 def _build_class_special_map(
@@ -895,90 +880,6 @@ def find_connected_components(
         )
 
     return component_map, components
-
-
-def _build_warnings(
-    sccs: list[list[int]], node_id_map: dict[int, NodeInfo]
-) -> list[WarningInfo]:
-    """Generate circular_ref warnings from SCC list."""
-    warnings: list[WarningInfo] = []
-    for scc in sccs:
-        if len(scc) > 1:
-            names = [node_id_map.get(nid, NodeInfo()).name for nid in scc]
-            msg = f"Circular dependency detected: {' → '.join(names)}"
-            warnings.append(
-                WarningInfo(
-                    warn_type="circular_ref",
-                    severity="warning",
-                    message=msg,
-                    node_id=scc[0],
-                    file_path=getattr(node_id_map.get(scc[0]), "file_path", ""),
-                    line=getattr(node_id_map.get(scc[0]), "line_start", 0),
-                )
-            )
-    return warnings
-
-
-def detect_circular_refs(
-    nodes: list[NodeInfo],
-    edges: list[EdgeInfo],
-    node_id_map: dict[int, NodeInfo],
-    cached_digraph: Optional[dict[int, list[int]]] = None,
-) -> list[WarningInfo]:
-    """Detect circular references using Tarjan SCC algorithm on CALL/INHERIT edges."""
-    if cached_digraph is not None:
-        digraph = cached_digraph
-    else:
-        digraph: dict[int, list[int]] = {}
-        for node in nodes:
-            digraph[node.id] = []
-        for edge in edges:
-            if edge.edge_type in ("call", "inherit"):
-                digraph.setdefault(edge.source_id, []).append(edge.target_id)
-
-    indices: dict[int, int] = {}
-    lowlink: dict[int, int] = {}
-    onstack: set[int] = set()
-    stack: list[int] = []
-    sccs: list[list[int]] = []
-    index = 0
-    call_stack: list[tuple[int, int]] = []
-
-    for start_v in digraph:
-        if start_v in indices:
-            continue
-        call_stack.append((start_v, 0))
-        while call_stack:
-            v, child_idx = call_stack[-1]
-            neighbors = digraph.get(v, [])
-            if child_idx == 0:
-                indices[v] = lowlink[v] = index
-                index += 1
-                stack.append(v)
-                onstack.add(v)
-            if child_idx < len(neighbors):
-                w = neighbors[child_idx]
-                call_stack[-1] = (v, child_idx + 1)
-                if w not in indices:
-                    call_stack.append((w, 0))
-                elif w in onstack:
-                    lowlink[v] = min(lowlink[v], indices[w])
-            else:
-                call_stack.pop()
-                if call_stack:
-                    parent_v, _ = call_stack[-1]
-                    lowlink[parent_v] = min(lowlink[parent_v], lowlink[v])
-                if lowlink[v] == indices[v]:
-                    scc: list[int] = []
-                    while True:
-                        w = stack.pop()
-                        onstack.discard(w)
-                        scc.append(w)
-                        if w == v:
-                            break
-                    sccs.append(scc)
-
-    return _build_warnings(sccs, node_id_map)
 
 
 # ---------------------------------------------------------------------------

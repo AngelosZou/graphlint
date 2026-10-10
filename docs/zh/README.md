@@ -50,7 +50,7 @@ pip install graphlint[godot]       # 引入 tree-sitter + tree-sitter-gdscript�
 - **入口点检测** — 内置规则覆盖 Python 框架（FastAPI、Flask、Django、Click、Typer、Celery、pytest）、Rust 惯例（main、异步运行时、WASM、proc 宏、FFI、测试、pub API）、.NET 惯例（控制台、xUnit、NUnit、MSTest、Web API、Minimal API、Generic Host、WinForms、WPF）、C/C++ 惯例（C 的 main/WinMain/wWinMain/DllMain/_tmain 与 C++ 的自由 `main`、`class_definition:` 模式、测试文件、基于外部链接符号的 C 库模式）、TS/JS 惯例（main、模块 index、CLI/服务器 listen、Next.js 页面、NestJS 装饰器、React JSX、Jest/Vitest 测试）和 Godot 惯例（`project.godot` 工程清单、`class_name` 公开类、`@tool` 编辑器脚本、`@rpc` 远程方法、GUT/gdUnit4 测试、字面量字符串分发与 `.tscn` 连线的回调）及自定义规则
 - **可配置入口模板** — 通过 `ast_pattern` 前缀添加自定义入口规则，包括 `function_call:`、`function_def:`、`decorator:`、`class_definition:`（C#）、`file_match:`、`file_is_program`（C#）、`visibility:pub`（Rust）、`visibility:public`（C#）、`trait_impl:`（Rust）、`macro_def:`（Rust）、`jsx_element:`（TypeScript）、`export:`（TypeScript）等
 - **`--public-as-entry` 标志** — 将所有公开项（Rust `pub`、C# `public`、C 外部链接符号）视为入口点，用于库代码分析
-- **警告检测** — 11 种警告类型：循环引用、未使用 import、只写变量、死代码等
+- **警告检测** — 10 种警告类型：未使用 import、只写变量、死代码等
 - **增量更新** — 首次全量扫描后，仅对变更文件进行增量重建；增量感知可达性分析避免了对全图的重复计算；不兼容的索引 schema 版本会被自动检测并重建
 - **Python API + CLI** — 可集成到任何 Tool 开发、CI 流程，或直接供 Agent 自行分析和清理
 
@@ -162,8 +162,8 @@ graphlint query --json
 # 查看指定图详情
 graphlint query -g 1 --detail full
 
-# 检测到死代码或循环引用时返回非零退出码（用于 CI）
-graphlint query --json --fail-on dead_code,circular_ref
+# 检测到死代码或未使用 import 时返回非零退出码（用于 CI）
+graphlint query --json --fail-on dead_code,unused_import
 
 # 将所有公开项视为入口点（库分析模式）
 graphlint query --public-as-entry
@@ -206,7 +206,6 @@ result = query(include_tests=True, json_output=True)
 |------|------|
 | `unused_import` | 导入的模块或名称未被使用 |
 | `dynamic_import` | 通过 importlib 或 `__import__` 动态导入 |
-| `circular_ref` | 函数/类之间存在循环依赖 |
 | `syntax_error` | 文件存在语法错误 |
 | `write_only` | 变量被写入但从未被读取 |
 | `deprecated_usage` | 使用了已弃用的函数/类 |

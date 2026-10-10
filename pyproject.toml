@@ -18,7 +18,6 @@ keywords = [
     "dependency-graph",
     "code-analysis",
     "dead-code",
-    "circular-dependency",
     "import-checker",
     "static-analysis",
     "lint",

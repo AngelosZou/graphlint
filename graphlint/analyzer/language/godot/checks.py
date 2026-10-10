@@ -12,9 +12,8 @@ against what the project *contains*.  Every check here follows the adapter's
 * ``godot.assume_assets_reachable: true`` turns every asset-existence check
   off for projects that build their resources at runtime.
 
-Warn types are reused from the core whitelist on purpose (``unresolved_ref``,
-``circular_ref``) so no new warning kind — and no coordinated i18n/params edit
-— is introduced.
+Warn types are reused from the core whitelist on purpose (``unresolved_ref``)
+so no new warning kind — and no coordinated i18n/params edit — is introduced.
 """
 
 from __future__ import annotations
@@ -64,8 +63,6 @@ _CHECKED_SUFFIXES: frozenset[str] = frozenset(
 #: Never checked: generated trees and non-file references.
 _SKIP_PREFIXES: tuple[str, ...] = ("res://.godot/", "res://.import/", "uid://")
 
-_MAX_CYCLES = 20
-
 
 def validate_godot_graph(
     parse_results: dict[str, ParseResult],
@@ -97,7 +94,6 @@ def validate_godot_graph(
         )
         warnings.extend(_check_project_manifest(godot_files, root_dir))
     warnings.extend(_check_duplicate_class_names(godot_files))
-    warnings.extend(_check_resource_cycles(godot_files))
     return warnings
 
 
@@ -239,87 +235,6 @@ def _check_duplicate_class_names(
                 )
             )
     return warnings
-
-
-def _check_resource_cycles(godot_files: dict[str, ParseResult]) -> list[Any]:
-    """Scenes/scripts/resources that reference each other in a cycle.
-
-    The core only detects cycles over ``call``/``inherit`` edges, and a Godot
-    resource cycle is a ``read`` edge, so it is reported explicitly here.
-    """
-    known = set(godot_files)
-    adjacency: dict[str, list[str]] = {}
-    lines: dict[tuple[str, str], int] = {}
-
-    for file_path, pr in godot_files.items():
-        out: list[str] = []
-        for ref in getattr(pr, "references", None) or ():
-            raw = getattr(ref, "target_name", "") or ""
-            if not raw.startswith("res://"):
-                continue
-            target = _res_path_to_rel(raw)
-            if target not in known or target == file_path:
-                continue
-            if target not in out:
-                out.append(target)
-                lines.setdefault((file_path, target), getattr(ref, "line", 0) or 0)
-        adjacency[file_path] = out
-
-    warnings: list[Any] = []
-    for cycle in _find_cycles(adjacency)[:_MAX_CYCLES]:
-        head = cycle[0]
-        target = cycle[-1]
-        warnings.append(
-            _warn(
-                "circular_ref",
-                "Resource dependency cycle: " + " -> ".join(cycle + [head]),
-                head,
-                lines.get((head, target), 0),
-            )
-        )
-    return warnings
-
-
-def _find_cycles(adjacency: dict[str, list[str]]) -> list[list[str]]:
-    """Iterative DFS returning each simple cycle once (order-independent)."""
-    white, grey, black = 0, 1, 2
-    color: dict[str, int] = {node: white for node in adjacency}
-    cycles: list[list[str]] = []
-    seen: set[frozenset[str]] = set()
-
-    for start in adjacency:
-        if color[start] != white:
-            continue
-        color[start] = grey
-        path = [start]
-        stack: list[tuple[str, Any]] = [(start, iter(adjacency.get(start, ())))]
-        while stack:
-            node, iterator = stack[-1]
-            advanced = False
-            for nxt in iterator:
-                if nxt not in color:
-                    continue
-                state = color[nxt]
-                if state == grey:
-                    if nxt in path:
-                        index = path.index(nxt)
-                        cycle = path[index:]
-                        key = frozenset(cycle)
-                        if key not in seen:
-                            seen.add(key)
-                            cycles.append(list(cycle))
-                    continue
-                if state == white:
-                    color[nxt] = grey
-                    path.append(nxt)
-                    stack.append((nxt, iter(adjacency.get(nxt, ()))))
-                    advanced = True
-                    break
-            if not advanced:
-                color[node] = black
-                path.pop()
-                stack.pop()
-    return cycles
 
 
 # ----------------------------------------------------------------------

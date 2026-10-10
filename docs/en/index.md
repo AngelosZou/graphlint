@@ -19,7 +19,7 @@
 | **AST Parsing** | Extracts classes, functions, methods, variables, fields as nodes (Python `ast`; Rust / C# / TS / GDScript `tree-sitter`; Godot `.tscn` / `.tres` / `project.godot` via a built-in resource parser) |
 | **Dependency Graph** | Five edge types: read / write / call / inherit / decorate |
 | **Entry Point Detection** | Built-in rules for every supported language: Python (main / FastAPI / Flask / Django / Click / Typer / Celery / pytest), Rust (main / async / WASM / proc macros / FFI / tests / pub API), C# (console / xUnit / NUnit / MSTest / Web API / Minimal API / Generic Host / WinForms / WPF / tests), C/C++ (main / WinMain / DllMain / `class_definition:` / test files / C library mode), TS/JS (main / module index / CLI / Next.js / NestJS / React / Jest), Godot (project manifest / `class_name` public API / `@tool` / `@rpc` / GUT tests / literal string dispatch and `.tscn` connections) |
-| **Warning Detection** | 11 warning types: circular refs, unused imports, write-only variables, dead code, and more |
+| **Warning Detection** | 10 warning types: unused imports, write-only variables, dead code, and more |
 | **Incremental Indexing** | SHA256-based change detection, parses only modified files |
 | **Python API + CLI** | Integrate into any Tool pipeline, CI workflow, or let agents self-analyze and self-clean via CLI |
 

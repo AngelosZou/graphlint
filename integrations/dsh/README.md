@@ -49,7 +49,7 @@ dsh plugin --profile web add link:./integrations/dsh
 
 | Tool | Purpose |
 |------|---------|
-| `graphlint_query` | Query the dependency graph for dead code, circular refs, unused imports, and other warnings. Fast incremental mode; JSON result. Common filters: `warn_types`, `graph_id`, `exclude_clean`, `include_tests`, `public_as_entry`. |
+| `graphlint_query` | Query the dependency graph for dead code, unused imports, write-only variables, and other warnings. Fast incremental mode; JSON result. Common filters: `warn_types`, `graph_id`, `exclude_clean`, `include_tests`, `public_as_entry`. |
 | `graphlint_build` | Full or incremental index rebuild as a **background job** (poll with `job_output`). |
 | `graphlint_config` | `show` / `get` / `set` entries in the project's `.graphlint/config.json`, plus `add-entry-rule` / `remove-entry-rule` / `add-exclude` / `remove-exclude` for custom entry rules and excludes. |
 

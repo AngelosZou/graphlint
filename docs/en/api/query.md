@@ -92,7 +92,7 @@ Returns a dict with the following structure:
       "entry_count": 2,
       "warnings": 3,
       "warnings_detail": [
-        {"type": "circular_ref", "severity": "warning", "message": "...", "file": "..."}
+        {"type": "unused_import", "severity": "warning", "message": "...", "file": "..."}
       ]
     }
   ]
@@ -139,8 +139,8 @@ detail = query(graph_id=1, detail_level="full", json_output=True)
 # Query dead code test references
 dead = query(dead_code_tests=True, json_output=True)
 
-# Query only circular reference warnings
-circ = query(warn_types="circular_ref", json_output=True)
+# Query only unused import warnings
+unused = query(warn_types="unused_import", json_output=True)
 
 # Minimal output
 minimal = query(detail_level="minimal", max_results=5)

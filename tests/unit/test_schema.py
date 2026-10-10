@@ -264,7 +264,7 @@ class TestNewIndexes:
         self.conn.execute(
             "INSERT INTO warnings (file_id, node_id, warn_type, severity, message, line) "
             "VALUES (?, ?, ?, ?, ?, ?)",
-            (1, 1, "circular_ref", "warning", "cycle detected", 5),
+            (1, 1, "unused_variable", "warning", "unused variable", 5),
         )
         # Insert snapshot (verify sorted indexes do not affect graph_snapshots insert)
         self.conn.execute(

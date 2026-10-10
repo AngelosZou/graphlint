@@ -37,7 +37,7 @@ export function registerQueryTool(ctx: PluginContext): void {
         root_dir: { type: 'string', description: ROOT_DESCRIPTION },
         warn_types: {
           type: 'string',
-          description: 'Comma-separated warning types to filter, e.g. "dead_code" or "dead_code,circular_ref".',
+          description: 'Comma-separated warning types to filter, e.g. "dead_code" or "dead_code,unused_import".',
         },
         include_tests: { type: 'boolean', description: 'Include test files in the analysis (default false).' },
         graph_id: {

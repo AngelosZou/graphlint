@@ -31,7 +31,6 @@ STRINGS: dict[str, str] = {
     # -------- Warnings --------
     "warning.unused_import": "{count} unused imports",
     "warning.dynamic_import": "{count} dynamic imports",
-    "warning.circular_ref": "{count} circular references",
     "warning.syntax_error": "{count} syntax errors",
     "warning.write_only": "{count} write-only variables",
     "warning.deprecated_usage": "{count} deprecated usages",

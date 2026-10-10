@@ -92,7 +92,7 @@ def query(
       "entry_count": 2,
       "warnings": 3,
       "warnings_detail": [
-        {"type": "circular_ref", "severity": "warning", "message": "...", "file": "..."}
+        {"type": "unused_import", "severity": "warning", "message": "...", "file": "..."}
       ]
     }
   ]
@@ -139,8 +139,8 @@ detail = query(graph_id=1, detail_level="full", json_output=True)
 # 查询死代码测试引用
 dead = query(dead_code_tests=True, json_output=True)
 
-# 仅查循环引用警告
-circ = query(warn_types="circular_ref", json_output=True)
+# 仅查未使用 import 警告
+unused = query(warn_types="unused_import", json_output=True)
 
 # 最小化输出
 minimal = query(detail_level="minimal", max_results=5)

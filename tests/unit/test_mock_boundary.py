@@ -52,8 +52,8 @@ def _make_result(fpath, nodes, name_usages=None):
 class TestMockBoundary:
     """Black-box mock boundary tests."""
 
-    def test_mock_parse_result_circular(self):
-        """Pre-built A→B→C→A call chain; verify circular_ref detection."""
+    def test_mock_parse_result_cycle_is_silent(self):
+        """Pre-built A→B→C→A call chain must produce no circular_ref warning."""
         wc = WarningCollector()
         builder = GraphBuilder(wc, config=None)
 
@@ -61,7 +61,7 @@ class TestMockBoundary:
         node_b = _make_node(2, "B", "function", "mod.B")
         node_c = _make_node(3, "C", "function", "mod.C")
 
-        # Simulate circular ref: A calls B, B calls C, C calls A
+        # A calls B, B calls C, C calls A
         result_a = _make_result("a.py", [node_a], name_usages={"B"})
         result_b = _make_result("b.py", [node_b], name_usages={"C"})
         result_c = _make_result("c.py", [node_c], name_usages={"A"})
@@ -74,9 +74,8 @@ class TestMockBoundary:
             }
         )
 
-        # After build, verify warnings may contain circular_ref
         circular_warnings = [w for w in wc.get_all() if w.warn_type == "circular_ref"]
-        assert isinstance(circular_warnings, list)
+        assert circular_warnings == []
 
     def test_mock_parse_result_write_only(self):
         """Pre-built variable with only WRITE edges; verify write_only warning."""

@@ -21,11 +21,10 @@ class TestWarningCollector:
         self.wc = WarningCollector()
 
     def test_all_warning_types(self):
-        """Add all 11 warning types, verify get_all returns all."""
+        """Add all 10 warning types, verify get_all returns all."""
         types = [
             "unused_import",
             "dynamic_import",
-            "circular_ref",
             "syntax_error",
             "write_only",
             "deprecated_usage",
@@ -38,7 +37,7 @@ class TestWarningCollector:
         for t in types:
             self.wc.add(warn_type=t, message=f"Test {t}")
         all_warnings = self.wc.get_all()
-        assert len(all_warnings) == 11
+        assert len(all_warnings) == 10
         returned_types = {w.warn_type for w in all_warnings}
         assert returned_types == set(types)
 

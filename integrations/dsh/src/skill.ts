@@ -10,7 +10,7 @@ import { SKILL_BODY } from './skill-content.generated.js'
 const DSH_INTRO = `## How to use graphlint in this environment
 graphlint is exposed as tools — **prefer the tools over shelling out to the CLI**: they run inside the session working directory, return structured results, and refuse unsafe roots.
 
-- \`graphlint_query\` — replaces \`graphlint query\`. Common arguments: \`root_dir\`, \`warn_types\` (e.g. "dead_code,circular_ref"), \`graph_id\`, \`exclude_clean\`, \`include_tests\`, \`public_as_entry\`. Auto-rebuilds the index incrementally; use it after edits and before analyzing a codebase.
+- \`graphlint_query\` — replaces \`graphlint query\`. Common arguments: \`root_dir\`, \`warn_types\` (e.g. "dead_code,unused_import"), \`graph_id\`, \`exclude_clean\`, \`include_tests\`, \`public_as_entry\`. Auto-rebuilds the index incrementally; use it after edits and before analyzing a codebase.
 - \`graphlint_build\` — \`graphlint build --force\` as a **background job** (poll with \`job_output\`). Use only when \`graphlint_query\` results look wrong or stale.
 - \`graphlint_config\` — \`graphlint config\` operations: \`show\`/\`get\`/\`set\`, plus \`add-entry-rule\` (\`rule_json\`), \`remove-entry-rule\` (\`name\`), \`add-exclude\`/\`remove-exclude\` (\`exclude_pattern\`) for custom entry rules.
 
@@ -21,7 +21,7 @@ graphlint is exposed as tools — **prefer the tools over shelling out to the CL
 const GRAPHLINT_SKILL: SkillRegistration = {
   name: 'graphlint',
   description:
-    'Load for codebase understanding, exploration, and modification: map the real dependency graph to separate live, reachable code from dead code, unused imports, and circular references, so refactors, cleanups, and deletions are safe.',
+    'Load for codebase understanding, exploration, and modification: map the real dependency graph to separate live, reachable code from dead code, unused imports, and write-only variables, so refactors, cleanups, and deletions are safe.',
   whenToUse:
     'Use when understanding, exploring, or modifying a codebase. Before editing/refactoring/deleting or auditing code you have not fully mapped, run graphlint (via graphlint_query) to see which symbols are actually reachable from entry points; after edits, rerun it to confirm no dead or redundant code was left behind.',
   source: 'custom',

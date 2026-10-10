@@ -54,7 +54,7 @@ pip install graphlint[godot]       # adds tree-sitter + tree-sitter-gdscript (.t
 - **Entry point detection** — built-in rules covering Python frameworks (FastAPI, Flask, Django, Click, Typer, Celery, pytest), Rust conventions (main, async runtimes, WASM, proc macros, FFI, tests, pub API), .NET conventions (console, xUnit, NUnit, MSTest, Web API, Minimal API, Generic Host, WinForms, WPF), C/C++ conventions (`main`/`WinMain`/`wWinMain`/`DllMain`/`_tmain` for C and a free `main` for C++, `class_definition:` patterns, `test_file` by convention, and C library mode via external-linkage symbols), TS/JS conventions (main, module index, CLI/server listen, Next.js pages, NestJS decorators, React JSX, Jest/Vitest tests), and Godot conventions (the `project.godot` manifest, `class_name` public classes, `@tool` editor scripts, `@rpc` remote methods, GUT/gdUnit4 tests, literal string dispatch and `.tscn`-wired callbacks) plus custom rules
 - **Configurable entry templates** — add custom entry rules via `ast_pattern` prefixes including `function_call:`, `function_def:`, `decorator:`, `class_definition:` (C#), `file_match:`, `file_is_program` (C#), `visibility:pub` (Rust), `visibility:public` (C#), `trait_impl:` (Rust), `macro_def:` (Rust), `jsx_element:` (TypeScript), `export:` (TypeScript), and more
 - **`--public-as-entry` flag** — treat all public items (Rust `pub`, C# `public`, C external-linkage symbols) as entry points for library analysis
-- **Warning detection** — 11 warning types including circular references, unused imports, write-only variables, and more
+- **Warning detection** — 10 warning types including unused imports, write-only variables, dead code, and more
 - **Incremental updates** — after initial full scan, only changed files are re-indexed; delta-aware reachability analysis avoids full-graph recomputation; incompatible index schema versions are auto-detected and rebuilt
 - **Python API + CLI** — integrate into any Tool, CI pipeline, or let agents self-analyze and self-clean
 
@@ -166,8 +166,8 @@ graphlint query --json
 # View a specific graph detail
 graphlint query -g 1 --detail full
 
-# Exit non-zero when dead code or circular refs found (for CI)
-graphlint query --json --fail-on dead_code,circular_ref
+# Exit non-zero when dead code or unused imports found (for CI)
+graphlint query --json --fail-on dead_code,unused_import
 
 # Treat all public items as entry points (library analysis mode)
 graphlint query --public-as-entry
@@ -210,7 +210,6 @@ result = query(include_tests=True, json_output=True)
 |---------|-------------|
 | `unused_import` | Imported module or name is never used |
 | `dynamic_import` | Dynamic import via `importlib` or `__import__` |
-| `circular_ref` | Circular dependency between functions/classes |
 | `syntax_error` | File contains a syntax error |
 | `write_only` | Variable is written but never read |
 | `deprecated_usage` | Usage of a deprecated function/class |

@@ -1,11 +1,11 @@
 ---
 name: graphlint
-description: Load for codebase understanding, exploration, and modification — maps the real dependency graph to separate live, reachable code from dead code, unused imports, and circular references, so refactors, cleanups, and deletions are safe.
+description: Load for codebase understanding, exploration, and modification — maps the real dependency graph to separate live, reachable code from dead code and unused imports, so refactors, cleanups, and deletions are safe.
 ---
 
 # graphlint — Dead-Code & Dependency Analysis
 
-Static analysis of a project's dependency graph: finds components unreachable from any entry point (dead code), plus circular references, unused imports and other warnings.
+Static analysis of a project's dependency graph: finds components unreachable from any entry point (dead code), plus unused imports and other warnings.
 
 **Languages:** Python (built in) · Rust (`pip install graphlint[rust]`) · C# (`pip install graphlint[csharp]`) · C/C++ (`pip install graphlint[c]`) · TypeScript/JavaScript (`pip install graphlint[typescript]`) · GDScript/Godot (`pip install graphlint[godot]`)
 
@@ -27,7 +27,7 @@ Run `query` normally — it keeps the index up to date by itself (automatic incr
 ## Key parameters
 - `-g, --graph-id <id>` — detail on one graph
 - `-j, --json` — structured output
-- `-w, --warn-types <list>` — filter, e.g. `dead_code,circular_ref,unused_import`
+- `-w, --warn-types <list>` — filter, e.g. `dead_code,unused_import,write_only`
 - `-C, --exclude-clean` — only graphs with issues
 - `-R, --reachability` — only graphs reachable from entry points
 - `--public-as-entry` — treat public items (Rust `pub`, C# `public`, C external-linkage symbols) as entry points (library analysis)
@@ -54,7 +54,7 @@ graphlint config add-exclude --exclude-pattern "*/generated/*"
 graphlint query -C --json                        # Any issues after a refactor?
 graphlint query -w dead_code --sort-by warnings  # Dead code by severity
 graphlint query -g 5 -d full                     # Inspect one component
-graphlint query --fail-on dead_code,circular_ref # CI gate
+graphlint query --fail-on dead_code,unused_import # CI gate
 ```
 
 ## Limitations

@@ -7,6 +7,9 @@ All notable changes to this project will be documented in this file.
 ### Added
 - GDScript / Godot backend: `.gd`, `.tscn`, `.tres`, `project.godot`
 
+### Removed
+- `circular_ref` warning type
+
 ## [0.7.1] - 2026-08-27
 
 ### Changed

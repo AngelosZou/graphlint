@@ -1,6 +1,6 @@
 # 警告类型参考
 
-graphlint 支持 11 种代码分析警告类型。
+graphlint 支持 10 种代码分析警告类型。
 
 ## 警告类型一览
 
@@ -8,7 +8,6 @@ graphlint 支持 11 种代码分析警告类型。
 |----------|----------|------|
 | `unused_import` | `warning` | 导入了但未使用的模块或名称 |
 | `dynamic_import` | `warning` | 动态 import（如 `__import__()` 或 `importlib.import_module()`） |
-| `circular_ref` | `warning` | 模块或组件间的循环引用 |
 | `syntax_error` | `error` | 文件存在语法错误，无法解析 |
 | `write_only` | `warning` | 变量被赋值但从未被读取 |
 | `deprecated_usage` | `warning` | 使用了已弃用的 API |
@@ -39,10 +38,6 @@ import sys       # 如果 sys 被使用 → 正常
 module = __import__(f"plugin_{name}")       # 动态导入 → 警告
 lib = importlib.import_module("json")       # 绝对导入 → 正常
 ```
-
-### circular_ref — 循环引用
-
-通过图算法检测组件间的循环依赖关系。当两个或多个组件之间存在相互引用时触发。
 
 ### syntax_error — 语法错误
 
@@ -99,11 +94,11 @@ def func():
 ### CLI 方式
 
 ```bash
-# 仅显示循环引用警告
-graphlint query --warn-types "circular_ref"
+# 仅显示未使用 import 警告
+graphlint query --warn-types "unused_import"
 
 # 显示多种警告
-graphlint query --warn-types "circular_ref,unused_import"
+graphlint query --warn-types "unused_import,write_only"
 ```
 
 ### API 方式
@@ -111,8 +106,8 @@ graphlint query --warn-types "circular_ref,unused_import"
 ```python
 from graphlint.api import query
 
-# 仅显示循环引用
-result = query(warn_types="circular_ref", json_output=True)
+# 仅显示未使用 import
+result = query(warn_types="unused_import", json_output=True)
 
 # 排除干净的图
 result = query(exclude_clean=True)

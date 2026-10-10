@@ -49,7 +49,7 @@ Returns a dict with build statistics:
 3. **Compare cache**: Compare against hashes in `.graphlint/` cache
 4. **Parse only changes**: Only AST-parse files whose hash changed
 5. **Update graph**: Merge new and old data, update the dependency graph
-6. **Collect warnings**: Detect circular references, unused imports, etc.
+6. **Collect warnings**: Detect unused imports, write-only variables, dead code, etc.
 
 When `force_rebuild=True`, steps 2-4 are skipped, performing a full rebuild.
 
