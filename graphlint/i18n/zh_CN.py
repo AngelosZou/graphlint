@@ -15,7 +15,7 @@ STRINGS: dict[str, str] = {
     "cli.query.graph_entry": "入口",
     "cli.query.graph_no_entry": "入口: 未识别",
     "cli.query.graph_dead_code": "疑似死代码",
-    "cli.query.graph_nodes": "类/函数节点",
+    "cli.query.graph_nodes": "节点",
     "cli.query.graph_vars": "变量/字段节点",
     "cli.query.skipped_clean": "已略过 {count} 个无异常的图",
     "cli.query.skipped_oversized": ("已略过 {count} 个图（含 {large} 个大型图）"),

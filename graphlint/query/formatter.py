@@ -46,7 +46,7 @@ class TextFormatter:
         lines = [self.i18n.t("cli.query.title"), ""]
         lines.append(f"{self.i18n.t('cli.query.dir')}: {self.root_dir}")
 
-        total_nodes = sum(g.node_count + g.variable_count for g in result.graphs)
+        total_nodes = sum(g.node_count for g in result.graphs)
         total_edges = sum(g.edge_count for g in result.graphs)
         lines.append(
             self.i18n.t(
@@ -107,8 +107,8 @@ class TextFormatter:
 
         lines.append(f"graph{g.graph_id}: {entry_str}{dead}")
         lines.append(
-            f"  {self.i18n.t('cli.query.graph_nodes')}: {g.node_count}, "
-            f"{self.i18n.t('cli.query.graph_vars')}: {g.variable_count}"
+            f"  {self.i18n.t('cli.query.graph_nodes')}: {g.node_count} ("
+            f"{self.i18n.t('cli.query.graph_vars')}: {g.variable_count})"
         )
         if g.warnings:
             lines.append(f"  ⚠ {', '.join(g.warnings)}")
@@ -130,7 +130,7 @@ class TextFormatter:
             wc = len(g.warnings)
             lines.append(
                 f"[{g.graph_id:>3}] {entry}{suffix}    "
-                f"nodes:{g.node_count + g.variable_count}  "
+                f"nodes:{g.node_count}  "
                 f"edges:{g.edge_count}  ⚠{wc}"
             )
         if result.has_more:

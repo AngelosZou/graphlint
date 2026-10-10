@@ -79,25 +79,41 @@ Returns a dict with the following structure:
 ```json
 {
   "status": "ok",
-  "query_time_ms": 150,
-  "total_graphs": 5,
-  "returned": 5,
+  "query_time_ms": 20,
   "root_dir": "/path/to/project",
-  "graphs": [
-    {
-      "graph_id": 1,
-      "name": "module_name",
-      "nodes_count": 12,
-      "edges_count": 25,
-      "entry_count": 2,
-      "warnings": 3,
-      "warnings_detail": [
-        {"type": "unused_import", "severity": "warning", "message": "...", "file": "..."}
-      ]
-    }
-  ]
+  "path_format": "relative",
+  "result": {
+    "graphs": [
+      {
+        "graph_id": 1,
+        "entry": "src/app.py (flask_app)",
+        "entry_file": "src/app.py",
+        "entry_line": 42,
+        "node_count": 12,
+        "variable_count": 3,
+        "edge_count": 25,
+        "warnings": ["2 warnings"],
+        "is_dead_code": false,
+        "is_unreachable": false,
+        "component_size": 12
+      }
+    ],
+    "total_graphs": 5,
+    "has_more": false
+  }
 }
 ```
+
+The counts describe what is stored for the component:
+
+| Field | Meaning |
+|-------|---------|
+| `node_count` | Every node of the component — one per `component_members` row |
+| `variable_count` | How many of those nodes are variables or fields; a breakdown of `node_count` |
+| `edge_count` | Edges whose two endpoints are both in the component; an edge crossing components belongs to neither |
+| `component_size` | The same value as `node_count` |
+
+`min_nodes` / `max_nodes` filter on `node_count`.
 
 When querying detail (with `graph_id`):
 

@@ -11,6 +11,7 @@ All notable changes to this project will be documented in this file.
 
 ### Changed
 - `flask_app` entry rule narrowed from `function_call:*.run` to `function_call:app.run` 
+- `graph_snapshots.node_count` now counts every node of a component
 
 ### Removed
 - `circular_ref` warning type

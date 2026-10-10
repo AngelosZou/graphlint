@@ -16,7 +16,7 @@ import sqlite3
 #     an older DB also removes the duplicates it accumulated.
 # ---------------------------------------------------------------------------
 
-SCHEMA_VERSION: int = 2
+SCHEMA_VERSION: int = 3
 
 # SQLite error fragments indicating the stored schema no longer matches the
 # code that wrote it (usually a version mismatch on the disk DB).

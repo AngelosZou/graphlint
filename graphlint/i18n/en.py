@@ -13,7 +13,7 @@ STRINGS: dict[str, str] = {
     "cli.query.graph_entry": "Entry:",
     "cli.query.graph_no_entry": "Entry: unrecognized",
     "cli.query.graph_dead_code": "suspected dead code",
-    "cli.query.graph_nodes": "Class/Function nodes",
+    "cli.query.graph_nodes": "Nodes",
     "cli.query.graph_vars": "Variable/Field nodes",
     "cli.query.skipped_clean": "Skipped {count} clean graphs",
     "cli.query.skipped_oversized": "Skipped {count} graphs ({large} large)",

@@ -541,19 +541,19 @@ def _precompute_edge_counts(
     component_map: dict[int, int],
     edges: list[EdgeInfo],
 ) -> dict[int, int]:
-    """Pre-compute edge counts per component with a single pass over all edges.
+    """Pre-compute the internal edge count per component in one pass.
 
     Returns:
-        Mapping of comp_id -> edge_count
+        Mapping of comp_id -> number of edges internal to that component
     """
     counts: dict[int, int] = {}
     for e in edges:
+        if not e.source_id or not e.target_id:
+            continue
         cs = component_map.get(e.source_id)
-        ct = component_map.get(e.target_id)
-        if cs is not None:
-            counts[cs] = counts.get(cs, 0) + 1
-        if ct is not None and ct != cs:
-            counts[ct] = counts.get(ct, 0) + 1
+        if cs is None or component_map.get(e.target_id) != cs:
+            continue
+        counts[cs] = counts.get(cs, 0) + 1
     return counts
 
 
@@ -564,28 +564,25 @@ def _component_stats(
     edge_counts: dict[int, int],
 ) -> tuple[Any, ...]:
     """Compute component statistics."""
-    cf_count = sum(
-        1
-        for nid in comp.node_ids
-        if nid_map.get(nid, NodeInfo()).node_type in ("class", "function", "method")
-    )
+    member_ids = [nid for nid in comp.node_ids if nid]
+    node_count = len(member_ids)
     var_count = sum(
         1
-        for nid in comp.node_ids
+        for nid in member_ids
         if nid_map.get(nid, NodeInfo()).node_type in ("variable", "field")
     )
     ec = edge_counts.get(comp.component_id, 0)
     wc = sum(1 for w in build_result.warnings if w.node_id in comp.node_ids)
-    root_ids = sorted(nid for nid in comp.node_ids if nid != 0)
+    root_ids = sorted(member_ids)
     root_json = json.dumps(root_ids)
     comp_hash = hashlib.sha256(root_json.encode()).hexdigest()
-    return cf_count, var_count, ec, wc, root_json, comp_hash
+    return node_count, var_count, ec, wc, root_json, comp_hash
 
 
 def _snapshot_values(
     comp: Any,
     now: str,
-    cf_count: int,
+    node_count: int,
     var_count: int,
     ec: int,
     wc: int,
@@ -607,7 +604,7 @@ def _snapshot_values(
         entry_file,
         entry_line,
         entry_type,
-        cf_count,
+        node_count,
         var_count,
         ec,
         wc,

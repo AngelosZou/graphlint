@@ -436,7 +436,7 @@ class TestPrecomputeEdgeCounts:
         return ComponentInfo(component_id=comp_id, node_ids=node_ids)
 
     def test_precompute_edge_counts_basic(self):
-        """Verify _precompute_edge_counts correctly counts edges per component."""
+        """Only edges whose two endpoints share a component are attributed."""
         from graphlint.incremental._db_ops import _precompute_edge_counts
 
         # Component 1: nodes 1,2,3; Component 2: nodes 4,5
@@ -447,18 +447,16 @@ class TestPrecomputeEdgeCounts:
             self._make_edge(2, 3),  # comp 1
             self._make_edge(1, 3),  # comp 1
             self._make_edge(4, 5),  # comp 2
-            self._make_edge(3, 4),  # Cross-component: comp 1 and comp 2 each count 1
+            self._make_edge(3, 4),  # cross-component: belongs to neither
         ]
 
         counts = _precompute_edge_counts(component_map, edges)
 
-        # Edge 1-2: comp1 += 1
-        # Edge 2-3: comp1 += 1
-        # Edge 1-3: comp1 += 1
-        # Edge 4-5: comp2 += 1
-        # Edge 3-4: comp1 += 1 (source), comp2 += 1 (target, different component)
-        assert counts.get(1) == 4, f"Component 1 should have 4 edges, got {counts.get(1)}"
-        assert counts.get(2) == 2, f"Component 2 should have 2 edges, got {counts.get(2)}"
+        assert counts.get(1) == 3, f"Component 1 should have 3 edges, got {counts.get(1)}"
+        assert counts.get(2) == 1, f"Component 2 should have 1 edge, got {counts.get(2)}"
+        # No component may claim more edges than exist — the old
+        # "touching" rule counted the cross-component edge twice.
+        assert sum(counts.values()) <= len(edges)
 
     def test_precompute_edge_counts_empty_edges(self):
         """Verify empty edge set returns empty dict."""
@@ -515,10 +513,10 @@ class TestPrecomputeEdgeCounts:
 
         stats = _component_stats(comp, br, nid_map, edge_counts)
 
-        # stats = (cf_count, var_count, ec, wc, root_json, comp_hash)
-        cf_count, var_count, ec, wc, root_json, comp_hash = stats
+        # stats = (node_count, var_count, ec, wc, root_json, comp_hash)
+        node_count, var_count, ec, wc, root_json, comp_hash = stats
 
-        assert cf_count == 3, f"Should have 3 classes/functions/methods, got {cf_count}"
+        assert node_count == 4, f"Every member node counts, got {node_count}"
         assert var_count == 1, f"Should have 1 variable/field, got {var_count}"
         assert ec == 5, f"Edge count should be 5, got {ec}"
         assert wc == 1, f"Warning count should be 1, got {wc}"
@@ -577,17 +575,30 @@ class TestPrecomputeEdgeCounts:
         )
         stats3 = _component_stats(comp3, br, nid_map, edge_counts)
         assert stats3[2] == 0, f"Isolated node component edge count should be 0, got {stats3[2]}"
+        assert stats3[0] == 4, f"Component 3 holds 4 nodes, got {stats3[0]}"
 
-    def test_precompute_edge_counts_nodes_not_in_component_map(self):
-        """Verify edges from nodes not in component_map are ignored."""
+    def test_precompute_edge_counts_unresolved_endpoint_ignored(self):
+        """An edge with an endpoint outside every component is not attributed."""
         from graphlint.incremental._db_ops import _precompute_edge_counts
 
         component_map = {1: 1}  # Only node 1 is in component
         edge = self._make_edge(1, 999)  # 999 not in any component
 
         counts = _precompute_edge_counts(component_map, [edge])
-        # source=1 in comp1, target=999 not in any component (ct=None)
-        assert counts.get(1) == 1
+        assert counts.get(1) is None, (
+            "An edge whose target is in no component is stored for no component "
+            f"(got {counts.get(1)})"
+        )
+
+    def test_precompute_edge_counts_ignores_zero_endpoints(self):
+        """Dangling endpoints (id 0) are never counted — the writer drops them."""
+        from graphlint.incremental._db_ops import _precompute_edge_counts
+
+        component_map = {0: 1, 1: 1}
+        counts = _precompute_edge_counts(
+            component_map, [self._make_edge(0, 1), self._make_edge(1, 0)]
+        )
+        assert counts == {}, f"Dangling edges must not be counted, got {counts}"
 
     def test_component_stats_edge_count_zero(self):
         """Verify component with 0 edges has ec=0."""
@@ -601,6 +612,95 @@ class TestPrecomputeEdgeCounts:
         edge_counts = {1: 0}
         stats = _component_stats(comp, br, nid_map, edge_counts)
         assert stats[2] == 0, f"ec should be 0, got {stats[2]}"
+
+    @pytest.mark.parametrize("writer_name", ["build_snapshots", "update_snapshots"])
+    def test_snapshot_counts_match_stored_rows(self, tmp_path, writer_name):
+        """A snapshot's nodes/edges numbers must equal the stored rows.
+
+        `nodes:` and `edges:` in the query output are only meaningful if they
+        can be checked against `component_members` and `edges`; this pins the
+        two together for both writers (full build and incremental update),
+        including the cross-component edge that must inflate neither count.
+        """
+        from graphlint.incremental import _db_ops
+
+        write_snapshots = getattr(_db_ops, writer_name)
+
+        db = Database(str(tmp_path))
+        db.execute(
+            "INSERT INTO files (id, path, hash, size_bytes, mtime_ns) "
+            "VALUES (1, 'src/a.py', 'h', 1, 1)"
+        )
+        node_types = {1: "class", 2: "function", 3: "variable", 4: "function", 5: "field"}
+        for nid, node_type in node_types.items():
+            db.execute(
+                "INSERT INTO nodes (id, file_id, name, qualified_name, node_type, "
+                "line_start, line_end, col_offset) VALUES (?, 1, ?, ?, ?, ?, ?, 0)",
+                (nid, f"n{nid}", f"mod.n{nid}", node_type, nid, nid + 1),
+            )
+
+        edges = [
+            self._make_edge(1, 2),  # inside component 1
+            self._make_edge(4, 5),  # inside component 2
+            self._make_edge(2, 4),  # cross-component: belongs to neither
+        ]
+        for edge in edges:
+            db.execute(
+                "INSERT INTO edges (source_id, target_id, edge_type, file_id, line) "
+                "VALUES (?, ?, ?, 1, ?)",
+                (edge.source_id, edge.target_id, edge.edge_type, edge.line),
+            )
+
+        comp1 = self._make_comp(1, {1, 2, 3})
+        comp2 = self._make_comp(2, {4, 5})
+        br = _make_build_result(
+            nodes=[],
+            edges=edges,
+            files_data={},
+            files=[],
+            component_map={1: 1, 2: 1, 3: 1, 4: 2, 5: 2},
+            components=[comp1, comp2],
+            node_id_map={nid: self._make_node(nid, t) for nid, t in node_types.items()},
+        )
+        write_snapshots(db, br)
+
+        for comp in (comp1, comp2):
+            row = db.fetchone(
+                "SELECT node_count, variable_count, edge_count FROM graph_snapshots "
+                "WHERE root_node_ids = ?",
+                (json.dumps(sorted(comp.node_ids)),),
+            )
+            members = db.fetchone(
+                "SELECT COUNT(*) AS c FROM component_members WHERE component_id = ?",
+                (comp.component_id,),
+            )["c"]
+            internal = db.fetchone(
+                "SELECT COUNT(*) AS c FROM edges e "
+                "JOIN component_members s ON s.node_id = e.source_id "
+                "JOIN component_members t ON t.node_id = e.target_id "
+                "AND t.component_id = s.component_id "
+                "WHERE s.component_id = ?",
+                (comp.component_id,),
+            )["c"]
+            assert row["node_count"] == members, (
+                f"component {comp.component_id}: stored node_count "
+                f"{row['node_count']} != {members} member rows"
+            )
+            assert row["edge_count"] == internal, (
+                f"component {comp.component_id}: stored edge_count "
+                f"{row['edge_count']} != {internal} internal edges"
+            )
+            assert row["variable_count"] <= row["node_count"]
+
+        totals = db.fetchone(
+            "SELECT SUM(node_count) AS n, SUM(edge_count) AS e FROM graph_snapshots"
+        )
+        all_members = db.fetchone("SELECT COUNT(*) AS c FROM component_members")["c"]
+        all_edges = db.fetchone("SELECT COUNT(*) AS c FROM edges")["c"]
+        assert totals["n"] == all_members
+        assert totals["e"] == 2, "Only the two internal edges belong to a component"
+        assert totals["e"] <= all_edges
+        db.close()
 
 
 # =============================================================================

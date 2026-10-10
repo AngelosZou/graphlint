@@ -188,10 +188,10 @@ class QueryEngine:
         if filters.exclude_clean:
             where.append("warning_count > 0")
         if filters.min_nodes > 0:
-            where.append("(node_count + variable_count) >= ?")
+            where.append("node_count >= ?")
             params.append(filters.min_nodes)
         if filters.max_nodes is not None:
-            where.append("(node_count + variable_count) <= ?")
+            where.append("node_count <= ?")
             params.append(filters.max_nodes)
         if not filters.include_tests:
             where.append(
@@ -463,5 +463,5 @@ class QueryEngine:
             warnings=warn_strs,
             is_dead_code=bool(row["is_dead_code"]),
             is_unreachable=bool(row["is_unreachable"]),
-            component_size=row["node_count"] + row["variable_count"],
+            component_size=row["node_count"],
         )

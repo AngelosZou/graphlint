@@ -90,18 +90,18 @@ class TestQueryEngine:
             assert len(g.warnings) > 0 or g.warnings or True  # Not strict
 
     def test_list_graphs_min_nodes(self):
-        """Filter min_nodes=N returns graphs with node count >= N."""
+        """Filter min_nodes=N returns graphs with at least N member nodes."""
         filters = QueryFilters(min_nodes=10)
         result = self.engine.list_graphs(filters)
         for g in result.graphs:
-            assert g.node_count + g.variable_count >= 10
+            assert g.node_count >= 10
 
     def test_list_graphs_max_nodes(self):
-        """Filter max_nodes=N returns graphs with node count <= N."""
+        """Filter max_nodes=N returns graphs with at most N member nodes."""
         filters = QueryFilters(max_nodes=10)
         result = self.engine.list_graphs(filters)
         for g in result.graphs:
-            assert g.node_count + g.variable_count <= 10
+            assert g.node_count <= 10
 
     def test_list_graphs_limit(self):
         """max_results=3 returns 3 graphs, has_more=True."""
