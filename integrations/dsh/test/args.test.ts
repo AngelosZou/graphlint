@@ -64,6 +64,10 @@ test('configArgv: show takes no params', () => {
   assert.deepEqual(configArgv(EXE, 'show'), [EXE, 'config', '--lang', 'en', 'show'])
 })
 
+test('configArgv: diff takes no params', () => {
+  assert.deepEqual(configArgv(EXE, 'diff'), [EXE, 'config', '--lang', 'en', 'diff'])
+})
+
 test('configArgv: get passes the key', () => {
   assert.deepEqual(configArgv(EXE, 'get', { key: 'lang' }), [EXE, 'config', '--lang', 'en', 'get', '--key', 'lang'])
 })

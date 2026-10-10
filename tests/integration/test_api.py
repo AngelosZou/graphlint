@@ -68,6 +68,29 @@ greet()
         result = api.configure(action="show", root_dir=self.tmpdir)
         assert isinstance(result, dict)
 
+    def test_api_configure_diff(self):
+        """api.configure(action='diff') reports the template gap read-only."""
+        import json as _json
+
+        config_path = os.path.join(self.tmpdir, ".graphlint", "config.json")
+        os.makedirs(os.path.dirname(config_path), exist_ok=True)
+        with open(config_path, "w", encoding="utf-8") as fh:
+            _json.dump({"version": 1, "lang": "en"}, fh)
+        before = open(config_path, "rb").read()
+
+        result = api.configure(action="diff", root_dir=self.tmpdir)
+
+        assert result["status"] == "ok"
+        assert result["diff"]["template_version"]["outdated"] is True
+        assert result["diff"]["keys"]["lang"] == {"default": "system", "user": "en"}
+        assert open(config_path, "rb").read() == before
+
+    def test_api_configure_invalid_action(self):
+        """An unknown config action is rejected without touching anything."""
+        result = api.configure(action="nonsense", root_dir=self.tmpdir)
+        assert result["status"] == "error"
+        assert "Invalid action" in result["message"]
+
     def _corrupt_db_schema(self):
         """Simulate a DB from an older graphlint: unversioned + missing
         columns."""

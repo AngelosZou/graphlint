@@ -21,6 +21,12 @@ STRINGS: dict[str, str] = {
         "Output limited: showing index only, use -g <id> for details"
     ),
     "cli.query.has_more": "More results available. Use filters or -g <id> for details.",
+    # -------- CLI config --------
+    "cli.config.template_notice": (
+        "[graphlint] The default rule template has been updated "
+        "(template v{user} -> v{current}). Run 'graphlint config diff' to see "
+        "what changed."
+    ),
     # -------- CLI detail --------
     "cli.detail.title": "=== Graph #{id} Details ===",
     "cli.detail.files": "Files",
@@ -64,6 +70,7 @@ STRINGS: dict[str, str] = {
     "help.config": "Manage configuration",
     "help.config.operations": "Config operations",
     "help.config.show": "Show current configuration",
+    "help.config.diff": "Show differences from the default rule template",
     "help.config.get": "Get config item",
     "help.config.set": "Set config item",
     "help.config.copy_from": "Copy config from source directory",

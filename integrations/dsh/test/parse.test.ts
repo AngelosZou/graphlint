@@ -54,6 +54,20 @@ test('renderQueryText: summarizes totals, dead code and warnings', () => {
   assert.ok(lines.some((line) => line.includes('dead_code:1')))
 })
 
+test('parseQueryOutput: keeps [graphlint] stderr notices on success', () => {
+  const notice = '[graphlint] The default rule template has been updated (template v1 -> v2).'
+  const outcome = parseQueryOutput(VALID, `unrelated noise\n${notice}\n`, 0)
+  assert.ok(outcome.ok)
+  assert.deepEqual(outcome.stderrNotes, [notice])
+  assert.ok(renderQueryText(outcome).includes(notice))
+})
+
+test('parseQueryOutput: omits stderrNotes when stderr has no notices', () => {
+  const outcome = parseQueryOutput(VALID, 'some warning from sqlite\n', 0)
+  assert.ok(outcome.ok)
+  assert.equal('stderrNotes' in outcome, false)
+})
+
 test('failureText: appends stderr when present', () => {
   const text = failureText({ ok: false, error: 'boom', exitCode: 1, stderrTail: 'trace' })
   assert.match(text, /boom/)

@@ -40,6 +40,7 @@ export function buildArgv(exe: string, force: boolean): string[] {
 
 export type ConfigAction =
   | 'show'
+  | 'diff'
   | 'get'
   | 'set'
   | 'add-entry-rule'

@@ -399,6 +399,7 @@ def configure(
     root_dir = _validate_root_dir(root_dir)
     valid_actions = {
         "show",
+        "diff",
         "set",
         "get",
         "copy-from",
@@ -412,11 +413,13 @@ def configure(
 
     try:
         cm = ConfigManager(root_dir)
-        # Apply lang override if explicitly provided
-        if lang is not None and lang != "system":
+        # `diff` must not persist the lang override.
+        if lang is not None and lang != "system" and action != "diff":
             cm.set("lang", lang)
         if action == "show":
             return {"status": "ok", "config": cm.show()}
+        if action == "diff":
+            return {"status": "ok", "diff": cm.diff()}
         if action == "get":
             if not key:
                 return {"status": "error", "message": "--key required"}

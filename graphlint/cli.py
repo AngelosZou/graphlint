@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from typing import Any
 
@@ -71,6 +72,9 @@ def build_parser(i18n: I18nManager) -> argparse.ArgumentParser:
 
     # config show
     config_sub.add_parser("show", help=_t("help.config.show"))
+
+    # config diff
+    config_sub.add_parser("diff", help=_t("help.config.diff"))
 
     # config get <key>
     get_p = config_sub.add_parser("get", help=_t("help.config.get"))
@@ -155,6 +159,8 @@ def main() -> int:
         parser.print_help()
         return 0
     command = args.command
+    if command in ("query", "build", "config"):
+        _maybe_print_template_notice(i18n)
 
     try:
         if command == "query":
@@ -185,6 +191,30 @@ def main() -> int:
     except Exception as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return 1
+
+
+def _maybe_print_template_notice(i18n: I18nManager) -> None:
+    """One-time notice when the shipped default rule template has advanced.
+
+    Written to stderr so it cannot disturb JSON output, and it never rewrites
+    the user's config.json (the shown state lives in a sidecar marker file).
+    Any failure here is swallowed: a notice must never break a command.
+    """
+    try:
+        from graphlint.config.manager import ConfigManager
+
+        notice = ConfigManager(os.getcwd()).pending_template_notice()
+    except Exception:
+        return
+    if notice:
+        print(
+            i18n.t(
+                "cli.config.template_notice",
+                user=notice["user"],
+                current=notice["current"],
+            ),
+            file=sys.stderr,
+        )
 
 
 def _print_result(result: Any) -> None:

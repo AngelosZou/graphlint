@@ -43,7 +43,7 @@ Detects Flask application entry points.
 
 - **Match Pattern**:
   - `Flask()` or `flask.Flask()` class instantiation
-  - Any `.run()` method call
+  - An `app.run()` call
 - **Match Files**: `**/*.py`
 - **Example**:
   ```python

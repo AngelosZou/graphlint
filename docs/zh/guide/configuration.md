@@ -10,7 +10,7 @@ graphlint 的配置文件位于项目根目录的 `.graphlint/config.json`，使
     {"name": "python_main",      "ast_pattern": "if_name_main",                      "file_pattern": "**/*.py",         "enabled": true},
     {"name": "python_package",   "ast_pattern": "file_match:**/__init__.py",         "file_pattern": "**/__init__.py",  "enabled": true},
     {"name": "fastapi_app",      "ast_pattern": "class_instantiation:FastAPI | function_call:uvicorn.run", "file_pattern": "**/*.py", "enabled": true},
-    {"name": "flask_app",        "ast_pattern": "class_instantiation:Flask | class_instantiation:flask.Flask | function_call:*.run", "file_pattern": "**/*.py", "enabled": true},
+    {"name": "flask_app",        "ast_pattern": "class_instantiation:Flask | class_instantiation:flask.Flask | function_call:app.run", "file_pattern": "**/*.py", "enabled": true},
     {"name": "django_manage",    "ast_pattern": "function_call:execute_from_command_line", "file_pattern": "**/manage.py", "enabled": true},
     {"name": "click_command",    "ast_pattern": "decorator:click.command | decorator:click.group", "file_pattern": "**/*.py", "enabled": true},
     {"name": "typer_app",        "ast_pattern": "class_instantiation:typer.Typer | decorator:*.command", "file_pattern": "**/*.py", "enabled": true},
@@ -61,7 +61,7 @@ graphlint 的配置文件位于项目根目录的 `.graphlint/config.json`，使
     "file_patterns": ["test_*.py", "*_test.py", "test_*.rs", "*_test.rs", "*Tests.cs", "*Test.cs", "*.Tests.cs", "test_*.gd", "*_test.gd", "test_*.tscn"],
     "function_patterns": ["test_*"]
   },
-  "version": 1
+  "version": 2
 }
 ```
 
@@ -179,6 +179,10 @@ GDScript / Godot 分析器的设置。所有键均可选，下表为 `DEFAULT_CO
 
 Godot 入口规则（见 `entry_rules`）：`godot_project`（`project.godot` 工程清单 —— 它的 `read` 边抵达主场景与全部 autoload）、`godot_editor_tool`（`@tool`）、`godot_rpc_method`（`@rpc`）、`godot_test`（`no_propagate`：测试脚本自身存活，但不让它触达的代码随之存活）。
 
+### version — 默认模板版本
+
+`version` 记录该配置文件是从哪个版本的默认模板生成的。`.graphlint/config.json` 只在首次运行时写入一次，此后它就是你项目的唯一依据：由于 `entry_rules` 是整份列表取自你的文件（而不是逐条合并），你删掉的规则会保持删除状态。`version` 的作用是让 graphlint 能在自带的默认模板发生变化时提示你 —— 见下文。
+
 ## 配置管理方式
 
 ### 方式 1：CLI
@@ -186,6 +190,9 @@ Godot 入口规则（见 `entry_rules`）：`godot_project`（`project.godot` �
 ```bash
 # 查看配置
 graphlint config show
+
+# 与当前默认模板对比
+graphlint config diff
 
 # 设置配置
 graphlint config set --key lang --value zh_CN
@@ -212,6 +219,30 @@ configure(action="set", key="performance.max_file_size_mb", value="20")
 ### 方式 3：直接编辑
 
 直接修改 `.graphlint/config.json` 文件。修改后下次查询或构建时自动生效。
+
+### 升级已有配置
+
+当某个 graphlint 版本改动了默认模板（例如收窄了某条入口规则），你已有的 `config.json` 会保留不变。下一次 `query` / `build` / `config` 运行会在 stderr 打印一次性提示：
+
+```
+[graphlint] 默认规则模板已更新（模板 v1 → v2）。运行 'graphlint config diff' 可查看具体差异。
+```
+
+`graphlint config diff` 展示你的文件与当前默认模板的差异：
+
+```bash
+graphlint config diff
+```
+
+| 报告项 | 含义 |
+|--------|------|
+| `template_version` | 你的文件记录的 `version` 与当前默认版本，以及是否落后 |
+| `entry_rules.removed` | 你删除的默认规则 —— graphlint **不会**把它们加回来 |
+| `entry_rules.added` | 你自行新增、默认模板中没有的规则 |
+| `entry_rules.overridden` | 你改动过的默认规则，逐字段给出默认值与你的值 |
+| `keys` | 其他存在差异的顶层键（如 `lang`、`godot`、`performance`） |
+
+采纳模板改动请显式操作：自行编辑该规则，或删除 `config.json` 让 graphlint 用当前默认模板重新生成（会丢弃你的自定义）。提示每个模板版本只出现一次，记录写在 `.graphlint/.template_notice.json`。
 
 ## 配置优先级
 

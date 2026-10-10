@@ -24,6 +24,7 @@ interface ConfigArgs {
 
 const CONFIG_ACTIONS = new Set([
   'show',
+  'diff',
   'get',
   'set',
   'add-entry-rule',
@@ -46,7 +47,9 @@ export function registerConfigTool(ctx: PluginContext): void {
         action: {
           type: 'string',
           description:
-            'show: display the full effective config; get: read one key; set: write one key/value pair; ' +
+            'show: display the full effective config; diff: how the config file differs from the shipped default rule ' +
+            'template (which entry rules the user removed / added / overrode, template version gap); ' +
+            'get: read one key; set: write one key/value pair; ' +
             'add-entry-rule: add a custom entry rule (needs rule_json); remove-entry-rule: remove a rule (needs name); ' +
             'add-exclude / remove-exclude: add or remove an exclude pattern (needs exclude_pattern).',
         },

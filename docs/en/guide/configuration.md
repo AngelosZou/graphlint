@@ -10,7 +10,7 @@ graphlint's configuration file is located at `.graphlint/config.json` in the pro
     {"name": "python_main",      "ast_pattern": "if_name_main",                      "file_pattern": "**/*.py",         "enabled": true},
     {"name": "python_package",   "ast_pattern": "file_match:**/__init__.py",         "file_pattern": "**/__init__.py",  "enabled": true},
     {"name": "fastapi_app",      "ast_pattern": "class_instantiation:FastAPI | function_call:uvicorn.run", "file_pattern": "**/*.py", "enabled": true},
-    {"name": "flask_app",        "ast_pattern": "class_instantiation:Flask | class_instantiation:flask.Flask | function_call:*.run", "file_pattern": "**/*.py", "enabled": true},
+    {"name": "flask_app",        "ast_pattern": "class_instantiation:Flask | class_instantiation:flask.Flask | function_call:app.run", "file_pattern": "**/*.py", "enabled": true},
     {"name": "django_manage",    "ast_pattern": "function_call:execute_from_command_line", "file_pattern": "**/manage.py", "enabled": true},
     {"name": "click_command",    "ast_pattern": "decorator:click.command | decorator:click.group", "file_pattern": "**/*.py", "enabled": true},
     {"name": "typer_app",        "ast_pattern": "class_instantiation:typer.Typer | decorator:*.command", "file_pattern": "**/*.py", "enabled": true},
@@ -61,7 +61,7 @@ graphlint's configuration file is located at `.graphlint/config.json` in the pro
     "file_patterns": ["test_*.py", "*_test.py", "test_*.rs", "*_test.rs", "*Tests.cs", "*Test.cs", "*.Tests.cs", "test_*.gd", "*_test.gd", "test_*.tscn"],
     "function_patterns": ["test_*"]
   },
-  "version": 1
+  "version": 2
 }
 ```
 
@@ -179,6 +179,10 @@ Settings for the GDScript / Godot adapter. All keys are optional; the defaults b
 
 Godot entry rules (see `entry_rules`): `godot_project` (the `project.godot` manifest — its `read` edges reach the main scene and every autoload), `godot_editor_tool` (`@tool`), `godot_rpc_method` (`@rpc`), `godot_test` (`no_propagate`, so a test script is alive but does not keep the code it touches alive).
 
+### version — Default Template Version
+
+`version` records which version of the default template the config file was generated from. `.graphlint/config.json` is written once, on first run, and is your project's single source of truth afterwards: because `entry_rules` is taken from your file as a whole list rather than merged rule by rule, a rule you delete stays deleted. `version` exists so graphlint can tell you when the shipped default template changes — see below.
+
 ## Configuration Management
 
 ### Method 1: CLI
@@ -186,6 +190,9 @@ Godot entry rules (see `entry_rules`): `godot_project` (the `project.godot` mani
 ```bash
 # View configuration
 graphlint config show
+
+# Compare with the current default template
+graphlint config diff
 
 # Set configuration
 graphlint config set --key lang --value en
@@ -212,6 +219,31 @@ configure(action="set", key="performance.max_file_size_mb", value="20")
 ### Method 3: Direct Editing
 
 Edit `.graphlint/config.json` directly. Changes take effect on the next query or build.
+
+### Upgrading an Existing Config
+
+When a graphlint release ships a changed default template (for example a narrowed entry rule), your existing `config.json` is left as it is. The next `query` / `build` / `config` run prints a one-time notice on stderr:
+
+```
+[graphlint] The default rule template has been updated (template v1 -> v2).
+Run 'graphlint config diff' to see what changed.
+```
+
+`graphlint config diff` shows what differs between your file and the current defaults:
+
+```bash
+graphlint config diff
+```
+
+| Reported | Meaning |
+|----------|---------|
+| `template_version` | The `version` your file records vs. the shipped default, and whether yours is older |
+| `entry_rules.removed` | Default rules you deleted — graphlint will **not** bring them back |
+| `entry_rules.added` | Rules of your own that are not in the defaults |
+| `entry_rules.overridden` | Default rules you changed, with the default and your value per field |
+| `keys` | Any other top-level key (e.g. `lang`, `godot`, `performance`) that differs |
+
+Adopt a template change deliberately, e.g. by editing the rule yourself, or by deleting `config.json` to be re-seeded from the current defaults (this discards your customisations). The notice is delivered once per template version; the record lives in `.graphlint/.template_notice.json`.
 
 ## Configuration Priority
 

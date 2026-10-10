@@ -292,6 +292,7 @@ PARAM_DEFS: List[ParamDef] = [
         default=None,
         choices=[
             "show",
+            "diff",
             "set",
             "get",
             "copy-from",

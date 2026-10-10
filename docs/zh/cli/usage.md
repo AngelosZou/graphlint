@@ -172,6 +172,7 @@ graphlint build -P 4         # 4 个并行 worker
 | 命令 | 说明 |
 |------|------|
 | `show` | 显示当前配置 |
+| `diff` | 显示与默认规则模板的差异 |
 | `get --key <key>` | 获取指定配置项的值 |
 | `set --key <key> --value <val>` | 设置指定配置项 |
 | `copy-from --from <source>` | 从源目录复制配置 |
@@ -185,6 +186,9 @@ graphlint build -P 4         # 4 个并行 worker
 ```bash
 # 显示配置
 graphlint config show
+
+# 与当前默认模板对比
+graphlint config diff
 
 # 切换语言
 graphlint config set --key lang --value en

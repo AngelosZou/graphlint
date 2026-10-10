@@ -32,6 +32,7 @@ def configure(
 | Action | Description | Required Params |
 |--------|-------------|-----------------|
 | `"show"` | Show full current configuration | None |
+| `"diff"` | Diff of the config file against the shipped default template | None |
 | `"get"` | Get the value of a specific config key | `key` |
 | `"set"` | Set the value of a specific config key | `key`, `value` |
 | `"copy-from"` | Copy configuration from another project | `source` |
@@ -64,6 +65,29 @@ All actions return a dict:
 
 ```python
 {"status": "ok", "config": {...}}  # config contains full configuration
+```
+
+### diff Action
+
+Returns the template version gap, entry rules the user removed / added /
+overrode, and other differing top-level keys.
+
+```python
+{
+  "status": "ok",
+  "diff": {
+    "config_exists": True,
+    "template_version": {"user": 1, "current": 2, "outdated": True},
+    "entry_rules": {
+      "removed": ["flask_app"],
+      "added": [],
+      "overridden": [
+        {"name": "typer_app", "fields": {"enabled": {"default": True, "user": False}}}
+      ]
+    },
+    "keys": {"lang": {"default": "system", "user": "zh_CN"}}
+  }
+}
 ```
 
 ### get Action

@@ -172,6 +172,7 @@ The config subcommand views and modifies the `.graphlint/config.json` configurat
 | Command | Description |
 |---------|-------------|
 | `show` | Display current configuration |
+| `diff` | Show differences from the default rule template |
 | `get --key <key>` | Get the value of a specific config key |
 | `set --key <key> --value <val>` | Set a specific config value |
 | `copy-from --from <source>` | Copy config from a source directory |
@@ -185,6 +186,9 @@ The config subcommand views and modifies the `.graphlint/config.json` configurat
 ```bash
 # Show configuration
 graphlint config show
+
+# Compare with the current default template
+graphlint config diff
 
 # Switch language
 graphlint config set --key lang --value en

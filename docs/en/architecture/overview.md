@@ -70,7 +70,7 @@ Provides three top-level functions as the public interface:
 
 - **`query()`** — Query the dependency graph, supports list/detail modes, text/JSON output, and multiple filters
 - **`build()`** — Build or rebuild the dependency graph index, supports incremental mode and parallel processing
-- **`configure()`** — Manage configuration, supports show/get/set/copy-from, entry rules, and exclude pattern management
+- **`configure()`** — Manage configuration, supports show/diff/get/set/copy-from, entry rules, and exclude pattern management
 
 ### 2. CLI Layer (`graphlint/cli.py`)
 

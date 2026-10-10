@@ -43,7 +43,7 @@ graphlint 为每种支持的语言内置入口点检测规则（Python、Rust、
 
 - **匹配模式**：
   - `Flask()` 或 `flask.Flask()` 类的实例化
-  - 任何 `.run()` 方法调用
+  - `app.run()` 调用
 - **匹配文件**：`**/*.py`
 - **示例**：
   ```python

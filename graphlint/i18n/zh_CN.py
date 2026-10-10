@@ -21,6 +21,11 @@ STRINGS: dict[str, str] = {
     "cli.query.skipped_oversized": ("已略过 {count} 个图（含 {large} 个大型图）"),
     "cli.query.index_mode": ("输出限制：仅显示索引，使用 -g <id> 查询详情"),
     "cli.query.has_more": "还有更多结果。请使用过滤条件或 -g <id> 查看详情。",
+    # -------- CLI config --------
+    "cli.config.template_notice": (
+        "[graphlint] 默认规则模板已更新（模板 v{user} → v{current}）。"
+        "运行 'graphlint config diff' 可查看具体差异。"
+    ),
     # -------- CLI detail --------
     "cli.detail.title": "=== 图 #{id} 详情 ===",
     "cli.detail.files": "文件",
@@ -64,6 +69,7 @@ STRINGS: dict[str, str] = {
     "help.config": "管理配置",
     "help.config.operations": "配置操作",
     "help.config.show": "显示当前配置",
+    "help.config.diff": "显示与默认规则模板的差异",
     "help.config.get": "获取配置项",
     "help.config.set": "设置配置项",
     "help.config.copy_from": "从源目录复制配置",

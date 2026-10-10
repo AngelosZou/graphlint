@@ -32,6 +32,7 @@ def configure(
 | 操作 | 说明 | 所需参数 |
 |------|------|----------|
 | `"show"` | 显示当前完整配置 | 无 |
+| `"diff"` | 当前配置文件与内置默认模板的差异 | 无 |
 | `"get"` | 获取指定配置项的值 | `key` |
 | `"set"` | 设置指定配置项的值 | `key`, `value` |
 | `"copy-from"` | 从其他项目目录复制配置 | `source` |
@@ -64,6 +65,28 @@ def configure(
 
 ```python
 {"status": "ok", "config": {...}}  # config 包含完整配置内容
+```
+
+### diff 操作
+
+返回模板版本差异、你删除/新增/覆盖的入口规则，以及其他存在差异的顶层键。
+
+```python
+{
+  "status": "ok",
+  "diff": {
+    "config_exists": True,
+    "template_version": {"user": 1, "current": 2, "outdated": True},
+    "entry_rules": {
+      "removed": ["flask_app"],
+      "added": [],
+      "overridden": [
+        {"name": "typer_app", "fields": {"enabled": {"default": True, "user": False}}}
+      ]
+    },
+    "keys": {"lang": {"default": "system", "user": "zh_CN"}}
+  }
+}
 ```
 
 ### get 操作

@@ -6,6 +6,11 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 - GDScript / Godot backend: `.gd`, `.tscn`, `.tres`, `project.godot`
+- CLI `graphlint config diff` to compare the project config and the default template.
+- One-time notice on when a release ships a changed default rule template.
+
+### Changed
+- `flask_app` entry rule narrowed from `function_call:*.run` to `function_call:app.run` 
 
 ### Removed
 - `circular_ref` warning type

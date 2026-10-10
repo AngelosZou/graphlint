@@ -4,7 +4,7 @@
 from typing import Any, Dict
 
 DEFAULT_CONFIG: Dict[str, Any] = {
-    "version": 1,
+    "version": 2,
     "lang": "system",
     # -------- Entry rules --------
     # These are the initial template written to .graphlint/config.json on
@@ -35,7 +35,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         {
             "name": "flask_app",
             "file_pattern": "**/*.py",
-            "ast_pattern": "class_instantiation:Flask | class_instantiation:flask.Flask | function_call:*.run",
+            "ast_pattern": "class_instantiation:Flask | class_instantiation:flask.Flask | function_call:app.run",
             "enabled": True,
             "description": "Flask application entry",
         },

@@ -12,6 +12,8 @@ from typing import Any, Optional
 from graphlint.config.defaults import DEFAULT_CONFIG
 from graphlint.exceptions import ConfigNotFoundError
 
+_TEMPLATE_NOTICE_FILE = ".template_notice.json"
+
 
 class ConfigManager:
     """Project-level configuration manager."""
@@ -134,6 +136,170 @@ class ConfigManager:
     def show(self) -> dict[str, Any]:
         """Return the full current config."""
         return self.load()
+
+    # ------------------------------------------------------------------
+    # Default template version (one-time notice + diff)
+    # ------------------------------------------------------------------
+
+    def template_version_status(self) -> dict[str, Any]:
+        """Compare the template version recorded in config.json with the default.
+
+        ``user`` is None when there is no config file or it records no
+        ``version`` key (a hand-written file of unknown vintage, which is
+        deliberately not announced).  Never writes anything.
+        """
+        current = self._default_template_version()
+        user_config = self._read_user_config()
+        if user_config is None:
+            return {
+                "config_exists": False,
+                "user": None,
+                "current": current,
+                "outdated": False,
+            }
+        raw = user_config.get("version")
+        try:
+            user_version: Optional[int] = int(raw) if raw is not None else None
+        except (TypeError, ValueError):
+            user_version = None
+        return {
+            "config_exists": True,
+            "user": user_version,
+            "current": current,
+            "outdated": user_version is not None and user_version < current,
+        }
+
+    def pending_template_notice(self) -> Optional[dict[str, int]]:
+        """Return a not-yet-shown default-template-update notice, or None.
+
+        A due notice is recorded in the sidecar marker file (never in
+        config.json) so it is delivered exactly once per template version.
+        """
+        status = self.template_version_status()
+        if not status["outdated"]:
+            return None
+        current = int(status["current"])
+        if self._notice_shown_version() >= current:
+            return None
+        self._mark_notice_shown(current)
+        return {"user": int(status["user"]), "current": current}
+
+    def diff(self) -> dict[str, Any]:
+        """Read-only diff between the shipped default template and config.json.
+
+        Reports the template version gap, every entry rule the user removed,
+        added or overrode, and every other top-level key that differs.  The
+        user's file is authoritative and is never created or modified, so a
+        rule the user deleted deliberately stays deleted.
+        """
+        current = self._default_template_version()
+        user_config = self._read_user_config()
+        if user_config is None:
+            return {
+                "config_exists": False,
+                "template_version": {
+                    "user": None,
+                    "current": current,
+                    "outdated": False,
+                },
+                "entry_rules": {"removed": [], "added": [], "overridden": []},
+                "keys": {},
+            }
+
+        default_rules = {
+            r["name"]: r
+            for r in DEFAULT_CONFIG.get("entry_rules", [])
+            if isinstance(r, dict) and "name" in r
+        }
+        user_rules = {
+            r["name"]: r
+            for r in user_config.get("entry_rules", [])
+            if isinstance(r, dict) and "name" in r
+        }
+
+        removed = sorted(n for n in default_rules if n not in user_rules)
+        added = sorted(n for n in user_rules if n not in default_rules)
+        overridden: list[dict[str, Any]] = []
+        for name in sorted(n for n in default_rules if n in user_rules):
+            fields = self._diff_fields(default_rules[name], user_rules[name])
+            if fields:
+                overridden.append({"name": name, "fields": fields})
+
+        keys: dict[str, Any] = {}
+        for key in sorted(set(DEFAULT_CONFIG) | set(user_config)):
+            if key in ("entry_rules", "version"):
+                continue
+            default_val = DEFAULT_CONFIG.get(key)
+            user_val = user_config.get(key)
+            if default_val != user_val:
+                keys[key] = {"default": default_val, "user": user_val}
+
+        status = self.template_version_status()
+        return {
+            "config_exists": True,
+            "template_version": {
+                "user": status["user"],
+                "current": current,
+                "outdated": status["outdated"],
+            },
+            "entry_rules": {
+                "removed": removed,
+                "added": added,
+                "overridden": overridden,
+            },
+            "keys": keys,
+        }
+
+    @staticmethod
+    def _diff_fields(
+        default_rule: dict[str, Any], user_rule: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Return the per-field differences between two versions of a rule."""
+        fields: dict[str, Any] = {}
+        for field in sorted(set(default_rule) | set(user_rule)):
+            if field == "name":
+                continue
+            default_val = default_rule.get(field)
+            user_val = user_rule.get(field)
+            if default_val != user_val:
+                fields[field] = {"default": default_val, "user": user_val}
+        return fields
+
+    def _default_template_version(self) -> int:
+        """The shipped default-template version as an int."""
+        try:
+            return int(DEFAULT_CONFIG.get("version", 1))
+        except (TypeError, ValueError):
+            return 1
+
+    def _read_user_config(self) -> Optional[dict[str, Any]]:
+        """Read config.json exactly as the user wrote it (defaults NOT merged)."""
+        if not os.path.isfile(self.config_path):
+            return None
+        try:
+            with open(self.config_path, "r", encoding="utf-8") as fh:
+                data = json.load(fh)
+        except (json.JSONDecodeError, OSError):
+            return None
+        return data if isinstance(data, dict) else None
+
+    def _notice_path(self) -> str:
+        """Path of the sidecar marker recording the shown notice version."""
+        return os.path.join(self._meta_dir, _TEMPLATE_NOTICE_FILE)
+
+    def _notice_shown_version(self) -> int:
+        """Template version the user has already been notified about (0 if none)."""
+        try:
+            with open(self._notice_path(), "r", encoding="utf-8") as fh:
+                data = json.load(fh)
+            return int(data.get("shown_version", 0))
+        except (ValueError, TypeError, OSError, AttributeError):
+            return 0
+
+    def _mark_notice_shown(self, version: int) -> None:
+        """Record that the notice for ``version`` has been delivered."""
+        self._ensure_meta_dir()
+        self._write_atomic(self._notice_path(), {"shown_version": version})
 
     def copy_from(self, source_path: str) -> None:
         """Copy config from source path and merge into current directory."""

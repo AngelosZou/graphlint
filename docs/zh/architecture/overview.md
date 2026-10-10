@@ -65,7 +65,7 @@ graphlint 采用分层模块化架构，各层职责清晰，依赖方向从上�
 
 - **`query()`** — 查询依赖关系图，支持列表/详情模式、文本/JSON 输出、多种筛选条件
 - **`build()`** — 构建或重建依赖图索引，支持增量模式和并行处理
-- **`configure()`** — 管理配置，支持 show/get/set/copy-from 以及入口规则和排除模式管理
+- **`configure()`** — 管理配置，支持 show/diff/get/set/copy-from 以及入口规则和排除模式管理
 
 ### 2. CLI 层 (`graphlint/cli.py`)
 

@@ -48,7 +48,7 @@ class TestConfigManager:
         # Reload, verify persistence
         config2 = self.cm.load()
         assert config2["lang"] == "en"
-        assert config2["version"] == 1
+        assert config2["version"] == DEFAULT_CONFIG["version"]
         # Other fields still intact
         assert config2["output"] == DEFAULT_CONFIG["output"]
 
@@ -142,7 +142,7 @@ class TestConfigManager:
         # Load should deep-merge with defaults
         config = self.cm.load()
         assert config["lang"] == "en"  # Overridden value kept
-        assert config["version"] == 1  # From defaults
+        assert config["version"] == DEFAULT_CONFIG["version"]  # From defaults
         assert "entry_rules" in config  # From defaults
         assert len(config["entry_rules"]) == len(DEFAULT_CONFIG["entry_rules"])
         assert config["output"] == DEFAULT_CONFIG["output"]
@@ -176,3 +176,152 @@ class TestConfigManager:
         """Set value at nested path."""
         self.cm.set("performance.max_file_size_mb", 20)
         assert self.cm.get("performance.max_file_size_mb") == 20
+
+
+@pytest.mark.timeout(30)
+class TestConfigTemplateNoticeAndDiff:
+    """Default-template version: one-time notice + read-only `config diff`."""
+
+    @pytest.fixture(autouse=True)
+    def setup(self):
+        """Each test uses a separate temp dir."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self.tmpdir = tmpdir
+            self.cm = ConfigManager(tmpdir)
+            yield
+
+    # ── Helpers ───────────────────────────────────────────────
+
+    def _write_config(self, config: dict) -> None:
+        os.makedirs(os.path.dirname(self.cm.config_path), exist_ok=True)
+        with open(self.cm.config_path, "w", encoding="utf-8") as fh:
+            json.dump(config, fh)
+
+    def _config_from_previous_template(self) -> dict:
+        """A config.json as an older graphlint would have written it."""
+        cfg = json.loads(json.dumps(DEFAULT_CONFIG))
+        cfg["version"] = 1
+        return cfg
+
+    def _read_config_bytes(self) -> bytes:
+        with open(self.cm.config_path, "rb") as fh:
+            return fh.read()
+
+    def _notice_marker_path(self) -> str:
+        return os.path.join(self.tmpdir, ".graphlint", ".template_notice.json")
+
+    # ── diff ──────────────────────────────────────────────────
+
+    def test_diff_without_config_file_creates_nothing(self):
+        """diff never creates .graphlint/config.json."""
+        result = self.cm.diff()
+        assert result["config_exists"] is False
+        assert result["entry_rules"] == {"removed": [], "added": [], "overridden": []}
+        assert result["keys"] == {}
+        assert not os.path.isfile(self.cm.config_path)
+
+    def test_diff_reports_removed_default_rule(self):
+        """A default rule the user deleted is reported as removed, not restored."""
+        cfg = self._config_from_previous_template()
+        cfg["entry_rules"] = [
+            r for r in cfg["entry_rules"] if r["name"] != "flask_app"
+        ]
+        self._write_config(cfg)
+        before = self._read_config_bytes()
+
+        diff = self.cm.diff()
+
+        assert diff["entry_rules"]["removed"] == ["flask_app"]
+        assert diff["entry_rules"]["added"] == []
+        assert diff["entry_rules"]["overridden"] == []
+        assert diff["template_version"]["outdated"] is True
+        assert self._read_config_bytes() == before  # read-only
+
+    def test_diff_reports_added_rule(self):
+        """A user rule absent from the defaults is reported as added."""
+        cfg = self._config_from_previous_template()
+        cfg["entry_rules"].append(
+            {
+                "name": "my_entry",
+                "file_pattern": "**/*.py",
+                "ast_pattern": "function_def:main",
+            }
+        )
+        self._write_config(cfg)
+
+        diff = self.cm.diff()
+
+        assert diff["entry_rules"]["added"] == ["my_entry"]
+        assert diff["entry_rules"]["removed"] == []
+        assert diff["entry_rules"]["overridden"] == []
+
+    def test_diff_reports_overridden_rule_field(self):
+        """A changed field on a default rule is reported with both values."""
+        default_pattern = next(
+            r["ast_pattern"]
+            for r in DEFAULT_CONFIG["entry_rules"]
+            if r["name"] == "flask_app"
+        )
+        cfg = self._config_from_previous_template()
+        for rule in cfg["entry_rules"]:
+            if rule["name"] == "flask_app":
+                rule["ast_pattern"] = "function_call:*.run"
+        self._write_config(cfg)
+
+        diff = self.cm.diff()
+
+        overridden = {o["name"]: o["fields"] for o in diff["entry_rules"]["overridden"]}
+        assert set(overridden) == {"flask_app"}
+        assert overridden["flask_app"]["ast_pattern"] == {
+            "default": default_pattern,
+            "user": "function_call:*.run",
+        }
+
+    def test_diff_reports_disabled_rule_and_other_keys(self):
+        """`enabled` on a rule and non-rule keys are reported separately."""
+        cfg = self._config_from_previous_template()
+        for rule in cfg["entry_rules"]:
+            if rule["name"] == "typer_app":
+                rule["enabled"] = False
+        cfg["lang"] = "zh_CN"
+        self._write_config(cfg)
+
+        diff = self.cm.diff()
+
+        overridden = {o["name"]: o["fields"] for o in diff["entry_rules"]["overridden"]}
+        assert overridden["typer_app"]["enabled"] == {"default": True, "user": False}
+        assert diff["keys"]["lang"] == {"default": "system", "user": "zh_CN"}
+        assert "version" not in diff["keys"]  # reported under template_version
+
+    # ── one-time notice ───────────────────────────────────────
+
+    def test_notice_returned_once_then_never_again(self):
+        """The template-update notice is delivered exactly once."""
+        self._write_config(self._config_from_previous_template())
+        before = self._read_config_bytes()
+
+        notice = self.cm.pending_template_notice()
+
+        assert notice == {"user": 1, "current": DEFAULT_CONFIG["version"]}
+        assert self.cm.pending_template_notice() is None
+        assert self._read_config_bytes() == before  # config.json untouched
+        assert os.path.isfile(self._notice_marker_path())
+
+    def test_notice_silent_when_template_is_current(self):
+        """No notice when config.json already records the current version."""
+        self._write_config(json.loads(json.dumps(DEFAULT_CONFIG)))
+
+        assert self.cm.pending_template_notice() is None
+        assert not os.path.isfile(self._notice_marker_path())
+
+    def test_notice_silent_without_config_file(self):
+        """No notice (and no directory) when the project has no config yet."""
+        assert self.cm.pending_template_notice() is None
+        assert not os.path.exists(os.path.join(self.tmpdir, ".graphlint"))
+
+    def test_notice_silent_for_config_without_version(self):
+        """A hand-written config with no version key is not announced."""
+        self._write_config({"lang": "en"})
+
+        assert self.cm.pending_template_notice() is None
+        assert self.cm.template_version_status()["user"] is None

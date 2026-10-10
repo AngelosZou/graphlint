@@ -27,12 +27,23 @@ export type QuerySuccess = {
     has_more?: boolean
     warnings_summary?: Record<string, number>
   }
+  /** `[graphlint]`-prefixed notice lines the CLI wrote to stderr even on success
+   *  (e.g. the one-time default-rule-template update notice). */
+  stderrNotes?: string[]
   rootDir?: string
 }
 
 export type QueryOutcome = QueryFailure | QuerySuccess
 
 const TAIL_LENGTH = 500
+
+/** `[graphlint]`-prefixed notice lines from stderr, even when the query succeeded. */
+function stderrNotices(stderr: string): string[] {
+  return stderr
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.startsWith('[graphlint]'))
+}
 
 export function parseQueryOutput(stdout: string, stderr: string, exitCode: number | null): QueryOutcome {
   if (stdout.trim().length === 0) {
@@ -65,11 +76,13 @@ export function parseQueryOutput(stdout: string, stderr: string, exitCode: numbe
       stdoutTail: stdout.slice(-TAIL_LENGTH),
     }
   }
+  const notices = stderrNotices(stderr)
   return {
     ok: true,
     exitCode,
     queryTimeMs: typeof record.query_time_ms === 'number' ? record.query_time_ms : undefined,
     result: result as QuerySuccess['result'],
+    ...(notices.length > 0 ? { stderrNotes: notices } : {}),
     rootDir: typeof record.root_dir === 'string' ? record.root_dir : undefined,
   }
 }
@@ -106,5 +119,6 @@ export function renderQueryText(outcome: QuerySuccess): string[] {
   for (const g of interesting) {
     lines.push(`  #${g.graph_id} ${g.entry} [${g.warnings.length} warning(s)]`)
   }
+  for (const note of outcome.stderrNotes ?? []) lines.push(note)
   return lines
 }

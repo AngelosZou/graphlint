@@ -59,7 +59,7 @@ DEFAULT_RULES = [
     {
         "name": "flask_app",
         "file_pattern": "**/*.py",
-        "ast_pattern": "class_instantiation:Flask | class_instantiation:flask.Flask | function_call:*.run",
+        "ast_pattern": "class_instantiation:Flask | class_instantiation:flask.Flask | function_call:app.run",
         "enabled": True,
         "description": "Flask application entry",
     },
@@ -195,6 +195,19 @@ class TestEntryPointDetector:
         entries = self.detector.detect({"flask_app.py": result}, [node], {1: node})
         flask_entries = [e for e in entries if e.rule_name == "flask_app"]
         assert len(flask_entries) == 1
+
+    def test_flask_not_matched_for_other_run_calls(self):
+        """`.run()` on a non-Flask receiver must NOT be a Flask entry.
+
+        The old pattern `function_call:*.run` matched `subprocess.run(...)`,
+        `indexer.run(...)` and every other dotted `.run()` call — measured as
+        pure false positives on real projects.
+        """
+        source = "import subprocess\nsubprocess.run(['git', 'status'])\n"
+        node = _make_node(1, "main", node_type="function")
+        result = _make_result("tools/b.py", [node], source=source)
+        entries = self.detector.detect({"tools/b.py": result}, [node], {1: node})
+        assert [e for e in entries if e.rule_name == "flask_app"] == []
 
     def test_django_entry(self):
         """manage.py with execute_from_command_line detected."""
