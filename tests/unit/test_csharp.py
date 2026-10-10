@@ -1294,3 +1294,57 @@ class TestCSharpIndexerAndOperatorReachability:
         nid_map = br.node_id_map
         live = {nid_map[n].qualified_name for n in br.reachable if n in nid_map}
         assert "N.Money.op_Addition" not in live, sorted(live)
+
+
+@tree_sitter_available
+class TestCSharpMemberAccessSingleReference:
+    """A member access is one reference per occurrence.
+
+    ``_visit_member_access`` recorded the member and then walked its own
+    ``name`` child, which recorded the same read a second time; an assignment
+    target also produced a read on top of its write.
+    """
+
+    _FIXTURE = (
+        "using UnityEngine;\n"
+        "using UnityEngine.UI;\n"
+        "public class ChatController : MonoBehaviour {\n"
+        "    private TMP_InputField ChatInputField;\n"
+        "    public void OnEnable() {\n"
+        "        ChatInputField.onSubmit.AddListener(AddToChatOutput);\n"
+        "    }\n"
+        "    public void AddToChatOutput(string newText) {\n"
+        "        ChatInputField.text = string.Empty;\n"
+        "    }\n"
+        "}\n"
+    )
+
+    def _refs(self, source: str) -> list[tuple[str, str, int]]:
+        visitor = _parse_source(source)
+        return [(r.edge_type, r.target_name, r.line) for r in visitor.references]
+
+    def test_assignment_target_is_referenced_once_per_kind(self):
+        """``ChatInputField.text = string.Empty;`` reads each name once."""
+        refs = self._refs(self._FIXTURE)
+        line = 9
+        assert refs.count(("write", "text", line)) == 1, refs
+        assert refs.count(("read", "text", line)) == 1, refs
+        assert refs.count(("read", "ChatInputField", line)) == 1, refs
+        assert refs.count(("read", "Empty", line)) == 1, refs
+
+    def test_member_chain_reads_each_member_once(self):
+        """``a.b.Call(x)`` does not read ``b`` or ``Call`` twice."""
+        refs = self._refs(self._FIXTURE)
+        line = 6
+        assert refs.count(("read", "onSubmit", line)) == 1, refs
+        assert refs.count(("read", "AddListener", line)) == 1, refs
+        assert refs.count(("read", "ChatInputField", line)) == 1, refs
+
+    def test_no_reference_identity_is_emitted_twice(self):
+        """The whole fixture holds no two indistinguishable references."""
+        visitor = _parse_source(self._FIXTURE)
+        keys = [
+            (r.source_qname, r.target_name, r.edge_type, r.line)
+            for r in visitor.references
+        ]
+        assert len(keys) == len(set(keys)), sorted(keys)

@@ -141,6 +141,12 @@ class GdVisitor:
 
         self.nodes: list[NodeInfo] = []
         self.references: list[ReferenceInfo] = []
+        #: identities of the references emitted so far — a member can be
+        #: reached twice for one occurrence (the argument walk of
+        #: ``connect(handler)`` reads the handler, and the dispatch pass in
+        #: :meth:`finish` reads it again), and two rows a consumer cannot tell
+        #: apart are one row.
+        self._ref_keys: set[tuple[str, str, str, int]] = set()
         self.imports: list[GodotImportInfo] = []
         self.name_usages: set[str] = set()
         self.warnings: list[Any] = []
@@ -1063,6 +1069,14 @@ class GdVisitor:
     def _add_ref(self, source_qname: str, target_name: str, edge_type: str, line: int) -> None:
         if not target_name or not source_qname:
             return
+        key = (source_qname, target_name, edge_type, line)
+        if key in self._ref_keys:
+            # The same member read twice at the same spot (e.g. the handler of
+            # ``signal.connect(handler)``: seen once as a call argument and once
+            # by the dispatch pass) is a single reference — the target, type and
+            # line are all a consumer can distinguish.
+            return
+        self._ref_keys.add(key)
         self.references.append(
             ReferenceInfo(
                 source_qname=source_qname,

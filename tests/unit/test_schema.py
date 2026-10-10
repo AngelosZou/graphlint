@@ -454,3 +454,66 @@ class TestSchemaVersioning:
         assert not is_schema_mismatch_error(
             sqlite3.OperationalError("FOREIGN KEY constraint failed")
         )
+
+
+# =============================================================================
+# Edge identity uniqueness
+# =============================================================================
+
+
+@pytest.mark.timeout(30)
+class TestEdgeIdentityIndex:
+    """``idx_edges_identity`` makes a duplicate edge row unrepresentable.
+
+    Rebuilds of older databases (SCHEMA_VERSION 2) drop the duplicates the
+    0-differentiator schema accumulated, and the index keeps them out.
+    """
+
+    @pytest.fixture(autouse=True)
+    def setup(self):
+        self.conn = sqlite3.connect(":memory:")
+        create_tables(self.conn)
+        self.conn.execute(
+            "INSERT INTO files (id, path, hash, size_bytes, mtime_ns) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (1, "a.gd", "h", 10, 1),
+        )
+        for nid, name in ((1, "a"), (2, "b")):
+            self.conn.execute(
+                "INSERT INTO nodes (id, file_id, name, qualified_name, node_type, "
+                "line_start, line_end, col_offset) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (nid, 1, name, f"a.{name}", "function", 1, 2, 0),
+            )
+        yield
+        self.conn.close()
+
+    def _insert(self, context):
+        self.conn.execute(
+            "INSERT INTO edges (source_id, target_id, edge_type, file_id, line, "
+            "context) VALUES (?, ?, ?, ?, ?, ?)",
+            (1, 2, "read", 1, 7, context),
+        )
+
+    def test_index_is_declared(self):
+        names = {
+            row[0]
+            for row in self.conn.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'index'"
+            )
+        }
+        assert "idx_edges_identity" in names
+
+    def test_duplicate_edge_identity_is_rejected(self):
+        self._insert(None)
+        with pytest.raises(sqlite3.IntegrityError):
+            self._insert(None)
+
+    def test_null_and_empty_context_are_the_same_identity(self):
+        self._insert(None)
+        with pytest.raises(sqlite3.IntegrityError):
+            self._insert("")
+
+    def test_different_context_is_a_different_identity(self):
+        self._insert("get")
+        self._insert("set")
+        assert self.conn.execute("SELECT COUNT(*) FROM edges").fetchone()[0] == 2

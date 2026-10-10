@@ -388,10 +388,18 @@ class TestCppResolutionRegressions:
         ]
 
     def test_constructor_call_edges(self):
+        """Both a stack constructor and a ``new`` constructor are modeled.
+
+        The two calls sit on separate lines on purpose: an edge is
+        ``(source, target, type, file, line, context)``, so two *identical*
+        references on one line are one edge and the second call would not be
+        counted separately.
+        """
         br, wb, gb, _ = self._build({
             "main.cpp": (
                 'class Circle { public: Circle(double){} void area(){} };\n'
-                'int main(){ Circle a(1.0); Circle* p = new Circle(2.0); return 0; }\n'
+                'int main(){ Circle a(1.0);\n'
+                'Circle* p = new Circle(2.0); return 0; }\n'
             ),
         })
         main = next((n.id for n in br.node_id_map.values() if n.qualified_name.endswith(".main")), 0)

@@ -234,6 +234,55 @@ def _insert_nodes(
         )
 
 
+_INSERT_EDGE_SQL = (
+    "INSERT OR IGNORE INTO edges (source_id, target_id, edge_type, "
+    "file_id, line, context) VALUES (?,?,?,?,?,?)"
+)
+
+
+def _insert_edges(
+    db: Database,
+    edges: list[EdgeInfo],
+    mem_fid_to_sql: dict[int, int],
+) -> None:
+    """Insert edges in 5000-row batches, coalescing duplicates.
+
+    Edge identity is ``(source_id, target_id, edge_type, file_id, line,
+    context)`` — the table has no column for the position of an occurrence, so
+    a source line that mentions the same symbol twice yields two rows no
+    consumer can tell apart. The graph builder already coalesces its edge
+    list; repeating it here keeps the guarantee local to the writer, so an
+    in-memory result assembled elsewhere cannot reintroduce duplicates.
+    ``INSERT OR IGNORE`` is the second line of defence (the schema's
+    ``idx_edges_identity`` unique index).
+    """
+    batch: list[tuple[Any, ...]] = []
+    seen: set[tuple[Any, ...]] = set()
+    for edge in edges:
+        if edge.source_id == 0 or edge.target_id == 0:
+            continue
+        sql_fid = mem_fid_to_sql.get(edge.file_id, 0)
+        if not sql_fid:
+            continue
+        row = (
+            edge.source_id,
+            edge.target_id,
+            edge.edge_type,
+            sql_fid,
+            edge.line,
+            edge.context or None,
+        )
+        if row in seen:
+            continue
+        seen.add(row)
+        batch.append(row)
+        if len(batch) >= 5000:
+            db.executemany(_INSERT_EDGE_SQL, batch)
+            batch.clear()
+    if batch:
+        db.executemany(_INSERT_EDGE_SQL, batch)
+
+
 def _do_insert_edges(
     db: Database,
     build_result: GraphBuildResult,
@@ -260,82 +309,29 @@ def _do_insert_edges(
                 if mem_fid_to_sql.get(e.file_id, 0) in changed_sql_fids
             ]
 
-        batch: list[tuple[Any, ...]] = []
-        for edge in insert_edges:
-            if edge.source_id == 0 or edge.target_id == 0:
-                continue
-            sql_fid = mem_fid_to_sql.get(edge.file_id, 0)
-            if not sql_fid:
-                continue
-            batch.append(
-                (
-                    edge.source_id,
-                    edge.target_id,
-                    edge.edge_type,
-                    sql_fid,
-                    edge.line,
-                    edge.context or None,
-                )
-            )
-            if len(batch) >= 5000:
-                db.executemany(
-                    "INSERT INTO edges (source_id, target_id, edge_type, "
-                    "file_id, line, context) VALUES (?,?,?,?,?,?)",
-                    batch,
-                )
-                batch.clear()
-        if batch:
-            db.executemany(
-                "INSERT INTO edges (source_id, target_id, edge_type, "
-                "file_id, line, context) VALUES (?,?,?,?,?,?)",
-                batch,
-            )
+        _insert_edges(db, insert_edges, mem_fid_to_sql)
 
         # Remap downstream edges
         remapped = getattr(build_result, "remapped_node_ids", None) or {}
         for old_id, new_id in remapped.items():
             if old_id != new_id:
+                # OR REPLACE: the remapped row can be identical to one that
+                # already exists (same source/target/type/file/line/context);
+                # that duplicate is redundant, so the update wins.
                 db.execute(
-                    "UPDATE edges SET target_id = ? WHERE target_id = ?",
+                    "UPDATE OR REPLACE edges SET target_id = ? "
+                    "WHERE target_id = ?",
                     (new_id, old_id),
                 )
                 db.execute(
-                    "UPDATE edges SET source_id = ? WHERE source_id = ?",
+                    "UPDATE OR REPLACE edges SET source_id = ? "
+                    "WHERE source_id = ?",
                     (new_id, old_id),
                 )
     else:
         # Full build
         db.execute("DELETE FROM edges")
-        batch: list[tuple[Any, ...]] = []
-        for edge in build_result.edges:
-            if edge.source_id == 0 or edge.target_id == 0:
-                continue
-            sql_fid = mem_fid_to_sql.get(edge.file_id, 0)
-            if not sql_fid:
-                continue
-            batch.append(
-                (
-                    edge.source_id,
-                    edge.target_id,
-                    edge.edge_type,
-                    sql_fid,
-                    edge.line,
-                    edge.context or None,
-                )
-            )
-            if len(batch) >= 5000:
-                db.executemany(
-                    "INSERT INTO edges (source_id, target_id, edge_type, "
-                    "file_id, line, context) VALUES (?,?,?,?,?,?)",
-                    batch,
-                )
-                batch.clear()
-        if batch:
-            db.executemany(
-                "INSERT INTO edges (source_id, target_id, edge_type, "
-                "file_id, line, context) VALUES (?,?,?,?,?,?)",
-                batch,
-            )
+        _insert_edges(db, list(build_result.edges), mem_fid_to_sql)
 
 
 def _insert_warnings(

@@ -601,3 +601,167 @@ class TestPrecomputeEdgeCounts:
         edge_counts = {1: 0}
         stats = _component_stats(comp, br, nid_map, edge_counts)
         assert stats[2] == 0, f"ec should be 0, got {stats[2]}"
+
+
+# =============================================================================
+# TEST-T3: repeated same-line references are stored as one edge row
+# =============================================================================
+
+
+@pytest.mark.timeout(30)
+class TestEdgeIdentityInsert:
+    """Two edges a consumer cannot tell apart are one edge.
+
+    N references to the same symbol on one source line are byte-identical
+    rows; the writer coalesces them on the stored identity.
+    """
+
+    def _db(self):
+        from graphlint.storage.schema import create_tables
+
+        conn = sqlite3.connect(":memory:")
+        conn.row_factory = sqlite3.Row
+        create_tables(conn)
+        db = MagicMock(spec=Database)
+        db.conn = conn
+        db.execute = conn.execute
+        db.executemany = conn.executemany
+        conn.execute(
+            "INSERT INTO files (id, path, hash, size_bytes, mtime_ns) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (1, "src/mod.py", "hash1", 100, 1000),
+        )
+        for nid, name in ((1, "a"), (2, "b")):
+            conn.execute(
+                "INSERT INTO nodes (id, file_id, name, qualified_name, node_type, "
+                "line_start, line_end, col_offset) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (nid, 1, name, f"mod.{name}", "function", 1, 5, 0),
+            )
+        return conn, db
+
+    def _edge(self, context=None, source_id=1, target_id=2, file_id=1, line=42):
+        return EdgeInfo(
+            source_id=source_id,
+            target_id=target_id,
+            edge_type="read",
+            file_id=file_id,
+            line=line,
+            context=context,
+        )
+
+    def test_identical_edges_are_stored_once(self):
+        """Four samples of one reference collapse to a single row."""
+        from graphlint.incremental._db_ops import _insert_edges
+
+        conn, db = self._db()
+        _insert_edges(db, [self._edge() for _ in range(4)], {1: 1})
+        assert conn.execute("SELECT COUNT(*) FROM edges").fetchone()[0] == 1
+
+    def test_distinct_edges_are_all_stored(self):
+        """A different position, context and direction stay separate rows."""
+        from graphlint.incremental._db_ops import _insert_edges
+
+        conn, db = self._db()
+        _insert_edges(
+            db,
+            [
+                self._edge(),
+                self._edge(context="attr"),
+                self._edge(line=43),
+                self._edge(source_id=2, target_id=1),
+            ],
+            {1: 1},
+        )
+        assert conn.execute("SELECT COUNT(*) FROM edges").fetchone()[0] == 4
+
+    def test_null_context_and_empty_context_collapse(self):
+        """The identity treats a missing context and an empty one as equal."""
+        from graphlint.incremental._db_ops import _insert_edges
+
+        conn, db = self._db()
+        _insert_edges(db, [self._edge(None), self._edge("")], {1: 1})
+        assert conn.execute("SELECT COUNT(*) FROM edges").fetchone()[0] == 1
+
+    def test_zero_and_unmapped_endpoints_are_skipped(self):
+        """Synthetic endpoints (0) and files outside the map are not stored."""
+        from graphlint.incremental._db_ops import _insert_edges
+
+        conn, db = self._db()
+        _insert_edges(
+            db,
+            [
+                self._edge(source_id=0),
+                self._edge(target_id=0),
+                self._edge(file_id=99),
+            ],
+            {1: 1},
+        )
+        assert conn.execute("SELECT COUNT(*) FROM edges").fetchone()[0] == 0
+
+    def test_do_insert_edges_full_build_clears_and_coalesces(self):
+        """The full-build branch wipes the table, then stores one row per
+        identity — the writer-level guarantee the builder cannot give to an
+        in-memory result assembled elsewhere."""
+        from graphlint.incremental._db_ops import _do_insert_edges
+
+        conn, db = self._db()
+        conn.execute(
+            "INSERT INTO edges (source_id, target_id, edge_type, file_id, line) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (1, 2, "read", 1, 1),
+        )
+        br = _make_build_result(
+            nodes=[],
+            edges=[self._edge() for _ in range(4)] + [self._edge(line=43)],
+            files_data={"src/mod.py": {"hash": "h", "size": 1, "mtime": 1, "is_test": 0}},
+            files=["src/mod.py"],
+        )
+        _do_insert_edges(db, br, {"src/mod.py": 1}, changed_files=None)
+        rows = conn.execute("SELECT line FROM edges ORDER BY line").fetchall()
+        assert [r[0] for r in rows] == [42, 43]
+
+    def test_do_insert_edges_incremental_uses_new_edge_count(self):
+        """In incremental mode only the first ``new_edge_count`` entries (the
+        edges rebuilt from changed files) are inserted."""
+        from graphlint.incremental._db_ops import _do_insert_edges
+
+        conn, db = self._db()
+        br = _make_build_result(
+            nodes=[],
+            edges=[self._edge(), self._edge(), self._edge(line=43)],
+            files_data={"src/mod.py": {"hash": "h", "size": 1, "mtime": 1, "is_test": 0}},
+            files=["src/mod.py"],
+        )
+        br.new_edge_count = 2
+        _do_insert_edges(db, br, {"src/mod.py": 1}, changed_files={"src/mod.py"})
+        rows = conn.execute("SELECT line FROM edges").fetchall()
+        assert [r[0] for r in rows] == [42]
+
+    def test_do_insert_edges_remap_does_not_violate_identity(self):
+        """A node-id remap can make two rows identical; ``UPDATE OR REPLACE``
+        keeps the table consistent with the unique index instead of raising."""
+        from graphlint.incremental._db_ops import _do_insert_edges
+
+        conn, db = self._db()
+        conn.execute(
+            "INSERT INTO nodes (id, file_id, name, qualified_name, node_type, "
+            "line_start, line_end, col_offset) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (3, 1, "c", "mod.c", "function", 1, 5, 0),
+        )
+        for target in (2, 3):
+            conn.execute(
+                "INSERT INTO edges (source_id, target_id, edge_type, file_id, line) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (1, target, "read", 1, 42),
+            )
+        br = _make_build_result(
+            nodes=[],
+            edges=[],
+            files_data={"src/mod.py": {"hash": "h", "size": 1, "mtime": 1, "is_test": 0}},
+            files=["src/mod.py"],
+        )
+        br.remapped_node_ids = {2: 3}
+        _do_insert_edges(db, br, {"src/mod.py": 1}, changed_files={"src/mod.py"})
+        rows = conn.execute("SELECT DISTINCT target_id FROM edges").fetchall()
+        assert [r[0] for r in rows] == [3]
+        assert conn.execute("SELECT COUNT(*) FROM edges").fetchone()[0] == 1

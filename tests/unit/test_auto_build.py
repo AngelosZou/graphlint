@@ -339,8 +339,13 @@ class TestAutoBuildHealsStaleDb:
 
         conn = sqlite3.connect(str(db_path))
         try:
+            from graphlint.storage.schema import SCHEMA_VERSION
+
             cols = [r[1] for r in conn.execute("PRAGMA table_info(nodes)")]
             assert "is_partial" in cols
-            assert conn.execute("PRAGMA user_version").fetchone()[0] == 1
+            assert (
+                conn.execute("PRAGMA user_version").fetchone()[0]
+                == SCHEMA_VERSION
+            )
         finally:
             conn.close()

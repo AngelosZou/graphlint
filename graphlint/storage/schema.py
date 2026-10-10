@@ -11,9 +11,12 @@ import sqlite3
 # Bump SCHEMA_VERSION on ANY DDL change (new table/column/index). A stored
 # database whose user_version differs from SCHEMA_VERSION is treated as
 # incompatible and dropped + rebuilt (see storage/db.py Database.__init__).
+#
+# 2 — edges gained the unique idx_edges_identity index; rebuilding
+#     an older DB also removes the duplicates it accumulated.
 # ---------------------------------------------------------------------------
 
-SCHEMA_VERSION: int = 1
+SCHEMA_VERSION: int = 2
 
 # SQLite error fragments indicating the stored schema no longer matches the
 # code that wrote it (usually a version mismatch on the disk DB).
@@ -105,6 +108,15 @@ CREATE INDEX IF NOT EXISTS idx_edges_source ON edges(source_id);
 CREATE INDEX IF NOT EXISTS idx_edges_target ON edges(target_id);
 CREATE INDEX IF NOT EXISTS idx_edges_type ON edges(edge_type);
 CREATE INDEX IF NOT EXISTS idx_edges_file ON edges(file_id);
+
+-- Edge identity. A visitor emits one edge per AST *occurrence*, so a source
+-- line that mentions the same symbol twice produces two edges that are
+-- indistinguishable in the table (there is no occurrence/column field, and no
+-- consumer tells them apart). The unique index makes the invariant explicit
+-- and lets the writer use INSERT OR IGNORE / UPDATE OR REPLACE.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_edges_identity ON edges(
+    source_id, target_id, edge_type, file_id, line, COALESCE(context, '')
+);
 
 -- Import records
 CREATE TABLE IF NOT EXISTS imports (

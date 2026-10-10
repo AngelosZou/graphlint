@@ -1437,7 +1437,12 @@ class CSharpVisitor:
                 ))
                 self.name_usages.add(member_name)
 
+        # Walk the receiver chain, but not the ``name`` child: the member
+        # reference was recorded just above, and walking the name identifier
+        # would record the very same edge a second time.
         for child in node.children:
+            if child == name_node:
+                continue
             self._walk(child)
 
     # ------------------------------------------------------------------

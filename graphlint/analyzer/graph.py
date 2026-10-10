@@ -385,6 +385,45 @@ def _build_file_edges_worker(
     return edges
 
 
+def _edge_key(edge: EdgeInfo) -> tuple[int, int, str, int, int, str]:
+    """Identity of an edge, used to coalesce duplicate rows.
+
+    A visitor emits one edge per AST *occurrence*, so a source line that
+    mentions the same symbol several times yields byte-identical edges: the
+    schema has no column for the occurrence position, and no consumer
+    distinguishes two references to one symbol on one line.
+    """
+    return (
+        edge.source_id,
+        edge.target_id,
+        edge.edge_type,
+        edge.file_id,
+        edge.line,
+        edge.context or "",
+    )
+
+
+def _coalesce_edges(
+    edges: list[EdgeInfo],
+    seen: Optional[set[tuple]] = None,
+) -> list[EdgeInfo]:
+    """Return *edges* without duplicates, preserving order.
+
+    *seen* may pre-seed the identity set when the caller keeps an earlier
+    prefix untouched and coalesces only what follows it; it is updated in
+    place with every identity that was kept.
+    """
+    keys: set[tuple] = seen if seen is not None else set()
+    out: list[EdgeInfo] = []
+    for edge in edges:
+        key = _edge_key(edge)
+        if key in keys:
+            continue
+        keys.add(key)
+        out.append(edge)
+    return out
+
+
 # ---------------------------------------------------------------------------
 # GraphBuilder
 # ---------------------------------------------------------------------------
@@ -684,7 +723,15 @@ class GraphBuilder:
         # The edge batch replaces self._edges; re-attach the partial-fragment
         # part_of edges.
         self._add_partial_edges()
+        # Coalesce before anything observes the list. Identity is
+        # (source, target, type, file, line, context) and a visitor emits one
+        # edge per AST occurrence, so a line that names one symbol repeatedly
+        # would otherwise be stored as several identical rows. The prefix is
+        # coalesced *first* so ``new_edge_count`` (the changed-file slice the
+        # incremental writer inserts) stays a valid prefix of the final list.
+        self._edges = _coalesce_edges(self._edges)
         new_edge_count = len(self._edges)
+        _edge_keys_seen: set[tuple] = {_edge_key(e) for e in self._edges}
 
         # Add synthetic module-level edges through the module pseudo-node (id=0).
         # Index top-level nodes per file first — the naive double loop is
@@ -752,6 +799,15 @@ class GraphBuilder:
                         self._edges.append(
                             EdgeInfo(0, _tid, _ref.edge_type, _fid, _ref.line)
                         )
+
+        # Coalesce the tail as well — synthetic module edges, prebuilt edges
+        # and module-level use edges restored from the imports table can repeat
+        # each other or a prefix edge. The prefix itself is left byte-identical
+        # so the incremental slice above stays correct.
+        if len(self._edges) > new_edge_count:
+            _tail = _coalesce_edges(self._edges[new_edge_count:], _edge_keys_seen)
+            if len(_tail) != len(self._edges) - new_edge_count:
+                self._edges = self._edges[:new_edge_count] + _tail
 
         _sn = self._get_special_names()
         _pn = self._get_public_api_names()

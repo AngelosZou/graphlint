@@ -306,6 +306,50 @@ class TestDispatchKeepAlive:
         dispatch = _by_rule(entries, "godot_dynamic_dispatch")
         assert any(e.node_id == target.id for e in dispatch)
 
+    def test_connect_references_the_handler_once(self):
+        """The handler is reached twice — once as a call argument, once by the
+        dispatch pass in ``finish()`` — but a reference a consumer cannot tell
+        apart from another is one reference."""
+        _entries, prs, _nodes, _map = _detect(
+            {
+                "scripts/router.gd": (
+                    "extends Node\n"
+                    "\n"
+                    "signal pressed\n"
+                    "\n"
+                    "func go(title: String) -> void:\n"
+                    "\tpass\n"
+                    "\n"
+                    "func close() -> void:\n"
+                    "\tpass\n"
+                    "\n"
+                    "func wire(button: Button, title: String) -> void:\n"
+                    "\tbutton.pressed.connect(go.bind(title))\n"
+                    "\tbutton.pressed.connect(close)\n"
+                ),
+            }
+        )
+        refs = list(prs["scripts/router.gd"].references)
+
+        # Both handlers stay alive, each through exactly one dispatch ref on
+        # the line that connects it (the definition keeps its own ref).
+        for name, line in (("go", 12), ("close", 13)):
+            qualified = f"res://scripts/router.gd.{name}"
+            hits = [
+                r
+                for r in refs
+                if r.target_name == qualified and r.line == line
+            ]
+            assert len(hits) == 1, (name, [(r.target_name, r.line) for r in refs])
+
+        # And no two references are indistinguishable.
+        keys = [
+            (r.source_qname, r.target_name, r.edge_type, r.line) for r in refs
+        ]
+        assert len(keys) == len(set(keys)), [
+            k for k in keys if keys.count(k) > 1
+        ]
+
     def test_godot4_connect_does_not_mark_the_file_dynamic(self):
         """A resolvable connection is not an unprovable construct."""
         _entries, prs, _nodes, _map = _detect(

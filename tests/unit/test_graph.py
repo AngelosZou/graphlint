@@ -549,3 +549,73 @@ class TestResolveInclude:
         assert GraphBuilder._resolve_include(
             "nope.h", "src/main.c", keys, self._index(keys)
         ) == ""
+
+
+# =============================================================================
+# Edge identity coalescing
+# =============================================================================
+
+
+@pytest.mark.timeout(30)
+class TestEdgeCoalescing:
+    """A reference to one symbol, on one line, is one edge.
+
+    Every visitor emits one edge per AST occurrence, so ``a = b + b + b`` on a
+    single line produced three byte-identical ``read`` rows.  ``build()``
+    coalesces the list before anything (components, warnings, the incremental
+    prefix) consumes it.
+    """
+
+    @staticmethod
+    def _edge(source_id=1, target_id=2, edge_type="read", file_id=1, line=7, context=None):
+        from graphlint.analyzer._types import EdgeInfo
+
+        return EdgeInfo(
+            source_id=source_id,
+            target_id=target_id,
+            edge_type=edge_type,
+            file_id=file_id,
+            line=line,
+            context=context,
+        )
+
+    def test_key_normalizes_null_context(self):
+        from graphlint.analyzer.graph import _edge_key
+
+        assert _edge_key(self._edge(context=None)) == (1, 2, "read", 1, 7, "")
+        assert _edge_key(self._edge(context="")) == (1, 2, "read", 1, 7, "")
+
+    def test_key_separates_position_and_direction(self):
+        from graphlint.analyzer.graph import _edge_key
+
+        base = _edge_key(self._edge())
+        assert _edge_key(self._edge(line=8)) != base
+        assert _edge_key(self._edge(file_id=2)) != base
+        assert _edge_key(self._edge(edge_type="write")) != base
+        assert _edge_key(self._edge(context="attr")) != base
+        assert _edge_key(self._edge(source_id=2, target_id=1)) != base
+
+    def test_duplicates_dropped_and_order_preserved(self):
+        from graphlint.analyzer.graph import _coalesce_edges
+
+        first = self._edge(line=7)
+        second = self._edge(line=8)
+        third = self._edge(line=7, edge_type="write")
+        result = _coalesce_edges([first, second, first, second, third, first])
+        assert result == [first, second, third]
+
+    def test_seeded_seen_keeps_an_already_built_prefix(self):
+        """The tail must not re-add an edge the prefix already holds."""
+        from graphlint.analyzer.graph import _coalesce_edges, _edge_key
+
+        prefix = [self._edge(line=7)]
+        seen = {_edge_key(prefix[0])}
+        tail = [self._edge(line=7), self._edge(line=8)]
+        result = _coalesce_edges(tail, seen)
+        assert result == [tail[1]]
+        assert _edge_key(tail[1]) in seen
+
+    def test_empty_input(self):
+        from graphlint.analyzer.graph import _coalesce_edges
+
+        assert _coalesce_edges([]) == []
