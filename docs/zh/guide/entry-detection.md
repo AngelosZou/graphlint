@@ -1,6 +1,6 @@
 # 入口点检测参考
 
-graphlint 内置 28 种入口点检测规则（Python 10 种、Rust 8 种、C# 10 种），并支持自定义规则扩展。首次运行 `graphlint build` 时，这些规则作为模板写入 `.graphlint/config.json` 中，此后配置文件即为唯一入口规则来源——你可以通过 `graphlint config` 命令或直接编辑配置文件来添加、删除或修改规则。
+graphlint 为每种支持的语言内置入口点检测规则（Python、Rust、C#、C/C++、TypeScript/JavaScript 与 GDScript/Godot），并支持自定义规则扩展。首次运行 `graphlint build` 时，这些规则作为模板写入 `.graphlint/config.json` 中，此后配置文件即为唯一入口规则来源——你可以通过 `graphlint config` 命令或直接编辑配置文件来添加、删除或修改规则。
 
 ## 内置规则
 
@@ -423,6 +423,48 @@ graphlint 内置 28 种入口点检测规则（Python 10 种、Rust 8 种、C# 1
 - **匹配文件**：`**/*.cs`
 - **注意**：测试入口点不会将可达性传播到被测试的非测试代码。
 
+### Godot 规则
+
+Godot 分析器提供 4 条可配置规则，另有 2 个由 `godot` 配置段（而非 `entry_rules`）控制的检测器内置入口。
+
+#### 29. godot_project
+
+检测 `project.godot` 工程清单（工程根目录与嵌套子目录均可）。
+
+- **匹配模式**：`file_match:**/project.godot`
+- **匹配文件**：`**/project.godot`
+- **注意**：清单是文件级入口（`node_id == 0`）。它的 `read` 边把可达性带入 `run/main_scene` 与每个 `[autoload]` 脚本，因此不再需要单独的主场景或 autoload 规则。
+
+#### 30. godot_editor_tool
+
+检测 `@tool` 脚本 —— 由 Godot 编辑器自身实例化并执行。
+
+- **匹配模式**：`decorator:@tool`
+- **匹配文件**：`**/*.gd`
+
+#### 31. godot_rpc_method
+
+检测 `@rpc` 注解方法 —— 由远端调用，而非本地调用点。
+
+- **匹配模式**：`decorator:@rpc`
+- **匹配文件**：`**/*.gd`
+
+#### 32. godot_test
+
+检测 Godot 测试脚本（GUT / gdUnit4 / WAT 约定，复用通用测试模式）。
+
+- **匹配模式**：`test_file`
+- **匹配文件**：`**/*.gd`
+- **注意**：`no_propagate: true` —— 测试脚本自身存活，但不会让它所覆盖的代码随之存活。
+
+#### godot_public_class（检测器内置）
+
+每个声明了 `class_name X` 的 `.gd` 文件都会在类所属节点上产生一个入口，因为具名类是项目级的可复用 API。当「只由场景决定什么被使用」时，可用 `{"godot": {"public_class_api": false}}` 关闭。
+
+#### godot_dynamic_dispatch（检测器内置）
+
+保活字符串分发成员：项目内所有字面量分发名（`call("add_score")`、`emit_signal("died")`、`set("prop")`、`callv(...)`、`call_deferred(...)`）与 `.tscn` 中每个 `[connection]` 的 `signal`/`method` 的并集都会成为入口，因此编辑器连线的回调即使没有任何 `.gd` 文件提及也不会被判为死代码。可用 `{"godot": {"dispatch_keepalive": false}}` 关闭。
+
 ## `--public-as-entry` 标志
 
 `--public-as-entry` 标志提供了一种无需修改配置文件即可将公开项视为入口点的方式：
@@ -447,19 +489,21 @@ graphlint query --public-as-entry
 
 | 前缀 | 说明 | 示例 | 适用语言 |
 |------|------|------|----------|
-| `function_call:<name>` | 匹配指定名称的函数调用 | `"function_call:start_app"` | Python、C# |
-| `function_def:<pattern>` | 匹配指定名称的函数定义（支持 glob） | `"function_def:run_*"` | Python、Rust、C# |
-| `decorator:<name>` | 匹配装饰器（Python）、属性宏（Rust `#[...]`）或特性（C# `[...]`） | `"decorator:app.route"` / `"decorator:tokio::main"` / `"decorator:Fact"` | Python、Rust、C# |
-| `class_instantiation:<name>` | 匹配指定名称的类实例化 | `"class_instantiation:MyApp"` | Python |
-| `class_definition:<pattern>` | 匹配类/结构体/记录/接口定义（支持 glob） | `"class_definition:App"` | C# |
-| `file_match:<pattern>` | 匹配文件名模式 | `"file_match:**/startup.py"` | Python、Rust、C# |
+| `function_call:<name>` | 匹配指定名称的函数调用 | `"function_call:start_app"` | Python、C#、C/C++、TS/JS |
+| `function_def:<pattern>` | 匹配指定名称的函数定义（支持 glob） | `"function_def:run_*"` | Python、Rust、C#、C/C++、TS/JS、Godot |
+| `decorator:<name>` | 匹配装饰器（Python）、属性宏（Rust `#[...]`）、特性（C# `[...]`）或 GDScript 注解（`@tool`、`@rpc`） | `"decorator:app.route"` / `"decorator:tokio::main"` / `"decorator:Fact"` / `"decorator:@tool"` | Python、Rust、C#、TS/JS、Godot |
+| `class_instantiation:<name>` | 匹配指定名称的类实例化 | `"class_instantiation:MyApp"` | Python、TS/JS |
+| `class_definition:<pattern>` | 匹配类/结构体/记录/接口定义（支持 glob） | `"class_definition:App"` | C#、C/C++、TS/JS |
+| `file_match:<pattern>` | 匹配文件名模式 | `"file_match:**/startup.py"` | Python、Rust、C#、C/C++、TS/JS、Godot |
 | `file_is_program` | 匹配含顶级语句的 `Program.cs` | `"file_is_program"` | C# |
 | `if_name_main` | 匹配 `if __name__ == '__main__'` | `"if_name_main"` | Python |
-| `test_file` | 匹配测试文件（使用 `test_patterns` 配置） | `"test_file"` | Python、Rust、C# |
+| `test_file` | 匹配测试文件（使用 `test_patterns` 配置） | `"test_file"` | Python、Rust、C#、C/C++、TS/JS、Godot |
 | `visibility:pub` | 匹配具有 `pub` 可见性修饰符的项目 | `"visibility:pub"` | Rust |
 | `visibility:public` | 匹配具有 `public` 可见性修饰符的项目 | `"visibility:public"` | C# |
 | `trait_impl:<pattern>` | 匹配 `impl Trait for Type` 实现块 | `"trait_impl:Default"` | Rust |
 | `macro_def:<pattern>` | 匹配 `macro_rules!` 定义 | `"macro_def:my_macro"` | Rust |
+| `jsx_element:<name>` | 匹配指定名称的 JSX 元素 | `"jsx_element:App"` | TS/JS |
+| `export:<pattern>` | 匹配 ES 模块导出 | `"export:default"` | TS/JS |
 
 ### 自定义规则示例
 

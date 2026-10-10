@@ -321,6 +321,40 @@ DEFAULT_CONFIG: Dict[str, Any] = {
             "enabled": True,
             "description": "C++ test files (gtest/Catch2/conventions)",
         },
+        # -------- Godot --------
+        # The manifest is the project's root: its ``[application]``,
+        # ``[autoload]`` and custom sections reference scenes and scripts by
+        # ``res://`` path, and those references are ordinary read edges, so
+        # reachability flows from the manifest into the whole project.
+        {
+            "name": "godot_project",
+            "file_pattern": "**/project.godot",
+            "ast_pattern": "file_match:**/project.godot",
+            "enabled": True,
+            "description": "Godot project manifest (main scene + autoload roots)",
+        },
+        {
+            "name": "godot_editor_tool",
+            "file_pattern": "**/*.gd",
+            "ast_pattern": "decorator:@tool",
+            "enabled": True,
+            "description": "Godot @tool script (executes inside the editor)",
+        },
+        {
+            "name": "godot_rpc_method",
+            "file_pattern": "**/*.gd",
+            "ast_pattern": "decorator:@rpc",
+            "enabled": True,
+            "description": "Godot @rpc method (invoked by remote peers)",
+        },
+        {
+            "name": "godot_test",
+            "file_pattern": "**/*.gd",
+            "ast_pattern": "test_file",
+            "enabled": True,
+            "description": "Godot test scripts (GUT / gdUnit4 / WAT)",
+            "no_propagate": True,
+        },
     ],
     # -------- Test file patterns --------
     "test_patterns": {
@@ -331,7 +365,8 @@ DEFAULT_CONFIG: Dict[str, Any] = {
                           "*_tests.cpp", "*_tests.cc", "*_tests.cxx",
                           "*_tests.hpp", "*_tests.hh", "*_tests.hxx",
                           "test_*.cpp", "test_*.cc", "test_*.cxx",
-                          "test_*.hpp", "test_*.hh", "test_*.hxx"],
+                          "test_*.hpp", "test_*.hh", "test_*.hxx",
+                          "test_*.gd", "*_test.gd", "test_*.tscn"],
         "dir_patterns": ["tests/", "test/", "__tests__/", "Tests/", "Test/"],
         "config_files": ["conftest.py"],
         "function_patterns": ["test_*"],
@@ -379,6 +414,40 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     #   "on"   — always treat external-linkage top-level symbols as entries;
     #   "off"  — never.
     "c_library_mode": "auto",
+    # -------- Godot behavior --------
+    # public_class_api:
+    #   A ``class_name`` script is the project's public API surface (the name is
+    #   registered project-wide), so it is treated as an entry and never
+    #   reported as an orphan.  Set to False for the strict verdict — a
+    #   ``class_name`` script that nothing references is then dead code.
+    # method_dead_code:
+    #   False (the default) keeps every method of a script alive, because Godot
+    #   reaches methods through ``call("name")``, editor-written ``[connection]``
+    #   entries and string-built ``Callable`` objects that no static analysis can
+    #   fully follow.  Set to True to report uncalled methods as dead code — the
+    #   opt-in, stricter verdict, backed by the project-wide string-dispatch
+    #   keep-alive (``dispatch_keepalive``).
+    # signal_dead_code / constant_dead_code:
+    #   Report signals / constants that nothing reads.  Off by default because
+    #   a signal is often part of a script's API for other scenes, and a
+    #   ``const`` is often read through a string (``set``/``get``).
+    # assume_dynamic_keeps_file_alive:
+    #   When a script uses a construct graphlint cannot resolve (``call(name)``,
+    #   computed ``load``/``get_node``, ``Expression.parse`` …), keep all of its
+    #   members alive instead of guessing — the confident half of the analysis.
+    # dispatch_keepalive:
+    #   Keep a member alive when ANY script in the project passes its name to a
+    #   string-keyed call (``call("add_score")``, ``emit_signal("died")`` …).
+    #   No single file can see which script such a call reaches, so the
+    #   project-wide union is what prevents a false "dead" verdict.
+    "godot": {
+        "public_class_api": True,
+        "method_dead_code": False,
+        "signal_dead_code": False,
+        "constant_dead_code": False,
+        "assume_dynamic_keeps_file_alive": True,
+        "dispatch_keepalive": True,
+    },
     # -------- Output --------
     "output": {
         "default_detail": "auto",

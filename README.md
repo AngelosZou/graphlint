@@ -19,6 +19,7 @@ AI agents generate code rapidly, leaving behind dead and redundant code that pol
 | **C#** (`.cs`) | Built-in (opt-in deps) | `tree-sitter` | Partial classes, properties/indexers/events, attributes, `.csproj` awareness, test framework entries |
 | **C / C++** (`.c` `.h` `.cpp` `.cc` `.cxx` `.hpp` `.hh` `.hxx`) | Built-in (opt-in deps) | `tree-sitter` | struct/union/enum members, typedefs, macros, `#include` tracking, per-TU `static` linkage, C library entry mode, C++ classes/namespaces/templates, cross-TU member-call resolution |
 | **TypeScript / JavaScript** (`.ts` `.tsx` `.js` `.jsx` `.mts` `.cts` `.mjs` `.cjs`) | Built-in (opt-in deps) | `tree-sitter` | JSX/React components, Next.js pages, NestJS decorators, Jest/Vitest tests, import/export analysis |
+| **GDScript / Godot** (`.gd` `.tscn` `.tres` `project.godot`) | Built-in (opt-in deps) | `tree-sitter` + built-in resource parser | Scene/resource attachment, `preload`/`load`/`class_name`, main scene and autoload entries, editor-wired `[connection]` callbacks, `res://` path validation, dynamic-dispatch keep-alive |
 
 Install optional language support:
 
@@ -27,6 +28,7 @@ pip install graphlint[rust]        # adds tree-sitter and tree-sitter-rust
 pip install graphlint[csharp]      # adds tree-sitter and tree-sitter-c-sharp
 pip install graphlint[c]           # adds tree-sitter + tree-sitter-c + tree-sitter-cpp (C/C++)
 pip install graphlint[typescript]  # adds tree-sitter + tree-sitter-typescript + tree-sitter-javascript
+pip install graphlint[godot]       # adds tree-sitter + tree-sitter-gdscript (.tscn/.tres/project.godot use the built-in parser)
 ```
 
 > C/C++ are analysed by a **single unified C/C++ analyzer** that owns `.c .h .cpp
@@ -35,14 +37,21 @@ pip install graphlint[typescript]  # adds tree-sitter + tree-sitter-typescript +
 > — exactly as a C/C++ compiler does. One extra, `graphlint[c]`, installs both
 > grammars.
 
+> Godot is likewise analysed by a **single unified Godot analyzer** that owns
+> `.gd` + `.tscn` + `.tres` + `project.godot`: scripts, scenes, resources and the
+> project manifest must share one graph for `detect_entries()` to see the main
+> scene, the autoloads, the script each scene attaches and the callbacks the
+> editor wires in one pass. Scripts use `tree-sitter-gdscript`; the INI-like
+> resource formats use a built-in parser.
+
 ## Features
 
 - **Dead code detection** — finds components unreachable from any entry point via graph traversal
-- **Multi-language support** — Python, Rust, C#, C/C++ (unified), TypeScript, and JavaScript backends via a language adapter abstraction; Python uses stdlib `ast`, the others use `tree-sitter`
-- **Language-specific awareness** — Python decorators, Rust attribute macros (`#[tokio::main]`, `#[test]`), C# attributes (`[Fact]`, `[HttpGet]`), C translation-unit scope (`static` internal linkage, per-TU header `static`s) and library entry mode, C++ classes/namespaces/templates, `enum class` members, and cross-TU member-call resolution, TS/JS JSX elements and ES module imports/exports, trait implementations, `pub`/`public` visibility, partial classes, and more
+- **Multi-language support** — Python, Rust, C#, C/C++ (unified), TypeScript/JavaScript, and GDScript/Godot backends via a language adapter abstraction; Python uses stdlib `ast`, the others use `tree-sitter` (Godot's `.tscn`/`.tres`/`project.godot` use a built-in resource parser)
+- **Language-specific awareness** — Python decorators, Rust attribute macros (`#[tokio::main]`, `#[test]`), C# attributes (`[Fact]`, `[HttpGet]`), C translation-unit scope (`static` internal linkage, per-TU header `static`s) and library entry mode, C++ classes/namespaces/templates, `enum class` members, and cross-TU member-call resolution, TS/JS JSX elements and ES module imports/exports, GDScript `class_name`/`signal`/`@export`/`@onready`/`@tool`/`@rpc`, scene and `ExtResource` attachment, trait implementations, `pub`/`public` visibility, partial classes, and more
 - **AST/CST parsing** — extracts functions, methods, structs, enums, traits, impls, macros, classes, properties, indexers, events, variables, and fields; aware of type annotations, destructured variables, and generics
 - **Dependency graph** — builds directed edges: `read`, `write`, `call`, `inherit`, `decorate`
-- **Entry point detection** — built-in rules covering Python frameworks (FastAPI, Flask, Django, Click, Typer, Celery, pytest), Rust conventions (main, async runtimes, WASM, proc macros, FFI, tests, pub API), .NET conventions (console, xUnit, NUnit, MSTest, Web API, Minimal API, Generic Host, WinForms, WPF), C/C++ conventions (`main`/`WinMain`/`wWinMain`/`DllMain`/`_tmain` for C and a free `main` for C++, `class_definition:` patterns, `test_file` by convention, and C library mode via external-linkage symbols), and TS/JS conventions (main, module index, CLI/server listen, Next.js pages, NestJS decorators, React JSX, Jest/Vitest tests) plus custom rules
+- **Entry point detection** — built-in rules covering Python frameworks (FastAPI, Flask, Django, Click, Typer, Celery, pytest), Rust conventions (main, async runtimes, WASM, proc macros, FFI, tests, pub API), .NET conventions (console, xUnit, NUnit, MSTest, Web API, Minimal API, Generic Host, WinForms, WPF), C/C++ conventions (`main`/`WinMain`/`wWinMain`/`DllMain`/`_tmain` for C and a free `main` for C++, `class_definition:` patterns, `test_file` by convention, and C library mode via external-linkage symbols), TS/JS conventions (main, module index, CLI/server listen, Next.js pages, NestJS decorators, React JSX, Jest/Vitest tests), and Godot conventions (the `project.godot` manifest, `class_name` public classes, `@tool` editor scripts, `@rpc` remote methods, GUT/gdUnit4 tests, literal string dispatch and `.tscn`-wired callbacks) plus custom rules
 - **Configurable entry templates** — add custom entry rules via `ast_pattern` prefixes including `function_call:`, `function_def:`, `decorator:`, `class_definition:` (C#), `file_match:`, `file_is_program` (C#), `visibility:pub` (Rust), `visibility:public` (C#), `trait_impl:` (Rust), `macro_def:` (Rust), `jsx_element:` (TypeScript), `export:` (TypeScript), and more
 - **`--public-as-entry` flag** — treat all public items (Rust `pub`, C# `public`, C external-linkage symbols) as entry points for library analysis
 - **Warning detection** — 11 warning types including circular references, unused imports, write-only variables, and more
@@ -80,6 +89,14 @@ For TypeScript/JavaScript support (`.ts` `.tsx` `.js` `.jsx` `.mts` `.cts` `.mjs
 ```bash
 pip install graphlint[typescript]
 ```
+
+For GDScript/Godot support (`.gd` scripts plus `.tscn` scenes, `.tres` resources and `project.godot`):
+
+```bash
+pip install graphlint[godot]   # adds tree-sitter + tree-sitter-gdscript
+```
+
+The scenes, resources and the project manifest are read by a built-in parser, so they need no extra dependency. Godot 4.x syntax only.
 
 ## Quick Start
 
@@ -258,6 +275,7 @@ Full documentation is available in the [docs/](docs/) directory:
 - **C# partial classes & reflection** — tree-sitter parses each `.cs` file independently; partial class fragments are merged into a single logical node via `part_of` edges, but members called only through reflection (`Activator.CreateInstance`, DI container registration) may be missed, similar to Python's dynamic import limitations.
 - **C/C++ static analysis limits** — member calls resolve type-aware across translation units (via a project-wide class→method index), but there is **no virtual/overload/dynamic dispatch**: a call through a `Base*` pointer resolves statically to the base's method, so a derived override reached only that way may be reported dead. The preprocessor is treated as pure AST (`#if` is never evaluated, macros are not expanded); function-pointer indirect call targets are not traced; a `static` symbol in a header is per-TU. A pure-virtual (`= 0`) interface method is exempt from dead-code (dispatched by the vtable). C function parameters are not modelled as nodes, so a parameter named like a caller's local can resolve by flat name.
 - **`--public-as-entry` scope** — this flag applies to languages with `public` visibility declarations (Rust `pub`, C# `public`). It has no effect on Python files. Toggling this flag triggers a full re-index. For long-term library analysis, prefer enabling the `rust_pub_api` entry rule via `graphlint config` to persist the setting.
+- **Godot dynamic dispatch** — string dispatch (`call("name")`, `emit_signal("x")`, `set("prop")`), `load(variable)`, `get_node(variable)`, `Expression.parse`, Callables stored in containers, and GDExtension/plugin entry points cannot be proven statically. By default (`godot.method_dead_code: false`) only file/asset-level verdicts are produced (orphan script, unreachable scene, unused `.tres`); per-method verdicts are opt-in. Literal dispatch names and `.tscn`-wired callbacks act as entries, a script containing anything unprovable keeps all its members alive (`godot.assume_dynamic_keeps_file_alive`) and receives a `dynamic_import` advisory. Godot 4.x syntax only.
 - **Large codebase build time** — on a large codebase with 700+ `.py` files, 1,000+ classes, and 14,000+ functions, a full rebuild takes approximately 200 seconds (actual performance depends on hardware). Small projects (~60 files) complete in ~1 second. This cost is one-time, after the initial full scan, subsequent queries use incremental updates.
 
 ## License

@@ -54,6 +54,9 @@ _OPTIONAL_LANG_SUPPORT: dict[str, tuple[str, str]] = {
     ".hpp": ("C/C++", "pip install graphlint[c]"),
     ".hh": ("C/C++", "pip install graphlint[c]"),
     ".hxx": ("C/C++", "pip install graphlint[c]"),
+    ".gd": ("Godot/GDScript", "pip install graphlint[godot]"),
+    ".tscn": ("Godot/GDScript", "pip install graphlint[godot]"),
+    ".tres": ("Godot/GDScript", "pip install graphlint[godot]"),
 }
 
 # Languages already hinted at in this process (dedupe).
@@ -73,6 +76,9 @@ def _build_registry() -> LanguageRegistry:
     # C/C++ family — one unified adapter owning every C-family extension;
     # silently skipped when neither tree-sitter-c nor tree-sitter-cpp is installed.
     _try_register_cfamily(registry)
+    # Godot — scripts, scenes, resources and the project manifest in one graph.
+    # Registers in a reduced form when tree-sitter-gdscript is missing.
+    _try_register_godot(registry)
     return registry
 
 
@@ -123,6 +129,21 @@ def _try_register_csharp(registry: LanguageRegistry) -> None:
         return
     if _TREE_SITTER_CSHARP_AVAILABLE:
         _try_register(registry, CSharpAdapter)
+
+
+def _try_register_godot(registry: LanguageRegistry) -> None:
+    """Register the Godot adapter (GDScript + scenes + resources + manifest).
+
+    ``tree-sitter-gdscript`` is needed for ``.gd`` scripts, but the scene,
+    resource and manifest parsers are hand-written, so a reduced adapter is
+    registered when the grammar is missing instead of skipping the language
+    entirely; :func:`_warn_missing_lang_support` prints the install hint.
+    """
+    try:
+        from graphlint.analyzer.language.godot import build_adapter
+    except ImportError:
+        return
+    registry.register(build_adapter())
 
 
 def _warn_missing_lang_support(root_dir: str, registry: LanguageRegistry) -> None:

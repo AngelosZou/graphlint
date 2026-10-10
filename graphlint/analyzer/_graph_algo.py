@@ -32,6 +32,9 @@ _READ_PROMOTED_TYPES: frozenset[str] = frozenset(
         "macro",
         "type",
         "union",
+        "script",
+        "scene",
+        "resource",
     }
 )
 

@@ -24,6 +24,26 @@ pip install graphlint[rust]
 pip install graphlint[csharp]
 ```
 
+如需支持 C/C++（`.c .h .cpp .cc .cxx .hpp .hh .hxx`）：
+
+```bash
+pip install graphlint[c]
+```
+
+如需支持 TypeScript / JavaScript（`.ts .tsx .js .jsx .mts .cts .mjs .cjs`）：
+
+```bash
+pip install graphlint[typescript]
+```
+
+如需支持 GDScript / Godot（`.gd` 脚本，以及 `.tscn` 场景、`.tres` 资源与 `project.godot`）：
+
+```bash
+pip install graphlint[godot]
+```
+
+`godot` extra 会引入 `tree-sitter` 与 `tree-sitter-gdscript` 用于脚本解析；场景、资源与工程清单由内置资源解析器读取，无需额外依赖。仅支持 Godot 4.x 语法。
+
 ## Agent 集成
 
 Graphlint 可以将使用提示词注入到您的 AI 编码工具的**全局配置**中，让每个项目自动获得 graphlint 的使用指南：

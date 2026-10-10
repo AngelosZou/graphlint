@@ -34,7 +34,11 @@ graphlint 的配置文件位于项目根目录的 `.graphlint/config.json`，使
     {"name": "csharp_generic_host", "ast_pattern": "function_call:CreateDefaultBuilder | function_call:ConfigureWebHostDefaults | function_call:Run", "file_pattern": "**/*.cs", "enabled": true},
     {"name": "csharp_winforms",  "ast_pattern": "function_call:Application.Run | function_call:Application.EnableVisualStyles", "file_pattern": "**/*.cs", "enabled": true},
     {"name": "csharp_wpf",       "ast_pattern": "class_definition:App",               "file_pattern": "**/*.cs",         "enabled": true},
-    {"name": "csharp_test",      "ast_pattern": "test_file",                         "file_pattern": "**/*.cs",         "enabled": true, "no_propagate": true}
+    {"name": "csharp_test",      "ast_pattern": "test_file",                         "file_pattern": "**/*.cs",         "enabled": true, "no_propagate": true},
+    {"name": "godot_project",    "ast_pattern": "file_match:**/project.godot",        "file_pattern": "**/project.godot", "enabled": true},
+    {"name": "godot_editor_tool","ast_pattern": "decorator:@tool",                    "file_pattern": "**/*.gd",          "enabled": true},
+    {"name": "godot_rpc_method", "ast_pattern": "decorator:@rpc",                     "file_pattern": "**/*.gd",          "enabled": true},
+    {"name": "godot_test",       "ast_pattern": "test_file",                          "file_pattern": "**/*.gd",          "enabled": true, "no_propagate": true}
   ],
   "exclude_patterns": {
     "always_exclude": ["__pycache__/", ".mypy_cache/", ".pytest_cache/", ".tox/", ".venv/", "venv/", "env/", "virtualenv/", ".env/", "node_modules/", ".git/", ".svn/", ".hg/", ".idea/", ".vscode/", ".vs/", ".graphlint/", "build/", "dist/", "target/", ".cargo/", "*.egg-info/", "*.pyc", "*.pyo"],
@@ -54,7 +58,7 @@ graphlint 的配置文件位于项目根目录的 `.graphlint/config.json`，使
   "test_patterns": {
     "config_files": ["conftest.py"],
     "dir_patterns": ["tests/", "test/", "__tests__/", "Tests/", "Test/"],
-    "file_patterns": ["test_*.py", "*_test.py", "test_*.rs", "*_test.rs", "*Tests.cs", "*Test.cs", "*.Tests.cs"],
+    "file_patterns": ["test_*.py", "*_test.py", "test_*.rs", "*_test.rs", "*Tests.cs", "*Test.cs", "*.Tests.cs", "test_*.gd", "*_test.gd", "test_*.tscn"],
     "function_patterns": ["test_*"]
   },
   "version": 1
@@ -96,19 +100,21 @@ graphlint query --public-as-entry
 
 | 前缀 | 匹配目标 | 示例 | 适用语言 |
 |------|----------|------|----------|
-| `function_call:` | 函数调用 | `"function_call:my_entry"` | Python、C# |
-| `function_def:` | 函数定义名（支持 glob） | `"function_def:run_*"` | Python、Rust、C# |
-| `decorator:` | 装饰器或属性宏（`#[...]`）/ 特性（`[...]`） | `"decorator:app.route"` / `"decorator:tokio::main"` / `"decorator:Fact"` | Python、Rust、C# |
-| `class_instantiation:` | 类实例化 | `"class_instantiation:MyApp"` | Python |
-| `class_definition:` | 类/结构体/记录/接口定义（支持 glob） | `"class_definition:App"` | C# |
-| `file_match:` | 文件名匹配 | `"file_match:**/main.py"` | Python、Rust、C# |
+| `function_call:` | 函数调用 | `"function_call:my_entry"` | Python、C#、C/C++、TS/JS |
+| `function_def:` | 函数定义名（支持 glob） | `"function_def:run_*"` | Python、Rust、C#、C/C++、TS/JS、Godot |
+| `decorator:` | 装饰器或属性宏（`#[...]`）/ 特性（`[...]`）/ GDScript 注解（`@...`） | `"decorator:app.route"` / `"decorator:tokio::main"` / `"decorator:Fact"` / `"decorator:@tool"` | Python、Rust、C#、TS/JS、Godot |
+| `class_instantiation:` | 类实例化 | `"class_instantiation:MyApp"` | Python、TS/JS |
+| `class_definition:` | 类/结构体/记录/接口定义（支持 glob） | `"class_definition:App"` | C#、C/C++、TS/JS |
+| `file_match:` | 文件名匹配 | `"file_match:**/main.py"` | Python、Rust、C#、C/C++、TS/JS、Godot |
 | `file_is_program` | 含顶级语句的 `Program.cs` | `"file_is_program"` | C# |
 | `if_name_main` | `if __name__ == '__main__'` 检测 | `"if_name_main"` | Python |
-| `test_file` | 测试文件检测（使用 `test_patterns` 配置） | `"test_file"` | Python、Rust、C# |
+| `test_file` | 测试文件检测（使用 `test_patterns` 配置） | `"test_file"` | Python、Rust、C#、C/C++、TS/JS、Godot |
 | `visibility:pub` | 匹配具有 `pub` 可见性修饰符的项目 | `"visibility:pub"` | Rust |
 | `visibility:public` | 匹配具有 `public` 可见性修饰符的项目 | `"visibility:public"` | C# |
 | `trait_impl:` | 匹配 `impl Trait for Type` 实现块 | `"trait_impl:Default"` | Rust |
 | `macro_def:` | 匹配 `macro_rules!` 定义 | `"macro_def:my_macro"` | Rust |
+| `jsx_element:` | JSX 元素 | `"jsx_element:App"` | TS/JS |
+| `export:` | ES 模块导出 | `"export:default"` | TS/JS |
 
 ### exclude_patterns — 排除模式
 
@@ -148,6 +154,30 @@ graphlint query --public-as-entry
 | `dir_patterns` | `string[]` | 测试目录匹配模式 |
 | `file_patterns` | `string[]` | 测试文件名匹配模式 |
 | `function_patterns` | `string[]` | 测试函数匹配模式 |
+
+### godot — Godot 设置
+
+GDScript / Godot 分析器的设置。所有键均可选，下表为 `DEFAULT_CONFIG` 中的默认值。
+
+| 键 | 类型 | 默认值 | 说明 |
+|-----|------|---------|-------------|
+| `public_class_api` | `bool` | `true` | 将声明了 `class_name X` 的脚本视为公开 API 入口（脚本本身即一个可复用类）。游戏项目、或「只有场景决定什么被使用」的项目可关闭，让没有任何场景引用的类可被判为死代码。 |
+| `method_dead_code` | `bool` | `false` | 是否报告方法级死代码。默认关闭：Godot 会通过 `call("name")`、编辑器写入的 `[connection]` 连线以及字符串构造的 `Callable` 触达方法，因此方法级结论通常无法静态证明。 |
+| `signal_dead_code` | `bool` | `false` | 是否报告「无人连接、也无人 emit」的 `signal`。默认关闭，原因同上（连接可在运行时由字符串建立）。 |
+| `constant_dead_code` | `bool` | `false` | 是否报告无人读取的 `const`。默认关闭，因为常量也可能通过 `ProjectSettings`／反射式查找读取。 |
+| `assume_dynamic_keeps_file_alive` | `bool` | `true` | 当脚本中存在无法证明的构造（`load(变量)`、`get_node(变量)`、`call(变量)`、`Expression.parse` 等）时，保守地保留该脚本的全部成员，而不是去猜。设为 `false` 可收窄存活范围并接受更多假阳性；该脚本仍会收到 `dynamic_import` 提示。 |
+| `dispatch_keepalive` | `bool` | `true` | 将字面量字符串分发名（`call("add_score")`、`emit_signal("died")`、`set("prop")`）以及 `.tscn` 中每个 `[connection]` 的 `signal`/`method` 视为入口，目标成员不会被判为死代码。 |
+
+```json
+{
+  "godot": {
+    "public_class_api": false,
+    "method_dead_code": true
+  }
+}
+```
+
+Godot 入口规则（见 `entry_rules`）：`godot_project`（`project.godot` 工程清单 —— 它的 `read` 边抵达主场景与全部 autoload）、`godot_editor_tool`（`@tool`）、`godot_rpc_method`（`@rpc`）、`godot_test`（`no_propagate`：测试脚本自身存活，但不让它触达的代码随之存活）。
 
 ## 配置管理方式
 

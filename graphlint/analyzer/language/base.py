@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Any, Callable
+from typing import Any, Callable, Optional
 
 from graphlint.analyzer._types import NodeInfo, ParseResult
 
@@ -147,3 +147,33 @@ class LanguageAdapter(ABC):
         (Rust:   ``target``, ``.cargo``, etc.)
         """
         ...
+
+    # ------------------------------------------------------------------
+    # Cross-file validation (optional)
+    # ------------------------------------------------------------------
+
+    def validate_graph(
+        self,
+        parse_results: dict[str, ParseResult],
+        nodes: list[NodeInfo],
+        node_id_map: dict[int, NodeInfo],
+        edges: list[Any],
+        file_id_map: dict[str, int],
+        root_dir: Optional[str],
+        config: dict[str, Any],
+    ) -> list[Any]:
+        """Return cross-file warnings the per-file pass cannot decide.
+
+        Called once per build, after the graph and its warnings are assembled,
+        with *parse_results* restricted to this adapter's files.  Adapters that
+        have nothing to add keep this default (``[]``); the Godot adapter uses
+        it for the checks that compare the code against the project on disk
+        (missing ``res://`` targets, a broken ``main_scene``, duplicate
+        ``class_name``, resource dependency cycles).
+
+        Returned objects are ``WarningInfo`` instances (or anything exposing the
+        same attributes) and are added to the same collector as the per-file
+        warnings.  Raising is not useful — the core discards hook errors so a
+        broken check can never fail a build — so return ``[]`` instead.
+        """
+        return []

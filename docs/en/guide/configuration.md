@@ -34,7 +34,11 @@ graphlint's configuration file is located at `.graphlint/config.json` in the pro
     {"name": "csharp_generic_host", "ast_pattern": "function_call:CreateDefaultBuilder | function_call:ConfigureWebHostDefaults | function_call:Run", "file_pattern": "**/*.cs", "enabled": true},
     {"name": "csharp_winforms",  "ast_pattern": "function_call:Application.Run | function_call:Application.EnableVisualStyles", "file_pattern": "**/*.cs", "enabled": true},
     {"name": "csharp_wpf",       "ast_pattern": "class_definition:App",               "file_pattern": "**/*.cs",         "enabled": true},
-    {"name": "csharp_test",      "ast_pattern": "test_file",                         "file_pattern": "**/*.cs",         "enabled": true, "no_propagate": true}
+    {"name": "csharp_test",      "ast_pattern": "test_file",                         "file_pattern": "**/*.cs",         "enabled": true, "no_propagate": true},
+    {"name": "godot_project",    "ast_pattern": "file_match:**/project.godot",        "file_pattern": "**/project.godot", "enabled": true},
+    {"name": "godot_editor_tool","ast_pattern": "decorator:@tool",                    "file_pattern": "**/*.gd",          "enabled": true},
+    {"name": "godot_rpc_method", "ast_pattern": "decorator:@rpc",                     "file_pattern": "**/*.gd",          "enabled": true},
+    {"name": "godot_test",       "ast_pattern": "test_file",                          "file_pattern": "**/*.gd",          "enabled": true, "no_propagate": true}
   ],
   "exclude_patterns": {
     "always_exclude": ["__pycache__/", ".mypy_cache/", ".pytest_cache/", ".tox/", ".venv/", "venv/", "env/", "virtualenv/", ".env/", "node_modules/", ".git/", ".svn/", ".hg/", ".idea/", ".vscode/", ".vs/", ".graphlint/", "build/", "dist/", "target/", ".cargo/", "*.egg-info/", "*.pyc", "*.pyo"],
@@ -54,7 +58,7 @@ graphlint's configuration file is located at `.graphlint/config.json` in the pro
   "test_patterns": {
     "config_files": ["conftest.py"],
     "dir_patterns": ["tests/", "test/", "__tests__/", "Tests/", "Test/"],
-    "file_patterns": ["test_*.py", "*_test.py", "test_*.rs", "*_test.rs", "*Tests.cs", "*Test.cs", "*.Tests.cs"],
+    "file_patterns": ["test_*.py", "*_test.py", "test_*.rs", "*_test.rs", "*Tests.cs", "*Test.cs", "*.Tests.cs", "test_*.gd", "*_test.gd", "test_*.tscn"],
     "function_patterns": ["test_*"]
   },
   "version": 1
@@ -96,19 +100,21 @@ All rules use the same prefix pattern syntax, supporting OR combinations with ` 
 
 | Prefix | Match Target | Example | Languages |
 |--------|-------------|---------|-----------|
-| `function_call:` | Function call | `"function_call:my_entry"` | Python, C# |
-| `function_def:` | Function definition name (supports glob) | `"function_def:run_*"` | Python, Rust, C# |
-| `decorator:` | Decorator or attribute macro (`#[...]`) / attribute (`[...]`) | `"decorator:app.route"` / `"decorator:tokio::main"` / `"decorator:Fact"` | Python, Rust, C# |
-| `class_instantiation:` | Class instantiation | `"class_instantiation:MyApp"` | Python |
-| `class_definition:` | Class/struct/record/interface definition (supports glob) | `"class_definition:App"` | C# |
-| `file_match:` | Filename match | `"file_match:**/main.py"` | Python, Rust, C# |
+| `function_call:` | Function call | `"function_call:my_entry"` | Python, C#, C/C++, TS/JS |
+| `function_def:` | Function definition name (supports glob) | `"function_def:run_*"` | Python, Rust, C#, C/C++, TS/JS, Godot |
+| `decorator:` | Decorator or attribute macro (`#[...]`) / attribute (`[...]`) / GDScript annotation (`@...`) | `"decorator:app.route"` / `"decorator:tokio::main"` / `"decorator:Fact"` / `"decorator:@tool"` | Python, Rust, C#, TS/JS, Godot |
+| `class_instantiation:` | Class instantiation | `"class_instantiation:MyApp"` | Python, TS/JS |
+| `class_definition:` | Class/struct/record/interface definition (supports glob) | `"class_definition:App"` | C#, C/C++, TS/JS |
+| `file_match:` | Filename match | `"file_match:**/main.py"` | Python, Rust, C#, C/C++, TS/JS, Godot |
 | `file_is_program` | `Program.cs` with top-level statements | `"file_is_program"` | C# |
 | `if_name_main` | `if __name__ == '__main__'` check | `"if_name_main"` | Python |
-| `test_file` | Test file detection (uses `test_patterns` config) | `"test_file"` | Python, Rust, C# |
+| `test_file` | Test file detection (uses `test_patterns` config) | `"test_file"` | Python, Rust, C#, C/C++, TS/JS, Godot |
 | `visibility:pub` | Items with `pub` visibility modifier | `"visibility:pub"` | Rust |
 | `visibility:public` | Items with `public` visibility modifier | `"visibility:public"` | C# |
 | `trait_impl:` | Trait implementation block | `"trait_impl:Default"` | Rust |
 | `macro_def:` | `macro_rules!` definition | `"macro_def:my_macro"` | Rust |
+| `jsx_element:` | JSX element | `"jsx_element:App"` | TS/JS |
+| `export:` | ES module export | `"export:default"` | TS/JS |
 
 ### exclude_patterns — Exclude Patterns
 
@@ -148,6 +154,30 @@ Supported values:
 | `dir_patterns` | `string[]` | Test directory match patterns |
 | `file_patterns` | `string[]` | Test filename match patterns |
 | `function_patterns` | `string[]` | Test function match patterns |
+
+### godot — Godot Settings
+
+Settings for the GDScript / Godot adapter. All keys are optional; the defaults below are the ones shipped in `DEFAULT_CONFIG`.
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `public_class_api` | `bool` | `true` | Treat a script declaring `class_name X` as a public API entry (a script that IS a reusable class). Disable for a game — or a project where only scenes decide what is used — so a class no scene references can be reported dead. |
+| `method_dead_code` | `bool` | `false` | Report per-method dead code. Off by default: Godot reaches methods through `call("name")`, editor-written `[connection]` entries and string-built `Callable`s, so a per-method verdict is not provable in general. |
+| `signal_dead_code` | `bool` | `false` | Report a declared `signal` that nothing connects to or emits. Off by default for the same reason (connections can be made at runtime from a string). |
+| `constant_dead_code` | `bool` | `false` | Report a `const` that nothing reads. Off by default because constants are also read through `ProjectSettings`/reflection-style lookups. |
+| `assume_dynamic_keeps_file_alive` | `bool` | `true` | When a script contains something unprovable (`load(variable)`, `get_node(variable)`, `call(variable)`, `Expression.parse`, …) keep every member of that script alive instead of guessing. Set to `false` to narrow liveness and accept the extra false positives; the script still receives a `dynamic_import` warning. |
+| `dispatch_keepalive` | `bool` | `true` | Treat a literal string dispatch name (`call("add_score")`, `emit_signal("died")`, `set("prop")`) and every `.tscn` `[connection]` `signal`/`method` as an entry, so the target member is not reported dead. |
+
+```json
+{
+  "godot": {
+    "public_class_api": false,
+    "method_dead_code": true
+  }
+}
+```
+
+Godot entry rules (see `entry_rules`): `godot_project` (the `project.godot` manifest — its `read` edges reach the main scene and every autoload), `godot_editor_tool` (`@tool`), `godot_rpc_method` (`@rpc`), `godot_test` (`no_propagate`, so a test script is alive but does not keep the code it touches alive).
 
 ## Configuration Management
 

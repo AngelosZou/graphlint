@@ -1,6 +1,6 @@
 # Entry Point Detection Reference
 
-graphlint has built-in entry point detection rules for every supported language (Python, Rust, C#, C/C++, and TypeScript/JavaScript) and supports custom rule extension. On first `graphlint build`, these rules are written as a template into `.graphlint/config.json`; thereafter the config file is the single source of truth — you may add, remove, or modify rules via `graphlint config` or by editing the file directly.
+graphlint has built-in entry point detection rules for every supported language (Python, Rust, C#, C/C++, TypeScript/JavaScript, and GDScript/Godot) and supports custom rule extension. On first `graphlint build`, these rules are written as a template into `.graphlint/config.json`; thereafter the config file is the single source of truth — you may add, remove, or modify rules via `graphlint config` or by editing the file directly.
 
 ## Built-in Rules
 
@@ -423,6 +423,48 @@ Detects C# test files (xUnit/NUnit/MSTest conventions).
 - **Match Files**: `**/*.cs`
 - **Note**: Test entry points do not propagate reachability to non-test code under test.
 
+### Godot Rules
+
+The Godot adapter adds four configurable rules plus two detector-internal entries that are controlled by the `godot` settings section rather than by `entry_rules`.
+
+#### 29. godot_project
+
+Detects the `project.godot` manifest (works at the project root and in a nested sub-directory).
+
+- **Match Pattern**: `file_match:**/project.godot`
+- **Match Files**: `**/project.godot`
+- **Note**: The manifest is a file-scope entry (`node_id == 0`). Its `read` edges are what carry reachability into the run/main_scene and every `[autoload]` script, so no separate main-scene or autoload rule is needed.
+
+#### 30. godot_editor_tool
+
+Detects `@tool` scripts, which the Godot editor itself instantiates and runs.
+
+- **Match Pattern**: `decorator:@tool`
+- **Match Files**: `**/*.gd`
+
+#### 31. godot_rpc_method
+
+Detects `@rpc`-annotated methods, which are invoked by remote peers rather than by a local call site.
+
+- **Match Pattern**: `decorator:@rpc`
+- **Match Files**: `**/*.gd`
+
+#### 32. godot_test
+
+Detects Godot test scripts (GUT / gdUnit4 / WAT conventions, via the shared test patterns).
+
+- **Match Pattern**: `test_file`
+- **Match Files**: `**/*.gd`
+- **Note**: `no_propagate: true` — the test script is itself alive, but it does not keep the code it exercises alive.
+
+#### godot_public_class (detector-internal)
+
+Every `.gd` file that declares `class_name X` yields an entry on the class's owner node, because a named class is a project-wide reusable API. Disable with `{"godot": {"public_class_api": false}}` when only scenes should decide what is used.
+
+#### godot_dynamic_dispatch (detector-internal)
+
+Keeps string-dispatched members alive: the union of every literal dispatch name in the project (`call("add_score")`, `emit_signal("died")`, `set("prop")`, `callv(...)`, `call_deferred(...)`) plus every `signal`/`method` named by a `.tscn` `[connection]` entry becomes an entry, so an editor-wired callback is not reported dead even though no `.gd` file mentions it. Disable with `{"godot": {"dispatch_keepalive": false}}`.
+
 ## `--public-as-entry` Flag
 
 The `--public-as-entry` flag provides an alternative way to treat public items as entry points without modifying the config:
@@ -447,19 +489,21 @@ All rules (built-in and custom) use the same prefix syntax, supporting OR combin
 
 | Prefix | Description | Example | Applicable |
 |--------|-------------|---------|------------|
-| `function_call:<name>` | Match a function call by name | `"function_call:start_app"` | Python, C# |
-| `function_def:<pattern>` | Match a function definition by name (supports glob) | `"function_def:run_*"` | Python, Rust, C# |
-| `decorator:<name>` | Match a decorator (Python), attribute macro (Rust `#[...]`), or attribute (C# `[...]`) by name | `"decorator:app.route"` / `"decorator:tokio::main"` / `"decorator:Fact"` | Python, Rust, C# |
-| `class_instantiation:<name>` | Match a class instantiation by name | `"class_instantiation:MyApp"` | Python |
-| `class_definition:<pattern>` | Match a class/struct/record/interface definition by name (supports glob) | `"class_definition:App"` | C# |
-| `file_match:<pattern>` | Match a filename pattern | `"file_match:**/startup.py"` | Python, Rust, C# |
+| `function_call:<name>` | Match a function call by name | `"function_call:start_app"` | Python, C#, C/C++, TS/JS |
+| `function_def:<pattern>` | Match a function definition by name (supports glob) | `"function_def:run_*"` | Python, Rust, C#, C/C++, TS/JS, Godot |
+| `decorator:<name>` | Match a decorator (Python), attribute macro (Rust `#[...]`), attribute (C# `[...]`) or GDScript annotation (`@tool`, `@rpc`) by name | `"decorator:app.route"` / `"decorator:tokio::main"` / `"decorator:Fact"` / `"decorator:@tool"` | Python, Rust, C#, TS/JS, Godot |
+| `class_instantiation:<name>` | Match a class instantiation by name | `"class_instantiation:MyApp"` | Python, TS/JS |
+| `class_definition:<pattern>` | Match a class/struct/record/interface definition by name (supports glob) | `"class_definition:App"` | C#, C/C++, TS/JS |
+| `file_match:<pattern>` | Match a filename pattern | `"file_match:**/startup.py"` | Python, Rust, C#, C/C++, TS/JS, Godot |
 | `file_is_program` | Match `Program.cs` with top-level statements | `"file_is_program"` | C# |
 | `if_name_main` | Match `if __name__ == '__main__'` | `"if_name_main"` | Python |
-| `test_file` | Match test files (uses `test_patterns` config) | `"test_file"` | Python, Rust, C# |
+| `test_file` | Match test files (uses `test_patterns` config) | `"test_file"` | Python, Rust, C#, C/C++, TS/JS, Godot |
 | `visibility:pub` | Match items with `pub` visibility modifier | `"visibility:pub"` | Rust |
 | `visibility:public` | Match items with `public` visibility modifier | `"visibility:public"` | C# |
 | `trait_impl:<pattern>` | Match `impl Trait for Type` blocks | `"trait_impl:Default"` | Rust |
 | `macro_def:<pattern>` | Match `macro_rules!` definitions | `"macro_def:my_macro"` | Rust |
+| `jsx_element:<name>` | Match a JSX element by name | `"jsx_element:App"` | TS/JS |
+| `export:<pattern>` | Match an ES module export | `"export:default"` | TS/JS |
 
 ### Custom Rule Examples
 

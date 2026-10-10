@@ -24,6 +24,26 @@ For C# support (`.cs` files), install the optional `tree-sitter` dependencies:
 pip install graphlint[csharp]
 ```
 
+For C/C++ support (`.c .h .cpp .cc .cxx .hpp .hh .hxx`):
+
+```bash
+pip install graphlint[c]
+```
+
+For TypeScript / JavaScript support (`.ts .tsx .js .jsx .mts .cts .mjs .cjs`):
+
+```bash
+pip install graphlint[typescript]
+```
+
+For GDScript / Godot support (`.gd` scripts plus `.tscn` scenes, `.tres` resources and `project.godot`):
+
+```bash
+pip install graphlint[godot]
+```
+
+The `godot` extra brings in `tree-sitter` and `tree-sitter-gdscript` for the scripts; scenes, resources and the project manifest are read by a built-in resource parser, so no extra dependency is needed for them. Godot 4.x syntax only.
+
 ## Agent Integration
 
 Graphlint can inject its usage prompt directly into your AI coding tools at the **global level**, so every project automatically has graphlint's guidance:

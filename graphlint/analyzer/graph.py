@@ -796,6 +796,7 @@ class GraphBuilder:
         file_id_to_path = {v: k for k, v in fid_map.items()}
         self._add_warnings(comps, file_id_to_path, cached_digraph=_cached_dg,
                            special_names=_sn, public_api_names=_pn)
+        self._run_validate_hooks(parse_results, fid_map)
 
         return GraphBuildResult(
             nodes=list(self._nodes),
@@ -1348,6 +1349,59 @@ class GraphBuilder:
                                 node_id=nid,
                             )
         self.warning_collector.deduplicate()
+
+    def _run_validate_hooks(
+        self,
+        parse_results: dict[str, ParseResult],
+        fid_map: dict[str, int],
+    ) -> None:
+        """Give every adapter a chance to add cross-file warnings.
+
+        The per-file pass sees one file at a time; a check such as "this
+        ``res://`` target exists" or "two scripts declare the same
+        ``class_name``" needs the whole project.  A hook that raises is skipped:
+        an optional check must never be able to fail a build it only enriches.
+        """
+        if not self.registry:
+            return
+        root_dir = self._root_dir_for_routing()
+        added = False
+        for adapter in self.registry.all_adapters():
+            if not getattr(adapter, "file_extensions", None):
+                continue
+            try:
+                scoped = self._adapter_parse_results(
+                    adapter, parse_results, self.registry, root_dir
+                )
+                if not scoped:
+                    continue
+                warnings = adapter.validate_graph(
+                    scoped,
+                    list(self._nodes),
+                    self._node_id_map,
+                    list(self._edges),
+                    fid_map,
+                    root_dir,
+                    self.config,
+                )
+            except Exception:
+                continue
+            for w in warnings or ():
+                try:
+                    self.warning_collector.add(
+                        w.warn_type,
+                        w.severity,
+                        w.message,
+                        w.file_path,
+                        w.line,
+                        w.node_id,
+                        getattr(w, "details", None),
+                    )
+                    added = True
+                except Exception:
+                    continue
+        if added:
+            self.warning_collector.deduplicate()
 
     def get_all_data(self) -> GraphBuildResult:
         """Return all built data (used by tests)."""

@@ -69,6 +69,13 @@ cpp = [
     "tree-sitter-c>=0.21,<0.25",
     "tree-sitter-cpp>=0.22,<0.24",
 ]
+# Godot: GDScript scripts plus .tscn/.tres/project.godot.  The grammar is only
+# needed for ``.gd`` — scenes, resources and the manifest are parsed by hand,
+# so a project is still analysed (partially) without this extra.
+godot = [
+    "tree-sitter>=0.22,<0.27",
+    "tree-sitter-gdscript>=6.0,<7",
+]
 
 [project.urls]
 Homepage = "https://github.com/AngelosZou/graphlint"

@@ -44,7 +44,7 @@ Returns a dict with build statistics:
 
 `build()` uses incremental indexing by default, with the following flow:
 
-1. **Scan files**: Traverse the project directory, collect source files (`.py` / `.rs` / `.cs`)
+1. **Scan files**: Traverse the project directory, collect source files (`.py` / `.rs` / `.cs` / `.c .h .cpp .hpp` / `.ts .tsx .js` / `.gd .tscn .tres` + `project.godot`)
 2. **Compute hash**: Calculate SHA256 hash for each file
 3. **Compare cache**: Compare against hashes in `.graphlint/` cache
 4. **Parse only changes**: Only AST-parse files whose hash changed
