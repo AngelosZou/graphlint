@@ -1,9 +1,9 @@
 import { defineTool } from '@deepseek-ai/dsh-tools'
 
-import type { JsonValue, PluginContext, ToolExecutionLike } from '../types.js'
+import type { JsonValue, PluginContext, ToolRunContext } from '../types.js'
 import { configArgv, type ConfigAction } from '../args.js'
 import { resolveGraphlint } from '../python.js'
-import { SECONDARY_ROOT_NOTE, guardAllowedRoot, sessionCwd } from '../root.js'
+import { SECONDARY_ROOT_NOTE, guardAllowedRoot, resolveSessionCwd } from '../root.js'
 import { runGraphlint } from '../runner.js'
 import { secondaryDirs } from '../secondary.js'
 
@@ -12,17 +12,7 @@ const ROOT_DESCRIPTION =
   'Only pass the working directory itself or one of its subdirectories. ' +
   SECONDARY_ROOT_NOTE
 
-interface ConfigArgs {
-  action?: string
-  key?: string
-  value?: string
-  rule_json?: string
-  name?: string
-  exclude_pattern?: string
-  root_dir?: string
-}
-
-const CONFIG_ACTIONS = new Set([
+const CONFIG_ACTIONS = [
   'show',
   'diff',
   'get',
@@ -31,7 +21,7 @@ const CONFIG_ACTIONS = new Set([
   'remove-entry-rule',
   'add-exclude',
   'remove-exclude',
-])
+] as const
 
 const LIMITS = { doneCapMs: 25_000, graceMs: 10_000 }
 
@@ -46,6 +36,7 @@ export function registerConfigTool(ctx: PluginContext): void {
       parameters: {
         action: {
           type: 'string',
+          enum: CONFIG_ACTIONS,
           description:
             'show: display the full effective config; diff: how the config file differs from the shipped default rule ' +
             'template (which entry rules the user removed / added / overrode, template version gap); ' +
@@ -69,7 +60,7 @@ export function registerConfigTool(ctx: PluginContext): void {
       },
       output: {
         schema: { type: 'object', additionalProperties: true },
-        render(_args, value: unknown) {
+        render(_args, value) {
           const v = value as { error?: string; ok?: boolean; stdout?: string; stderr?: string } | null
           if (v && typeof v.error === 'string') return [{ type: 'text', text: `[graphlint] error: ${v.error}` }]
           const stdout = v && typeof v.stdout === 'string' ? v.stdout : ''
@@ -78,15 +69,16 @@ export function registerConfigTool(ctx: PluginContext): void {
         },
       },
       timeoutMs: 30_000,
-      async execute(args, exec): Promise<Record<string, JsonValue>> {
-        const typed = (args ?? {}) as ConfigArgs
-        const requested = typeof typed.action === 'string' ? typed.action : 'show'
-        const action: ConfigAction = CONFIG_ACTIONS.has(requested) ? (requested as ConfigAction) : 'show'
-        const sessionRoot = sessionCwd(exec as ToolExecutionLike | undefined)
+      async execute(args, exec: ToolRunContext): Promise<Record<string, JsonValue>> {
+        const requested = typeof args.action === 'string' ? args.action : 'show'
+        const action: ConfigAction = (CONFIG_ACTIONS as readonly string[]).includes(requested)
+          ? (requested as ConfigAction)
+          : 'show'
+        const sessionRoot = await resolveSessionCwd(exec, ctx.get?.bind(ctx))
         const extraRoots = await secondaryDirs(ctx, sessionRoot)
         let rootDir: string
         try {
-          rootDir = guardAllowedRoot(typed.root_dir, sessionRoot, extraRoots)
+          rootDir = guardAllowedRoot(args.root_dir, sessionRoot, extraRoots)
         } catch (err) {
           return { error: err instanceof Error ? err.message : String(err) }
         }
@@ -96,15 +88,15 @@ export function registerConfigTool(ctx: PluginContext): void {
           ctx.subprocess,
           ctx.timer,
           configArgv(exe, action, {
-            key: typed.key,
-            value: typed.value,
-            ruleJson: typed.rule_json,
-            name: typed.name,
-            excludePattern: typed.exclude_pattern,
+            key: args.key,
+            value: args.value,
+            ruleJson: args.rule_json,
+            name: args.name,
+            excludePattern: args.exclude_pattern,
           }),
           rootDir,
           LIMITS,
-          (exec as ToolExecutionLike | undefined)?.signal,
+          exec.signal,
         )
         if (out.timedOut) return { error: `graphlint config timed out after ${LIMITS.doneCapMs}ms.` }
         return {

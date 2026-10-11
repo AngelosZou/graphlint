@@ -1,6 +1,17 @@
 import { isAbsolute, relative, resolve, sep } from 'node:path'
 
-import type { ToolExecutionLike } from './types.js'
+import type { AgentLike, WorkingDirectoryService } from './types.js'
+
+/**
+ * What {@link sessionCwd} and {@link resolveSessionCwd} read from one tool
+ * execution. Structural on purpose: it is satisfied by the engine's
+ * `ToolRunContext` and by the plain objects the unit tests build, so the
+ * functions stay testable without importing the whole execution type.
+ */
+export interface SessionContext {
+  readonly agent?: AgentLike | undefined
+  readonly signal?: AbortSignal | undefined
+}
 
 /**
  * Absolute working directory the executing session was created in.
@@ -9,11 +20,50 @@ import type { ToolExecutionLike } from './types.js'
  * same as the deployment-wide sandbox workspace root. Falling back to
  * `process.cwd()` keeps the value defined even for executors that omit the
  * agent chain.
+ *
+ * This is the SYNCHRONOUS fallback. Prefer {@link resolveSessionCwd}, which
+ * asks the supported `workingDirectory` seam first; this one reads the live
+ * Agent's session header directly (the augmented runtime shape) and exists for
+ * the path where no working-directory service is mounted.
  */
-export function sessionCwd(exec: ToolExecutionLike | undefined): string {
+export function sessionCwd(exec: SessionContext | undefined): string {
   const header = exec?.agent?.session?.header
   if (header && typeof header.cwd === 'string' && header.cwd.length > 0) return header.cwd
   return process.cwd()
+}
+
+/**
+ * Resolve the analysis root for one tool call.
+ *
+ * Order: the `workingDirectory` service (the seam that owns the session's
+ * effective directory and can repair a deleted project), then the session
+ * header's original cwd, then the process directory.
+ *
+ * The service is read through `ctx.get` rather than declared in `inject`, so a
+ * deployment without it keeps working. `ensure()` runs against the live runtime
+ * Agent (`exec.agent`), which the published `Agent` face describes as `{ id }`
+ * alone; the value is forwarded unchanged and the seam sees the real
+ * augmented object.
+ */
+export async function resolveSessionCwd(
+  exec: SessionContext | undefined,
+  lookup?: (name: string) => unknown,
+): Promise<string> {
+  const agent = exec?.agent
+  if (agent !== undefined && lookup !== undefined) {
+    const service = lookup('workingDirectory') as WorkingDirectoryService | undefined
+    if (service && typeof service.ensure === 'function') {
+      try {
+        const directory = await service.ensure(agent, exec?.signal)
+        if (typeof directory === 'string' && directory.length > 0) return directory
+      } catch {
+        // The seam refused (no live agent, deleted project, cancellation). Fall
+        // back to the header/process directory rather than failing the call:
+        // the root guard still bounds whatever we return.
+      }
+    }
+  }
+  return sessionCwd(exec)
 }
 
 /**

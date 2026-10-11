@@ -1,4 +1,7 @@
-import type { SubprocessService, TimerLike } from './types.js'
+import type { PluginContext, TimerService } from './types.js'
+
+/** The subprocess seam as this plugin consumes it. */
+type Subprocess = PluginContext['subprocess']
 
 export interface RunLimits {
   /** Upper bound for waiting on process exit before terminating the tree. */
@@ -17,7 +20,7 @@ export interface RunOutcome {
   timedOut: boolean
 }
 
-function withTimeout<T>(timer: TimerLike, promise: Promise<T>, ms: number): Promise<T | 'timeout'> {
+function withTimeout<T>(timer: TimerService, promise: Promise<T>, ms: number): Promise<T | 'timeout'> {
   return new Promise((resolvePromise) => {
     const cancel = timer.timeout(() => resolvePromise('timeout'), ms)
     promise.then(
@@ -48,8 +51,8 @@ function readAll(reader: { readFrom(offset: number): { text: string } } | undefi
  * - never shell-interpret argv.
  */
 export async function runGraphlint(
-  subprocess: SubprocessService,
-  timer: TimerLike,
+  subprocess: Subprocess,
+  timer: TimerService,
   argv: string[],
   cwd: string,
   limits: RunLimits = DEFAULT_LIMITS,

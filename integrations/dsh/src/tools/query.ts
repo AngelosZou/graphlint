@@ -1,10 +1,10 @@
 import { defineTool } from '@deepseek-ai/dsh-tools'
 
-import type { JsonValue, PluginContext, ToolExecutionLike } from '../types.js'
+import type { JsonValue, PluginContext, ToolRunContext } from '../types.js'
 import { queryArgv } from '../args.js'
-import { failureText, parseQueryOutput, renderQueryText, type QuerySuccess } from '../parse.js'
+import { failureText, parseQueryOutput, renderQueryText, type QueryTextOutcome } from '../parse.js'
 import { resolveGraphlint } from '../python.js'
-import { SECONDARY_ROOT_NOTE, guardAllowedRoot, sessionCwd } from '../root.js'
+import { SECONDARY_ROOT_NOTE, guardAllowedRoot, resolveSessionCwd } from '../root.js'
 import { DEFAULT_LIMITS, runGraphlint } from '../runner.js'
 import { secondaryDirs } from '../secondary.js'
 
@@ -13,15 +13,6 @@ const ROOT_DESCRIPTION =
   'Only pass the working directory itself or one of its subdirectories — scanning a high-level root ' +
   '(such as a user home directory) builds a huge index and can block for many minutes. ' +
   SECONDARY_ROOT_NOTE
-
-interface QueryArgs {
-  root_dir?: string
-  warn_types?: string
-  include_tests?: boolean
-  graph_id?: number
-  public_as_entry?: boolean
-  exclude_clean?: boolean
-}
 
 export function registerQueryTool(ctx: PluginContext): void {
   ctx.tools.register(
@@ -32,7 +23,9 @@ export function registerQueryTool(ctx: PluginContext): void {
         'Auto-incremental rebuild on first use; install the CLI with `pip install graphlint` if missing. ' +
         ROOT_DESCRIPTION +
         ' Returns the parsed query result: result.graphs (graph_id, entry, node_count, edge_count, warnings, ' +
-        'is_dead_code, is_unreachable), result.total_graphs, result.has_more, result.warnings_summary.',
+        'is_dead_code, is_unreachable), result.total_graphs, result.has_more, result.warnings_summary. ' +
+        'With graph_id the CLI answers with the single-graph DETAIL envelope instead, returned here as ' +
+        'graph (graph_id, entry, files, nodes, edges, warnings) — nodes/edges/files are capped by the CLI (30/10/10).',
       parameters: {
         root_dir: { type: 'string', description: ROOT_DESCRIPTION },
         warn_types: {
@@ -42,7 +35,10 @@ export function registerQueryTool(ctx: PluginContext): void {
         include_tests: { type: 'boolean', description: 'Include test files in the analysis (default false).' },
         graph_id: {
           type: 'number',
-          description: 'Return full detail for one specific dependency graph (connected component) by id.',
+          description:
+            'Return full detail for one specific dependency graph (connected component) by id. ' +
+            'The response is then the detail envelope (graph.nodes / graph.edges / graph.warnings / graph.files) ' +
+            'rather than result.graphs.',
         },
         public_as_entry: {
           type: 'boolean',
@@ -55,24 +51,23 @@ export function registerQueryTool(ctx: PluginContext): void {
       },
       output: {
         schema: { type: 'object', additionalProperties: true },
-        render(_args, value: unknown) {
+        render(_args, value) {
           const v = value as { error?: string } | null
           if (!v || typeof v !== 'object' || typeof v.error === 'string') {
             const text =
               v && typeof v.error === 'string' ? failureText({ ok: false, error: v.error, exitCode: null }) : String(value)
             return [{ type: 'text', text }]
           }
-          return [{ type: 'text', text: renderQueryText(v as QuerySuccess).join('\n') }]
+          return [{ type: 'text', text: renderQueryText(v as QueryTextOutcome).join('\n') }]
         },
       },
       timeoutMs: 120_000,
-      async execute(args, exec): Promise<Record<string, JsonValue>> {
-        const typed = (args ?? {}) as QueryArgs
-        const sessionRoot = sessionCwd(exec as ToolExecutionLike | undefined)
+      async execute(args, exec: ToolRunContext): Promise<Record<string, JsonValue>> {
+        const sessionRoot = await resolveSessionCwd(exec, ctx.get?.bind(ctx))
         const extraRoots = await secondaryDirs(ctx, sessionRoot)
         let rootDir: string
         try {
-          rootDir = guardAllowedRoot(typed.root_dir, sessionRoot, extraRoots)
+          rootDir = guardAllowedRoot(args.root_dir, sessionRoot, extraRoots)
         } catch (err) {
           return { error: err instanceof Error ? err.message : String(err) }
         }
@@ -83,15 +78,15 @@ export function registerQueryTool(ctx: PluginContext): void {
           ctx.timer,
           queryArgv(exe, {
             rootDir,
-            warnTypes: typed.warn_types,
-            includeTests: typed.include_tests,
-            graphId: typed.graph_id,
-            publicAsEntry: typed.public_as_entry,
-            excludeClean: typed.exclude_clean,
+            warnTypes: args.warn_types,
+            includeTests: args.include_tests,
+            graphId: args.graph_id,
+            publicAsEntry: args.public_as_entry,
+            excludeClean: args.exclude_clean,
           }),
           rootDir,
           DEFAULT_LIMITS,
-          (exec as ToolExecutionLike | undefined)?.signal,
+          exec.signal,
         )
         if (out.timedOut) {
           return { error: `graphlint query timed out after ${DEFAULT_LIMITS.doneCapMs}ms; the process tree was terminated.` }

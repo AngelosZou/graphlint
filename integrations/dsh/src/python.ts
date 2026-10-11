@@ -1,6 +1,10 @@
 import { join } from 'node:path'
 
-import type { FsService, SubprocessService } from './types.js'
+import type { PluginContext } from './types.js'
+
+/** The subprocess and filesystem seams as this plugin consumes them. */
+type Subprocess = PluginContext['subprocess']
+type Fs = NonNullable<PluginContext['fs']>
 
 const WINDOWS_BINS = [
   'env\\Scripts\\graphlint.exe',
@@ -18,8 +22,8 @@ const POSIX_BINS = ['env/bin/graphlint', '.venv/bin/graphlint', 'venv/bin/graphl
  * null when graphlint is not installed anywhere reachable.
  */
 export async function resolveGraphlint(
-  subprocess: SubprocessService,
-  fs: FsService | undefined,
+  subprocess: Subprocess,
+  fs: Fs | undefined,
   rootDir: string,
 ): Promise<string | null> {
   try {

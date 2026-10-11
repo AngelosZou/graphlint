@@ -1,4 +1,4 @@
-import type { PluginContext, SkillRegistration } from './types.js'
+import type { PluginContext } from './types.js'
 import { SKILL_BODY } from './skill-content.generated.js'
 
 // The canonical skill body is embedded at build time from graphlint/skill.md
@@ -18,7 +18,7 @@ graphlint is exposed as tools — **prefer the tools over shelling out to the CL
 
 `
 
-const GRAPHLINT_SKILL: SkillRegistration = {
+const GRAPHLINT_SKILL = {
   name: 'graphlint',
   description:
     'Load for codebase understanding, exploration, and modification: map the real dependency graph to separate live, reachable code from dead code, unused imports, and write-only variables, so refactors, cleanups, and deletions are safe.',

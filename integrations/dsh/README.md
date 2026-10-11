@@ -14,6 +14,25 @@ skill describing when and how to use them.
 - The graphlint CLI on `PATH` (`pip install graphlint`) or inside the project's
   virtualenv (`env/`, `.venv/`, `venv/` are probed automatically).
 
+### Supported DSH core
+
+The bundle imports `defineTool` from `@deepseek-ai/dsh-tools` at runtime — an
+out-of-tree plugin resolves it from the running installation (it is one of the
+plugin manager's protected modules) — and type-checks its tool definitions
+against it. Declared compatibility:
+
+| Package | Range |
+|---------|-------|
+| `@deepseek-ai/dsh-tools` | `>=0.1.0-rc.6 <0.3` |
+| `@deepseek-ai/cordis` | `>=4.0.5-alpha.1 <5` |
+
+Development and CI compile against the exact published versions pinned in
+`devDependencies` (currently the `0.2.1-alpha.2` core), so a contract change in
+any seam the plugin consumes (`ctx.tools`, `ctx.subprocess`, `ctx.fs`,
+`ctx.skills`, `ctx.jobs`, `ctx.workingDirectory`, `ctx.timer`) fails the build
+instead of failing a live tool call. Bump the pins with the core.
+
+
 ## Install
 
 Install the published bundle into a DeepSeek Harness profile:
@@ -64,6 +83,13 @@ working directory** (the default) — a hard guard rejects anything else with a
 clear error. Scanning a high-level root (such as a user home directory) makes
 graphlint build a huge first-time index and can block for many minutes.
 
+The default root comes from the `workingDirectory` service (the seam that owns
+a session's effective directory and repairs a deleted project), falling back to
+the session header's original `cwd` and then to the harness process directory.
+`graphlint_query` and `graphlint_config` then pass `--root-dir`; `graphlint_build`
+and `graphlint config` run the CLI with that directory as their working
+directory, because those subcommands read their own cwd.
+
 ### Optional Secondary working directories (`dsh-multi-folder`)
 
 When the [dsh-multi-folder](https://github.com/AngelosZou/dsh-multi-folder)
@@ -84,17 +110,36 @@ This compatibility is automatic and optional. Each tool probes
   directories and the `/multi-folder` command that adds one, so the model
   learns the valid roots instead of retrying blindly.
 
+The `multiFolder` service and the `workingDirectory` service are both optional
+seams, read through `ctx.get` and never declared in `inject`, so neither plugin
+becomes a hard dependency of the other.
+
 ## Development
 
 ```bash
 cd integrations/dsh
 npm install          # first time only; afterwards npm ci
-npm run build        # tsc → lib/
+npm run build        # generate-skill.mjs + tsc → lib/
 npm test             # node --test lib/test/
 ```
 
-The test suite covers the pure logic layers (root guard, argv construction,
-JSON parsing), the optional multi-folder probe and its end-to-end tool wiring
-(root resolution and spawned CLI cwd, with and without the peer plugin), plus
-manifest/patch contract checks. A committed `package-lock.json` is required (CI
-runs `npm ci`).
+Type-checking is part of `npm run build`, and the seam types come from the real
+`@deepseek-ai/*` packages rather than hand-written copies — build failure is the
+signal that a core contract moved. `src/types.ts` re-exports them and narrows
+the two optional seams; nothing in `src/` restates an engine-shaped service a
+second time.
+
+The test suite covers the pure logic layers (root guard, argv construction, JSON
+parsing), the optional multi-folder probe and its end-to-end tool wiring (root
+resolution and spawned CLI cwd, with and without the peer plugin), the
+`workingDirectory` root resolution and its fallbacks, the background-job owner
+type, and manifest/patch contract checks. A committed `package-lock.json` is
+required (CI runs `npm ci`).
+
+If the sandbox forbids the Node test runner's per-file child processes
+(`spawn EPERM` on a Windows confined run), run the same suite in one process:
+
+```bash
+node --test --experimental-test-isolation=none "lib/test/**/*.test.js"
+```
+
